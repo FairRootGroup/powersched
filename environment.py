@@ -256,8 +256,9 @@ class ComputeClusterEnv(gym.Env):
         job_queue_2d = self.state['job_queue'].reshape(-1, 4)  # Now a (MAX_QUEUE_SIZE, 4) array
 
         # Decrement booked time for nodes and complete running jobs
+        self.env_print("[1] Processing ongoing jobs...")
         completed_jobs = self.process_ongoing_jobs(self.state['nodes'], self.cores_available, self.running_jobs)
-        self.env_print(f"{len(completed_jobs)} jobs completed: {' '.join([str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else '[]'}")
+        self.env_print(f"{len(completed_jobs)} jobs completed: [{' '.join(['#' + str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else ''}]")
 
         # Update job queue with new jobs. If queue is full, do nothing
         new_jobs_durations = []
@@ -284,6 +285,7 @@ class ComputeClusterEnv(gym.Env):
                 new_jobs_nodes.append(np.random.randint(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1))
                 new_jobs_cores.append(np.random.randint(MIN_CORES_PER_JOB, CORES_PER_NODE + 1))
 
+        self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
         new_jobs = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
@@ -294,9 +296,11 @@ class ComputeClusterEnv(gym.Env):
         action_type, action_magnitude = action  # Unpack the action array
         action_magnitude += 1
 
+        self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}...")
         num_node_changes = self.adjust_nodes(action_type, action_magnitude, self.state['nodes'], self.cores_available)
 
         # assign jobs to available nodes
+        self.env_print(f"[4] Assigning jobs to available nodes...")
         num_launched_jobs = self.assign_jobs_to_available_nodes(job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs)
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
@@ -315,6 +319,7 @@ class ComputeClusterEnv(gym.Env):
         self.job_queue_sizes.append(num_unprocessed_jobs)
         self.price_stats.append(current_price)
 
+        self.env_print(f"[5] Calculating reward...")
         # baseline
         baseline_cost, baseline_cost_off = self.baseline_step(current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
         self.baseline_cost += baseline_cost
@@ -326,16 +331,16 @@ class ComputeClusterEnv(gym.Env):
         self.total_cost += step_cost
 
         # print stats
-        self.env_print(f"running jobs: {' '.join(['[#{}: {}h, {}x{}]'.format(job_id, job_data['duration'], len(job_data['allocation']), int(job_data['allocation'][0][1])) for job_id, job_data in self.running_jobs.items()]) if len(self.running_jobs) > 0 else '[]'}")
+        self.env_print(f"[6] End of step stats...")
+        self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
+        self.env_print(f"{len(self.running_jobs)} running jobs: {' '.join(['[#{}: {}h, {}x{}]'.format(job_id, job_data['duration'], len(job_data['allocation']), int(job_data['allocation'][0][1])) for job_id, job_data in self.running_jobs.items()]) if len(self.running_jobs) > 0 else '[]'}")
+        self.env_print(f"launched jobs: {num_launched_jobs}, unprocessed jobs: {num_unprocessed_jobs}")
         self.env_print(f"nodes: ON: {num_on_nodes}, OFF: {num_off_nodes}, used: {num_used_nodes}, IDLE: {num_idle_nodes}. node changes: {num_node_changes}")
-        self.env_print(f"cores used: {num_used_cores} out of {num_on_nodes * CORES_PER_NODE} available cores")
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=" ", max_line_width=np.inf))
+        self.env_print(f"cores used: {num_used_cores} out of {num_on_nodes * CORES_PER_NODE} available cores")
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
         self.env_print(f"price: current: {current_price}, average future: {average_future_price:.4f}")
-        self.env_print(f"launched jobs: {num_launched_jobs}, unprocessed jobs: {num_unprocessed_jobs}")
-        self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
         self.env_print(f"step reward: {step_reward:.4f}, episode reward: {self.episode_reward:.4f}")
-        self.env_print(f"Running jobs: {len(self.running_jobs)}")
 
         if self.plot_rewards:
             plot_reward(self, num_used_nodes, num_idle_nodes, current_price, num_off_nodes, average_future_price, num_launched_jobs, num_node_changes, job_queue_2d, MAX_NODES)
