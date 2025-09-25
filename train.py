@@ -2,6 +2,7 @@ from stable_baselines3 import PPO
 import os
 from environment import ComputeClusterEnv, Weights, PlottingComplete
 from callbacks import ComputeClusterCallback
+from plot import plot_cumulative_savings
 import re
 import glob
 import argparse
@@ -33,6 +34,8 @@ def main():
     parser.add_argument("--job-age-weight", type=float, default=0.0, help="Weight for job age penalty")
     parser.add_argument("--iter-limit", type=int, default=0, help=f"Max number of training iterations (1 iteration = {STEPS_PER_ITERATION} steps)")
     parser.add_argument("--session", default="default", help="Session ID")
+    parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
+    parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
 
     args = parser.parse_args()
     prices_file_path = args.prices
@@ -88,7 +91,8 @@ def main():
                             skip_plot_online_nodes=args.skip_plot_online_nodes,
                             skip_plot_used_nodes=args.skip_plot_used_nodes,
                             skip_plot_job_queue=args.skip_plot_job_queue,
-                            steps_per_iteration=STEPS_PER_ITERATION)
+                            steps_per_iteration=STEPS_PER_ITERATION,
+                            evaluation_mode=args.evaluate_savings)
     env.reset()
 
     # Check if there are any saved models in models_dir
@@ -98,7 +102,7 @@ def main():
         # Sort the files by extracting the timestep number from the filename and converting it to an integer
         model_files.sort(key=lambda filename: int(re.match(r"(\d+)", os.path.basename(filename)).group()))
         latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
-        print(f"Found a saved model: {latest_model_file}, continuing training from it.")
+        print(f"Found a saved model: {latest_model_file}")
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir)
     else:
         print(f"Starting a new model training...")
@@ -116,6 +120,56 @@ def main():
             iters = 0
 
     env.set_progress(iters)
+
+    if args.evaluate_savings:
+        if not latest_model_file:
+            print("Error: No trained model found for evaluation!")
+            print(f"Expected model files in: {models_dir}")
+            print("Train a model first, then run evaluation mode.")
+            return
+
+        print(f"=== EVALUATION MODE ===")
+        print(f"Evaluation period: {args.eval_months} months ({args.eval_months * 2} episodes, Each episode = 2 weeks)")
+
+        num_episodes = args.eval_months * 2 # 2 episodes per month
+        for episode in range(num_episodes):
+            obs, _ = env.reset()
+            episode_reward = 0
+            done = False
+            step_count = 0
+
+            while not done:
+                action, _ = model.predict(obs, deterministic=True)
+                obs, reward, terminated, truncated, _ = env.step(action)
+                episode_reward += reward
+                step_count += 1
+                # print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.total_cost:.2f}")
+                done = terminated or truncated
+
+            print(f"  Episode {episode + 1} completed: "
+                f"Reward = {episode_reward:.2f}, "
+                f"Steps = {step_count}, "
+                f"Cost = €{env.total_cost:.2f}, "
+                f"Savings = €{env.baseline_cost - env.total_cost:.2f}")
+
+        print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
+
+        # Generate cumulative savings plot
+        session_dir = f"sessions/{args.session}"
+        try:
+            results = plot_cumulative_savings(env.episode_costs, session_dir, months=args.eval_months, save=True, show=args.render == 'human')
+            if results:
+                print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
+                print(f"Total Savings: €{results['total_savings']:,.0f}")
+                print(f"Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
+                print(f"ROI Period: {results['roi_months']:.1f} months")
+                print(f"Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
+        except Exception as e:
+            print(f"Could not generate cumulative savings plot: {e}")
+
+        print("\nEvaluation complete!")
+        env.close()
+        return
 
     try:
         while True:

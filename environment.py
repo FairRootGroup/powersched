@@ -93,7 +93,8 @@ class ComputeClusterEnv(gym.Env):
                  skip_plot_online_nodes,
                  skip_plot_used_nodes,
                  skip_plot_job_queue,
-                 steps_per_iteration):
+                 steps_per_iteration,
+                 evaluation_mode=False):
         super().__init__()
 
         self.weights = weights
@@ -115,8 +116,13 @@ class ComputeClusterEnv(gym.Env):
         self.skip_plot_used_nodes = skip_plot_used_nodes
         self.skip_plot_job_queue = skip_plot_job_queue
         self.steps_per_iteration = steps_per_iteration
+        self.evaluation_mode = evaluation_mode
 
         self.next_plot_save = self.steps_per_iteration
+
+        # Initialize cost tracking for long-term analysis
+        self.session_dir = f"sessions/{session}"
+        self.episode_costs = []
 
         self.prices = Prices(self.external_prices)
 
@@ -165,8 +171,8 @@ class ComputeClusterEnv(gym.Env):
         self.max_job_age_penalty = PENALTY_WAITING_JOB * MAX_JOB_AGE * MAX_QUEUE_SIZE
 
         # actions: - change number of available nodes:
-        #   direction: 0: decrease, 1: maintain, 2: increase
-        #   num nodes: 0-9 (+1ed in the action)
+        #   action_type:      0: decrease, 1: maintain, 2: increase
+        #   action_magnitude: 0-MAX_CHANGE (+1ed in the action)
         self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE])
 
         # - predicted allocation
@@ -362,12 +368,16 @@ class ComputeClusterEnv(gym.Env):
                 if self.plot_once:
                     raise PlottingComplete
             else:
-                if self.current_step > self.next_plot_save:
+                # Only do training plots in training mode
+                if not self.evaluation_mode and self.current_step > self.next_plot_save:
                     plot(self, EPISODE_HOURS, MAX_NODES, True, False, self.current_step)
                     self.next_plot_save += self.steps_per_iteration
                     print(self.next_plot_save)
 
             terminated = True
+
+            # Record episode costs for long-term analysis
+            self.record_episode_completion()
 
         # flatten job_queue again
         self.state['job_queue'] = job_queue_2d.flatten()
@@ -675,6 +685,21 @@ class ComputeClusterEnv(gym.Env):
         normalized_penalty = np.clip(normalized_penalty, -1, 0)
         # self.env_print(f"$D CLIPPED normalized_penalty: {normalized_penalty}")
         return normalized_penalty
+
+    def record_episode_completion(self):
+        """Record episode costs for long-term analysis."""
+        episode_data = {
+            'episode': self.current_episode,
+            'agent_cost': float(self.total_cost),
+            'baseline_cost': float(self.baseline_cost),
+            'baseline_cost_off': float(self.baseline_cost_off),
+            'savings_vs_baseline': float(self.baseline_cost - self.total_cost),
+            'savings_vs_baseline_off': float(self.baseline_cost_off - self.total_cost),
+            'savings_pct_baseline': float(((self.baseline_cost - self.total_cost) / self.baseline_cost) * 100) if self.baseline_cost > 0 else 0,
+            'savings_pct_baseline_off': float(((self.baseline_cost_off - self.total_cost) / self.baseline_cost_off) * 100) if self.baseline_cost_off > 0 else 0,
+            'total_reward': float(self.episode_reward)
+        }
+        self.episode_costs.append(episode_data)
 
 def normalize(current, minimum, maximum):
     if maximum == minimum:

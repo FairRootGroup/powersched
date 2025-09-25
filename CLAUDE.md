@@ -60,11 +60,6 @@ python test_sampler_jobs.py --print-stats --plot
 python test_aggregated_jobs.py
 ```
 
-**Generate Cumulative Savings Plot:**
-```bash
-python plot_savings.py [session_name] --months 12 --show
-```
-
 ## Key Training Parameters
 
 The system uses weighted reward components:
