@@ -101,7 +101,7 @@ def plot_reward(env, num_used_nodes, num_idle_nodes, current_price, num_off_node
     plt.tight_layout()
     plt.show()
 
-def plot_cumulative_savings(episode_costs, session_dir, months=12, save=True, show=True):
+def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=True, show=True):
     """
     Plot cumulative cost savings over time from multiple episodes.
 
@@ -186,6 +186,7 @@ def plot_cumulative_savings(episode_costs, session_dir, months=12, save=True, sh
     roi_months = implementation_cost / (final_savings / months) if final_savings > 0 else float('inf')
 
     plt.title(f'PowerSched Long-Term Cost Savings Analysis\n'
+              f'{env.weights}\n'
               f'Total Savings: €{final_savings:,.0f} | '
               f'Avg Monthly Reduction: {avg_monthly_savings:.1f}% | '
               f'ROI Period: {roi_months:.1f} months',
@@ -205,8 +206,9 @@ def plot_cumulative_savings(episode_costs, session_dir, months=12, save=True, sh
     plt.tight_layout()
 
     if save:
+        prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_d{env.weights.job_age_weight}"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        save_path = os.path.join(session_dir, f"cumulative_savings_{timestamp}.png")
+        save_path = os.path.join(session_dir, f"cumulative_savings_{prefix}_{timestamp}.png")
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"Cumulative savings plot saved: {save_path}")
 

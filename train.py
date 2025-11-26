@@ -157,7 +157,7 @@ def main():
         # Generate cumulative savings plot
         session_dir = f"sessions/{args.session}"
         try:
-            results = plot_cumulative_savings(env.episode_costs, session_dir, months=args.eval_months, save=True, show=args.render == 'human')
+            results = plot_cumulative_savings(env, env.episode_costs, session_dir, months=args.eval_months, save=True, show=args.render == 'human')
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"Total Savings: €{results['total_savings']:,.0f}")
