@@ -10,6 +10,7 @@ from weights import Weights
 from plot import plot, plot_reward
 from sampler_duration import durations_sampler
 from sampler_jobs import jobs_sampler
+from sampler_hourly import hourly_sampler
 
 init()  # Initialize colorama
 
@@ -82,6 +83,7 @@ class ComputeClusterEnv(gym.Env):
                  external_prices,
                  external_durations,
                  external_jobs,
+                 external_hourly_jobs,
                  plot_rewards,
                  plots_dir,
                  plot_once,
@@ -104,6 +106,7 @@ class ComputeClusterEnv(gym.Env):
         self.external_prices = external_prices
         self.external_durations = external_durations
         self.external_jobs = external_jobs
+        self.external_hourly_jobs = external_hourly_jobs
         self.plot_rewards = plot_rewards
         self.plots_dir = plots_dir
         self.plot_once = plot_once
@@ -138,6 +141,11 @@ class ComputeClusterEnv(gym.Env):
             print(f"Max jobs per hour: {jobs_sampler.max_new_jobs_per_hour}")
             print(f"Max job duration: {jobs_sampler.max_job_duration}")
             print(f"Parsed hourly jobs for {len(jobs_sampler.hourly_jobs)} hours")
+
+        if self.external_hourly_jobs:
+            print(f"Loading hourly jobs from {self.external_hourly_jobs}")
+            hourly_sampler.parse_jobs(self.external_hourly_jobs)
+            print(f"Hourly sampler initialized with 24-hour distributions")
 
         self.current_step = 0
         self.current_episode = 0
@@ -283,6 +291,15 @@ class ComputeClusterEnv(gym.Env):
                     new_jobs_count += 1
                     new_jobs_durations.append(job['duration_hours'])
                     new_jobs_nodes.append(job['nnodes'])
+                    new_jobs_cores.append(job['cores_per_node'])
+        elif self.external_hourly_jobs:
+            hour_of_day = (self.current_hour - 1) % 24
+            jobs = hourly_sampler.sample(hour_of_day)
+            if len(jobs) > 0:
+                for job in jobs:
+                    new_jobs_count += 1
+                    new_jobs_durations.append(int(np.ceil(job['duration'] / 60)))
+                    new_jobs_nodes.append(job['nodes'])
                     new_jobs_cores.append(job['cores_per_node'])
         else:
             new_jobs_count = np.random.randint(0, MAX_NEW_JOBS_PER_HOUR + 1)

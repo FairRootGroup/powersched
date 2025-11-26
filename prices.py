@@ -27,6 +27,7 @@ class Prices:
             self.predicted_prices = np.array(self.external_prices[:self.PREDICTION_WINDOW])
             self.price_index = self.PREDICTION_WINDOW
         else:
+            self.external_prices = None
             self.MAX_PRICE = 24
             self.MIN_PRICE = 16
             self.predicted_prices = self.get_initial_prices(self.PREDICTION_WINDOW)

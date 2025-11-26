@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--prices', type=str, nargs='?', const="", default="", help='Path to the CSV file containing electricity prices (Date,Price)')
     parser.add_argument('--job-durations', type=str, nargs='?', const="", default="", help='Path to a file containing job duration samples (for use with durations_sampler)')
     parser.add_argument('--jobs', type=str, nargs='?', const="", default="", help='Path to a file containing job samples (for use with jobs_sampler)')
+    parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
     parser.add_argument('--plot-rewards', action='store_true', help='Per step, plot rewards for all possible num_idle_nodes & num_used_nodes (default: False).')
     parser.add_argument('--plot-eff-reward', action='store_true', help='Include efficiency reward in the plot (dashed line).')
     parser.add_argument('--plot-price-reward', action='store_true', help='Include price reward in the plot (dashed line).')
@@ -41,6 +42,7 @@ def main():
     prices_file_path = args.prices
     job_durations_file_path = args.job_durations
     jobs_file_path = args.jobs
+    hourly_jobs_file_path = args.hourly_jobs
 
     if prices_file_path:
         df = pd.read_csv(prices_file_path, parse_dates=['Date'])
@@ -80,6 +82,7 @@ def main():
                             external_prices=prices,
                             external_durations=job_durations_file_path,
                             external_jobs=jobs_file_path,
+                            external_hourly_jobs=hourly_jobs_file_path,
                             plot_rewards=args.plot_rewards,
                             plots_dir=plots_dir,
                             plot_once=args.plot_once,
