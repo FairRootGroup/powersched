@@ -43,16 +43,22 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     else:
         ax2.set_ylim(0, max_nodes)
 
-    plt.title(f"session: {env.session}, "
-              f"episode: {env.current_episode}, step: {env.current_step}\n"
-              f"{env.weights}\n"
-              f"Cost: €{env.total_cost:.2f}, "
-              f"Base_Cost: €{env.baseline_cost:.2f} "
-              f"({'+' if env.baseline_cost - env.total_cost >= 0 else '-'}"
-              f"{abs(env.baseline_cost - env.total_cost):.2f}) {((env.baseline_cost - env.total_cost) / env.baseline_cost) * 100:.2f}%, "
-              f"Base_Cost_Off: €{env.baseline_cost_off:.2f} "
-              f"({'+' if env.baseline_cost_off - env.total_cost >= 0 else '-'}"
-              f"{abs(env.baseline_cost_off - env.total_cost):.2f}) {((env.baseline_cost_off - env.total_cost) / env.baseline_cost_off) * 100:.2f}%")
+    # Calculate job metrics
+    completion_rate = (env.jobs_completed / env.jobs_submitted * 100) if env.jobs_submitted > 0 else 0
+    baseline_completion_rate = (env.baseline_jobs_completed / env.baseline_jobs_submitted * 100) if env.baseline_jobs_submitted > 0 else 0
+    avg_wait = env.total_job_wait_time / env.jobs_completed if env.jobs_completed > 0 else 0
+    baseline_avg_wait = env.baseline_total_job_wait_time / env.baseline_jobs_completed if env.baseline_jobs_completed > 0 else 0
+
+    plt.title(f"{env.session} | ep:{env.current_episode} step:{env.current_step} | {env.weights}\n"
+              f"Cost: €{env.total_cost:.0f}, Base: €{env.baseline_cost:.0f} "
+              f"(+{env.baseline_cost - env.total_cost:.0f}, {((env.baseline_cost - env.total_cost) / env.baseline_cost) * 100:.1f}%), "
+              f"Base_Off: €{env.baseline_cost_off:.0f} "
+              f"(+{env.baseline_cost_off - env.total_cost:.0f}, {((env.baseline_cost_off - env.total_cost) / env.baseline_cost_off) * 100:.1f}%)\n"
+              f"Jobs: {env.jobs_completed}/{env.jobs_submitted} ({completion_rate:.0f}%, "
+              f"wait={avg_wait:.1f}h, Q={env.max_queue_size_reached}) | "
+              f"Base: {env.baseline_jobs_completed}/{env.baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, "
+              f"wait={baseline_avg_wait:.1f}h, Q={env.baseline_max_queue_size_reached})",
+              fontsize=9)
 
     # Combine legends from both axes
     lines, labels = ax1.get_legend_handles_labels()

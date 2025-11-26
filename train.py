@@ -151,12 +151,14 @@ def main():
 
             savings_vs_baseline = env.baseline_cost - env.total_cost
             savings_vs_baseline_off = env.baseline_cost_off - env.total_cost
-            print(f"  Episode {episode + 1} completed: "
-                f"Reward = {episode_reward:.2f}, "
-                f"Steps = {step_count}, "
-                f"Agent Cost = €{env.total_cost:.2f}, "
-                f"Savings = €{savings_vs_baseline:.2f} (vs baseline), "
-                f"€{savings_vs_baseline_off:.2f} (vs baseline_off)")
+            completion_rate = (env.jobs_completed / env.jobs_submitted * 100) if env.jobs_submitted > 0 else 0
+            avg_wait = env.total_job_wait_time / env.jobs_completed if env.jobs_completed > 0 else 0
+            print(f"  Episode {episode + 1}: "
+                f"Cost=€{env.total_cost:.0f}, "
+                f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
+                f"Jobs={env.jobs_completed}/{env.jobs_submitted} ({completion_rate:.0f}%), "
+                f"AvgWait={avg_wait:.1f}h, "
+                f"MaxQueue={env.max_queue_size_reached}")
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
@@ -175,6 +177,27 @@ def main():
                 print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
                 print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct_off']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
+
+                # Calculate job metrics across all episodes
+                total_jobs_submitted = sum(ep['jobs_submitted'] for ep in env.episode_costs)
+                total_jobs_completed = sum(ep['jobs_completed'] for ep in env.episode_costs)
+                total_baseline_submitted = sum(ep['baseline_jobs_submitted'] for ep in env.episode_costs)
+                total_baseline_completed = sum(ep['baseline_jobs_completed'] for ep in env.episode_costs)
+                avg_wait_time = sum(ep['avg_wait_time'] * ep['jobs_completed'] for ep in env.episode_costs) / total_jobs_completed if total_jobs_completed > 0 else 0
+                avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * ep['baseline_jobs_completed'] for ep in env.episode_costs) / total_baseline_completed if total_baseline_completed > 0 else 0
+                avg_max_queue = sum(ep['max_queue_size'] for ep in env.episode_costs) / len(env.episode_costs)
+                avg_baseline_max_queue = sum(ep['baseline_max_queue_size'] for ep in env.episode_costs) / len(env.episode_costs)
+
+                print(f"\n=== JOB PROCESSING METRICS ===")
+                print(f"\nAgent:")
+                print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_jobs_completed/total_jobs_submitted*100:.1f}%)")
+                print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
+                print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
+
+                print(f"\nBaseline:")
+                print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completed/total_baseline_submitted*100:.1f}%)")
+                print(f"  Average Wait Time: {avg_baseline_wait_time:.1f} hours")
+                print(f"  Average Max Queue Size: {avg_baseline_max_queue:.0f}")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 

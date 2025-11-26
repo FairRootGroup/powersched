@@ -259,6 +259,18 @@ class ComputeClusterEnv(gym.Env):
         self.baseline_cost = 0
         self.baseline_cost_off = 0
 
+        # Job tracking metrics for agent
+        self.jobs_submitted = 0
+        self.jobs_completed = 0
+        self.total_job_wait_time = 0  # Sum of all job ages when launched
+        self.max_queue_size_reached = 0
+
+        # Job tracking metrics for baseline
+        self.baseline_jobs_submitted = 0
+        self.baseline_jobs_completed = 0
+        self.baseline_total_job_wait_time = 0
+        self.baseline_max_queue_size_reached = 0
+
     def step(self, action):
         self.current_step += 1
         self.current_hour += 1
@@ -316,6 +328,7 @@ class ComputeClusterEnv(gym.Env):
         next_empty_ref = [self.next_empty_slot]
         new_jobs = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, next_empty_ref)
         self.next_empty_slot = next_empty_ref[0]
+        self.jobs_submitted += len(new_jobs)
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -348,6 +361,10 @@ class ComputeClusterEnv(gym.Env):
         self.used_nodes.append(num_used_nodes)
         self.job_queue_sizes.append(num_unprocessed_jobs)
         self.price_stats.append(current_price)
+
+        # Track max queue size
+        if num_unprocessed_jobs > self.max_queue_size_reached:
+            self.max_queue_size_reached = num_unprocessed_jobs
 
         self.env_print(f"[5] Calculating reward...")
         # baseline
@@ -505,7 +522,7 @@ class ComputeClusterEnv(gym.Env):
 
         return num_node_changes
 
-    def assign_jobs_to_available_nodes(self, job_queue_2d, nodes, cores_available, running_jobs, next_empty_slot_ref=None):
+    def assign_jobs_to_available_nodes(self, job_queue_2d, nodes, cores_available, running_jobs, next_empty_slot_ref=None, is_baseline=False):
         num_processed_jobs = 0
 
         for job_idx, job in enumerate(job_queue_2d):
@@ -551,6 +568,14 @@ class ComputeClusterEnv(gym.Env):
                 if next_empty_slot_ref is not None and job_idx < next_empty_slot_ref[0]:
                     next_empty_slot_ref[0] = job_idx
 
+                # Track job completion and wait time
+                if is_baseline:
+                    self.baseline_jobs_completed += 1
+                    self.baseline_total_job_wait_time += job_age
+                else:
+                    self.jobs_completed += 1
+                    self.total_job_wait_time += job_age
+
                 num_processed_jobs += 1
             else:
                 # Not enough resources for this job, increment its age
@@ -564,15 +589,21 @@ class ComputeClusterEnv(gym.Env):
         self.process_ongoing_jobs(self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs)
 
         baseline_next_empty_ref = [self.baseline_next_empty_slot]
-        self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, baseline_next_empty_ref)
+        new_baseline_jobs = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, baseline_next_empty_ref)
         self.baseline_next_empty_slot = baseline_next_empty_ref[0]
+        self.baseline_jobs_submitted += len(new_baseline_jobs)
 
-        self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, baseline_next_empty_ref)
+        self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, baseline_next_empty_ref, is_baseline=True)
         self.baseline_next_empty_slot = baseline_next_empty_ref[0]
 
         num_used_nodes = np.sum(self.baseline_state['nodes'] > 0)
         num_on_nodes = np.sum(self.baseline_state['nodes'] > -1)
         num_idle_nodes = num_on_nodes - num_used_nodes
+        num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
+
+        # Track baseline max queue size
+        if num_unprocessed_jobs > self.baseline_max_queue_size_reached:
+            self.baseline_max_queue_size_reached = num_unprocessed_jobs
 
         self.baseline_state['job_queue'] = job_queue_2d.flatten()
 
@@ -726,6 +757,14 @@ class ComputeClusterEnv(gym.Env):
 
     def record_episode_completion(self):
         """Record episode costs for long-term analysis."""
+        # Calculate average wait times
+        avg_wait_time = self.total_job_wait_time / self.jobs_completed if self.jobs_completed > 0 else 0
+        baseline_avg_wait_time = self.baseline_total_job_wait_time / self.baseline_jobs_completed if self.baseline_jobs_completed > 0 else 0
+
+        # Calculate completion rates
+        completion_rate = (self.jobs_completed / self.jobs_submitted * 100) if self.jobs_submitted > 0 else 0
+        baseline_completion_rate = (self.baseline_jobs_completed / self.baseline_jobs_submitted * 100) if self.baseline_jobs_submitted > 0 else 0
+
         episode_data = {
             'episode': self.current_episode,
             'agent_cost': float(self.total_cost),
@@ -735,7 +774,19 @@ class ComputeClusterEnv(gym.Env):
             'savings_vs_baseline_off': float(self.baseline_cost_off - self.total_cost),
             'savings_pct_baseline': float(((self.baseline_cost - self.total_cost) / self.baseline_cost) * 100) if self.baseline_cost > 0 else 0,
             'savings_pct_baseline_off': float(((self.baseline_cost_off - self.total_cost) / self.baseline_cost_off) * 100) if self.baseline_cost_off > 0 else 0,
-            'total_reward': float(self.episode_reward)
+            'total_reward': float(self.episode_reward),
+            # Agent job metrics
+            'jobs_submitted': self.jobs_submitted,
+            'jobs_completed': self.jobs_completed,
+            'avg_wait_time': float(avg_wait_time),
+            'completion_rate': float(completion_rate),
+            'max_queue_size': self.max_queue_size_reached,
+            # Baseline job metrics
+            'baseline_jobs_submitted': self.baseline_jobs_submitted,
+            'baseline_jobs_completed': self.baseline_jobs_completed,
+            'baseline_avg_wait_time': float(baseline_avg_wait_time),
+            'baseline_completion_rate': float(baseline_completion_rate),
+            'baseline_max_queue_size': self.baseline_max_queue_size_reached
         }
         self.episode_costs.append(episode_data)
 
