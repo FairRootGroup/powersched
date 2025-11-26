@@ -11,7 +11,7 @@ PowerSched is a reinforcement learning project that uses PPO (Proximal Policy Op
 - **Environment** (`environment.py`): Gymnasium-compatible RL environment simulating a compute cluster with 335 nodes, job queues, and electricity pricing
 - **Training** (`train.py`): Main training script using stable-baselines3 PPO with tensorboard logging and model checkpointing
 - **Pricing** (`prices.py`): Electricity price modeling and data handling
-- **Samplers**: Job duration (`sampler_duration.py`) and job characteristics (`sampler_jobs.py`) sampling from real data
+- **Samplers**: Job duration (`sampler_duration.py`), job characteristics (`sampler_jobs.py`), and hourly statistical sampler (`sampler_hourly.py`) sampling from real data
 - **Plotting** (`plot.py`): Visualization of training progress, rewards, and cluster state
 - **Callbacks** (`callbacks.py`): Custom callbacks for training monitoring and logging
 - **Weights** (`weights.py`): Reward weight configuration and management
@@ -47,6 +47,11 @@ python ./train.py --render human
 ```bash
 python ./train.py --evaluate-savings --eval-months 12 --session my_experiment
 ```
+This runs the trained model for the specified number of months and generates:
+- Episode-by-episode cost and job completion statistics
+- Cumulative savings plot comparing agent vs two baselines
+- Comprehensive job processing metrics (completion rates, wait times, queue sizes)
+- Annual savings projections
 
 **Sequential Training with Different Weights:**
 ```bash
@@ -55,9 +60,10 @@ python ./train_iter.py
 
 **Run Tests:**
 ```bash
-python test_sampler_duration.py --print-stats --plot
-python test_sampler_jobs.py --print-stats --plot
-python test_aggregated_jobs.py
+python sampler_duration_test.py --print-stats --plot
+python sampler_jobs_test.py --file-path data/jobs.log
+python sampler_jobs_test_aggregated.py --file-path data/jobs.log
+python sampler_hourly_test.py --file-path data-internal/allusers-main-30.log --test-day
 ```
 
 ## Key Training Parameters
@@ -77,8 +83,21 @@ Additional training options:
 ## Data Files
 
 - `data/`: Contains job duration samples and price data
+- `data-internal/`: Contains complete Slurm logs with job characteristics (nodes, cores, duration)
 - `sessions/`: Training session outputs (logs, models, plots)
 - Models are saved as `.zip` files every 100K steps during training
+
+## Samplers
+
+The project includes three job samplers:
+
+1. **Duration Sampler** (`sampler_duration.py`): Samples job durations from simple duration logs
+2. **Jobs Sampler** (`sampler_jobs.py`): Pattern-based replay of historical job batches with full characteristics
+3. **Hourly Sampler** (`sampler_hourly.py`): Statistical sampler that builds hour-of-day distributions from Slurm logs
+   - Captures daily patterns (busy vs quiet hours)
+   - Properly handles zero-job hours
+   - Samples job count, duration, nodes, and cores-per-node independently
+   - Generates randomized but realistic job patterns
 
 ## Architecture Notes
 
@@ -91,11 +110,33 @@ Additional training options:
 - Job queue: max 1000 jobs, max 1500 new jobs per hour, max 170h runtime
 - Power consumption: 150W idle, 450W used per node
 
+## Evaluation Metrics
+
+When using `--evaluate-savings`, the system outputs:
+
+**Per Episode:**
+- Total cost for the episode
+- Savings vs baseline (with idle nodes) and baseline_off (no idle nodes)
+- Job completion rate (completed/submitted)
+- Average wait time per job
+- Maximum queue size reached
+
+**Cumulative Analysis:**
+- Total savings over evaluation period
+- Average monthly cost reduction percentage
+- Projected annual savings rate
+- Job processing comparison: agent vs baseline completion rates, wait times, and queue sizes
+
 ## Training Session Management
 
 Sessions are organized under `sessions/` directory with subdirectories for:
 - `logs/`: Tensorboard training logs
 - `models/`: Model checkpoints saved every 100K steps
-- `plots/`: Training visualization plots
+- `plots/`: Training visualization plots and cumulative savings analysis
 
 Use `--session` parameter to create named training runs for organization and comparison.
+
+The cumulative savings plot (generated during `--evaluate-savings`) is saved to the session's plots directory and shows:
+- Agent costs vs baseline costs over time
+- Two baseline comparisons: with idle nodes (baseline) and without idle nodes (baseline_off)
+- Visual representation of cost reduction achieved by the trained agent
