@@ -125,27 +125,43 @@ def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=Tru
         print(f"Warning: Only {episodes_available} episodes available, requested {episodes_needed}")
         episodes_needed = episodes_available
 
-    # Calculate cumulative savings
+    # Calculate cumulative savings for both baselines
     cumulative_savings = []
+    cumulative_savings_off = []
     monthly_savings_pct = []
+    monthly_savings_pct_off = []
     total_saved = 0
+    total_saved_off = 0
 
     for i in range(episodes_needed):
         episode_data = episode_costs[i]
         agent_cost = episode_data['agent_cost']
         baseline_cost = episode_data['baseline_cost']
+        baseline_cost_off = episode_data['baseline_cost_off']
 
+        # Cumulative savings vs baseline (with idle nodes)
         episode_savings = baseline_cost - agent_cost
         total_saved += episode_savings
         cumulative_savings.append(total_saved)
 
+        # Cumulative savings vs baseline_off (no idle nodes)
+        episode_savings_off = baseline_cost_off - agent_cost
+        total_saved_off += episode_savings_off
+        cumulative_savings_off.append(total_saved_off)
+
         # Calculate monthly savings percentage (every 2 episodes)
         if i % 2 == 1:  # End of month
             month_baseline = episode_costs[i-1]['baseline_cost'] + baseline_cost
+            month_baseline_off = episode_costs[i-1]['baseline_cost_off'] + baseline_cost_off
             month_agent = episode_costs[i-1]['agent_cost'] + agent_cost
-            month_savings_pct = ((month_baseline - month_agent) / month_baseline) * 100
+
+            month_savings_pct = ((month_baseline - month_agent) / month_baseline) * 100 if month_baseline > 0 else 0
             monthly_savings_pct.append(month_savings_pct)
             monthly_savings_pct.append(month_savings_pct)  # Duplicate for visualization
+
+            month_savings_pct_off = ((month_baseline_off - month_agent) / month_baseline_off) * 100 if month_baseline_off > 0 else 0
+            monthly_savings_pct_off.append(month_savings_pct_off)
+            monthly_savings_pct_off.append(month_savings_pct_off)  # Duplicate for visualization
 
     # Create time axis (2-week intervals)
     time_periods = np.arange(1, episodes_needed + 1) * 2  # Convert to weeks
@@ -156,24 +172,24 @@ def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=Tru
 
     # Primary axis - Cumulative savings (€)
     color1 = 'tab:blue'
+    color1b = 'tab:cyan'
     ax1.set_xlabel('Time (Months)', fontsize=12)
-    ax1.set_ylabel('Cumulative Savings (€)', color=color1, fontsize=12)
-    line1 = ax1.plot(time_months, cumulative_savings, color=color1, linewidth=3, label='Cumulative Savings')
-    ax1.tick_params(axis='y', labelcolor=color1)
+    ax1.set_ylabel('Cumulative Savings (€)', fontsize=12)
+    line1 = ax1.plot(time_months, cumulative_savings, color=color1, linewidth=3, label='Savings vs Baseline (with idle)')
+    line1b = ax1.plot(time_months, cumulative_savings_off, color=color1b, linewidth=3, linestyle='--', label='Savings vs Baseline_off (no idle)')
+    ax1.tick_params(axis='y')
     ax1.grid(True, alpha=0.3)
 
     # Secondary axis - Monthly savings percentage
     ax2 = ax1.twinx()
     color2 = 'tab:orange'
-    ax2.set_ylabel('Monthly Savings (%)', color=color2, fontsize=12)
-    line2 = ax2.plot(time_months, monthly_savings_pct, color=color2, linewidth=2, linestyle='--', alpha=0.7, label='Monthly Savings %')
-    ax2.tick_params(axis='y', labelcolor=color2)
-    ax2.set_ylim(0, max(monthly_savings_pct) * 1.1)
-
-    # Add break-even line if implementation cost is known
-    # For now, use a placeholder of €20,000
-    implementation_cost = 20000
-    ax1.axhline(y=implementation_cost, color='red', linestyle=':', linewidth=2, label=f'Break-even (€{implementation_cost:,})')
+    color2b = 'tab:red'
+    ax2.set_ylabel('Monthly Savings (%)', fontsize=12)
+    line2 = ax2.plot(time_months, monthly_savings_pct, color=color2, linewidth=2, linestyle=':', alpha=0.7, label='Monthly % (vs baseline)')
+    line2b = ax2.plot(time_months, monthly_savings_pct_off, color=color2b, linewidth=2, linestyle=':', alpha=0.7, label='Monthly % (vs baseline_off)')
+    ax2.tick_params(axis='y')
+    max_pct = max(max(monthly_savings_pct) if monthly_savings_pct else 0, max(monthly_savings_pct_off) if monthly_savings_pct_off else 0)
+    ax2.set_ylim(0, max_pct * 1.1 if max_pct > 0 else 100)
 
     # Add seasonal shading (optional)
     for i in range(0, int(months), 3):
@@ -182,26 +198,29 @@ def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=Tru
 
     # Title and statistics
     final_savings = cumulative_savings[-1]
-    avg_monthly_savings = np.mean(monthly_savings_pct)
-    roi_months = implementation_cost / (final_savings / months) if final_savings > 0 else float('inf')
+    final_savings_off = cumulative_savings_off[-1]
+    avg_monthly_savings = np.mean(monthly_savings_pct) if monthly_savings_pct else 0
+    avg_monthly_savings_off = np.mean(monthly_savings_pct_off) if monthly_savings_pct_off else 0
 
     plt.title(f'PowerSched Long-Term Cost Savings Analysis\n'
               f'{env.weights}\n'
-              f'Total Savings: €{final_savings:,.0f} | '
-              f'Avg Monthly Reduction: {avg_monthly_savings:.1f}% | '
-              f'ROI Period: {roi_months:.1f} months',
+              f'Savings vs Baseline: €{final_savings:,.0f} ({avg_monthly_savings:.1f}% avg) | '
+              f'Savings vs Baseline_off: €{final_savings_off:,.0f} ({avg_monthly_savings_off:.1f}% avg)',
               fontsize=14, pad=20)
 
     # Add inset box with key metrics
-    textstr = f'Total Savings: €{final_savings:,.0f}\nAverage Monthly: {avg_monthly_savings:.1f}% reduction\nROI: {roi_months:.1f} months'
+    textstr = (f'Vs Baseline (with idle):\n'
+               f'  €{final_savings:,.0f} | {avg_monthly_savings:.1f}%\n'
+               f'Vs Baseline_off (no idle):\n'
+               f'  €{final_savings_off:,.0f} | {avg_monthly_savings_off:.1f}%')
 
     props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
     ax1.text(0.02, 0.98, textstr, transform=ax1.transAxes, fontsize=10, verticalalignment='top', bbox=props)
 
     # Combine legends
-    lines = line1 + line2 + [ax1.lines[-1]]  # Include break-even line
+    lines = line1 + line1b + line2 + line2b
     labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc='center right')
+    ax1.legend(lines, labels, loc='center right', fontsize=9)
 
     plt.tight_layout()
 
@@ -220,5 +239,6 @@ def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=Tru
     return {
         'total_savings': final_savings,
         'avg_monthly_savings_pct': avg_monthly_savings,
-        'roi_months': roi_months
+        'total_savings_off': final_savings_off,
+        'avg_monthly_savings_pct_off': avg_monthly_savings_off
     }

@@ -149,11 +149,14 @@ def main():
                 # print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.total_cost:.2f}")
                 done = terminated or truncated
 
+            savings_vs_baseline = env.baseline_cost - env.total_cost
+            savings_vs_baseline_off = env.baseline_cost_off - env.total_cost
             print(f"  Episode {episode + 1} completed: "
                 f"Reward = {episode_reward:.2f}, "
                 f"Steps = {step_count}, "
-                f"Cost = €{env.total_cost:.2f}, "
-                f"Savings = €{env.baseline_cost - env.total_cost:.2f}")
+                f"Agent Cost = €{env.total_cost:.2f}, "
+                f"Savings = €{savings_vs_baseline:.2f} (vs baseline), "
+                f"€{savings_vs_baseline_off:.2f} (vs baseline_off)")
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
@@ -163,10 +166,15 @@ def main():
             results = plot_cumulative_savings(env, env.episode_costs, session_dir, months=args.eval_months, save=True, show=args.render == 'human')
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
-                print(f"Total Savings: €{results['total_savings']:,.0f}")
-                print(f"Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
-                print(f"ROI Period: {results['roi_months']:.1f} months")
-                print(f"Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
+                print(f"\nVs Baseline (with idle nodes):")
+                print(f"  Total Savings: €{results['total_savings']:,.0f}")
+                print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
+                print(f"  Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
+
+                print(f"\nVs Baseline_off (no idle nodes):")
+                print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
+                print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct_off']:.1f}%")
+                print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 
