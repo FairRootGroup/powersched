@@ -497,11 +497,9 @@ class ComputeClusterEnv(gym.Env):
             if job_duration <= 0:
                 continue
 
-            candidate_nodes = []
-
-            for node_idx in range(len(nodes)):
-                if nodes[node_idx] >= 0 and cores_available[node_idx] >= job_cores_per_node:
-                    candidate_nodes.append(node_idx)
+            # Use NumPy vectorized operations to find candidate nodes
+            mask = (nodes >= 0) & (cores_available >= job_cores_per_node)
+            candidate_nodes = np.where(mask)[0]
 
             # Check if we have enough nodes for this job
             if len(candidate_nodes) >= job_nodes:
