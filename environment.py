@@ -227,6 +227,10 @@ class ComputeClusterEnv(gym.Env):
 
         self.next_job_id = 0 # shared between baseline and normal jobs
 
+        # Track next empty slot in job queue for O(1) insertion
+        self.next_empty_slot = 0
+        self.baseline_next_empty_slot = 0
+
         return self.state, {}
 
     def reset_state(self):
@@ -292,7 +296,9 @@ class ComputeClusterEnv(gym.Env):
                 new_jobs_cores.append(np.random.randint(MIN_CORES_PER_JOB, CORES_PER_NODE + 1))
 
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
-        new_jobs = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
+        next_empty_ref = [self.next_empty_slot]
+        new_jobs = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, next_empty_ref)
+        self.next_empty_slot = next_empty_ref[0]
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -307,7 +313,8 @@ class ComputeClusterEnv(gym.Env):
 
         # assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
-        num_launched_jobs = self.assign_jobs_to_available_nodes(job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs)
+        num_launched_jobs = self.assign_jobs_to_available_nodes(job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs, next_empty_ref)
+        self.next_empty_slot = next_empty_ref[0]
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
         # Calculate node utilization stats
@@ -422,21 +429,30 @@ class ComputeClusterEnv(gym.Env):
 
         return completed_jobs
 
-    def add_new_jobs(self, job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores):
+    def add_new_jobs(self, job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, next_empty_slot_ref):
         new_jobs = []
         if new_jobs_count > 0:
+            next_empty = next_empty_slot_ref[0]
             for i in range(new_jobs_count):
-                # Find empty slot in job queue
-                for j in range(len(job_queue_2d)):
-                    if job_queue_2d[j][0] == 0:  # Empty slot
-                        job_queue_2d[j] = [
-                            new_jobs_durations[i],
-                            0,  # Age starts at 0
-                            new_jobs_nodes[i],  # Number of nodes required
-                            new_jobs_cores[i]   # Cores per node required
-                        ]
-                        new_jobs.append(job_queue_2d[j])
-                        break
+                # Check if we have space in the queue
+                if next_empty >= len(job_queue_2d):
+                    break  # Queue is full
+
+                # Add job to the known empty slot
+                job_queue_2d[next_empty] = [
+                    new_jobs_durations[i],
+                    0,  # Age starts at 0
+                    new_jobs_nodes[i],  # Number of nodes required
+                    new_jobs_cores[i]   # Cores per node required
+                ]
+                new_jobs.append(job_queue_2d[next_empty])
+
+                # Find next empty slot
+                next_empty += 1
+                while next_empty < len(job_queue_2d) and job_queue_2d[next_empty][0] != 0:
+                    next_empty += 1
+
+            next_empty_slot_ref[0] = next_empty
         return new_jobs
 
     def adjust_nodes(self, action_type, action_magnitude, nodes, cores_available):
@@ -472,7 +488,7 @@ class ComputeClusterEnv(gym.Env):
 
         return num_node_changes
 
-    def assign_jobs_to_available_nodes(self, job_queue_2d, nodes, cores_available, running_jobs):
+    def assign_jobs_to_available_nodes(self, job_queue_2d, nodes, cores_available, running_jobs, next_empty_slot_ref=None):
         num_processed_jobs = 0
 
         for job_idx, job in enumerate(job_queue_2d):
@@ -516,6 +532,10 @@ class ComputeClusterEnv(gym.Env):
                 # Clear job from queue
                 job_queue_2d[job_idx] = [0, 0, 0, 0]
 
+                # Update next_empty_slot if we cleared a slot before it
+                if next_empty_slot_ref is not None and job_idx < next_empty_slot_ref[0]:
+                    next_empty_slot_ref[0] = job_idx
+
                 num_processed_jobs += 1
             else:
                 # Not enough resources for this job, increment its age
@@ -528,9 +548,12 @@ class ComputeClusterEnv(gym.Env):
 
         self.process_ongoing_jobs(self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs)
 
-        self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
+        baseline_next_empty_ref = [self.baseline_next_empty_slot]
+        self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, baseline_next_empty_ref)
+        self.baseline_next_empty_slot = baseline_next_empty_ref[0]
 
-        self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs)
+        self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, baseline_next_empty_ref)
+        self.baseline_next_empty_slot = baseline_next_empty_ref[0]
 
         num_used_nodes = np.sum(self.baseline_state['nodes'] > 0)
         num_on_nodes = np.sum(self.baseline_state['nodes'] > -1)
