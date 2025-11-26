@@ -3,3 +3,4 @@ sessions/
 venv/
 docs/
 data-internal/
+.claude/
