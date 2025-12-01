@@ -45,11 +45,14 @@ def check_distribution_smoke(cfg, seed=7, hours=2000):
 
     print(f"[INFO] arrivals={cfg.arrivals} mean={mean:.2f} p0={p0:.3f} max={counts.max()}")
 
-    #if cfg.arrivals == "flat":
-    if cfg.arrivals == "uniform":
-        # Uniform integers 0..M => mean ~ M/2 (close-ish for long runs)
-        expected = cfg.max_new_jobs_per_hour / 2.0
+    if cfg.arrivals == "flat":
+        # Flat mode: mean should be close to flat_jobs_per_hour (with jitter variation)
+        expected = cfg.flat_jobs_per_hour
         assert abs(mean - expected) / expected < 0.10, "flat mean looks off (smoke check)"
+    elif cfg.arrivals == "uniform":
+        # Uniform integers 0..M => mean ~ M/2
+        expected = cfg.max_new_jobs_per_hour / 2.0
+        assert abs(mean - expected) / expected < 0.10, "uniform mean looks off (smoke check)"
     elif cfg.arrivals == "poisson":
         # Only a loose sanity check: mean should not be wildly off lambda unless capped heavily
         target = min(cfg.poisson_lambda, cfg.max_new_jobs_per_hour)
@@ -62,8 +65,9 @@ def main():
     # Example configs to test
     flat_cfg = WorkloadGenConfig(arrivals="flat", max_new_jobs_per_hour=1000)
     pois_cfg = WorkloadGenConfig(arrivals="poisson", poisson_lambda=200.0, max_new_jobs_per_hour=1000)
+    unif_cfg = WorkloadGenConfig(arrivals="uniform", max_new_jobs_per_hour=1000)
 
-    for cfg in (flat_cfg, pois_cfg):
+    for cfg in (flat_cfg, pois_cfg, unif_cfg):
         check_determinism(cfg)
         check_bounds(cfg)
         check_distribution_smoke(cfg)
