@@ -7,6 +7,21 @@ import re
 import glob
 import argparse
 import pandas as pd
+from workloadgen import WorkloadGenerator, WorkloadGenConfig
+
+# Import environment variables:
+from environment import (
+    MAX_JOB_DURATION,
+    MIN_NODES_PER_JOB, MAX_NODES_PER_JOB,
+    MIN_CORES_PER_JOB,
+    CORES_PER_NODE,
+)
+
+        
+# Train.py passes strings; the env treats "" as falsy in some places and truthy in others.
+# To be safe: normalize "" -> None here.
+def norm_path(x):
+    return None if (x is None or str(x).strip() == "") else x
 
 STEPS_PER_ITERATION = 100000
 
@@ -48,7 +63,7 @@ def main():
     jobs_file_path = args.jobs
     hourly_jobs_file_path = args.hourly_jobs
 
-    if prices_file_path:
+    if norm_path(prices_file_path):
         df = pd.read_csv(prices_file_path, parse_dates=['Date'])
         prices = df['Price'].values.tolist()
         print(f"Loaded {len(prices)} prices from CSV: {prices_file_path}")
@@ -78,17 +93,29 @@ def main():
 
     if not os.path.exists(plots_dir):
         os.makedirs(plots_dir)
-        
-    # Train.py passes strings; the env treats "" as falsy in some places and truthy in others.
-    # To be safe: normalize "" -> None here.
-    def norm_path(x):
-        return None if (x is None or str(x).strip() == "") else x
+
+    # Load Workload Generator:
+    
+    workload_gen = None
+    if args.workload_gen:
+        cfg = WorkloadGenConfig(
+            arrivals=args.workload_gen,
+            poisson_lambda=args.wg_poisson_lambda,
+            max_new_jobs_per_hour=args.wg_max_jobs_hour,
+            min_duration=1,
+            max_duration=MAX_JOB_DURATION,
+            min_nodes=MIN_NODES_PER_JOB,
+            max_nodes=MAX_NODES_PER_JOB,
+            min_cores=MIN_CORES_PER_JOB,
+            max_cores=CORES_PER_NODE,
+        )
+        workload_gen = WorkloadGenerator(cfg)
 
     env = ComputeClusterEnv(weights=weights,
                             session=args.session,
                             render_mode=args.render,
                             quick_plot=args.quick_plot,
-                            external_prices=norm_path(prices),
+                            external_prices=prices,
                             external_durations=norm_path(job_durations_file_path),
                             external_jobs=norm_path(jobs_file_path),
                             external_hourly_jobs=norm_path(hourly_jobs_file_path),
@@ -104,7 +131,8 @@ def main():
                             skip_plot_used_nodes=args.skip_plot_used_nodes,
                             skip_plot_job_queue=args.skip_plot_job_queue,
                             steps_per_iteration=STEPS_PER_ITERATION,
-                            evaluation_mode=args.evaluate_savings)
+                            evaluation_mode=args.evaluate_savings, 
+                            workload_gen=workload_gen)
     env.reset()
 
     # Check if there are any saved models in models_dir

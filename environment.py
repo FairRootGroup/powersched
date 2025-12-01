@@ -10,7 +10,6 @@ from prices_deterministic import Prices # Test re-worked prices script
 from weights import Weights
 from plot import plot, plot_reward
 from sampler_duration import durations_sampler
-from sampler_jobs import jobs_sampler
 from sampler_jobs import DurationSampler
 from sampler_hourly import hourly_sampler
 
@@ -115,7 +114,8 @@ class ComputeClusterEnv(gym.Env):
                  skip_plot_used_nodes,
                  skip_plot_job_queue,
                  steps_per_iteration,
-                 evaluation_mode=False):
+                 evaluation_mode=False, 
+                 workload_gen=None):
         super().__init__()
 
         self.weights = weights
@@ -151,19 +151,22 @@ class ComputeClusterEnv(gym.Env):
         #Initialize deterministic RNG, instead of global RNG
         self.np_random = None
         self._seed = None
+        self.workload_gen = workload_gen
+
 
         if self.external_durations:
             durations_sampler.init(self.external_durations)
 
-        if self.external_jobs:
+        if self.external_jobs and not self.workload_gen:
+            self.jobs_sampler = DurationSampler()
             print(f"Loading jobs from {self.external_jobs}")
-            jobs_sampler.parse_jobs(self.external_jobs, 60)
-            print(f"Parsed jobs for {len(jobs_sampler.jobs)} hours")
-            print(f"Parsed aggregated jobs for {len(jobs_sampler.aggregated_jobs)} hours")
-            jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
-            print(f"Max jobs per hour: {jobs_sampler.max_new_jobs_per_hour}")
-            print(f"Max job duration: {jobs_sampler.max_job_duration}")
-            print(f"Parsed hourly jobs for {len(jobs_sampler.hourly_jobs)} hours")
+            self.jobs_sampler.parse_jobs(self.external_jobs, 60)
+            print(f"Parsed jobs for {len(self.jobs_sampler.jobs)} hours")
+            print(f"Parsed aggregated jobs for {len(self.jobs_sampler.aggregated_jobs)} hours")
+            self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
+            print(f"Max jobs per hour: {self.jobs_sampler.max_new_jobs_per_hour}")
+            print(f"Max job duration: {self.jobs_sampler.max_job_duration}")
+            print(f"Parsed hourly jobs for {len(self.jobs_sampler.hourly_jobs)} hours")
 
         if self.external_hourly_jobs:
             print(f"Loading hourly jobs from {self.external_hourly_jobs}")
@@ -321,6 +324,7 @@ class ComputeClusterEnv(gym.Env):
         self.dropped_this_episode = 0
         self.baseline_dropped_this_episode = 0
         self.prev_excess_dropped = 0
+        
 
     def step(self, action):
         self.current_step += 1
@@ -348,7 +352,6 @@ class ComputeClusterEnv(gym.Env):
         new_jobs_count = 0
 
         if self.external_jobs:
-          #  jobs = jobs_sampler.sample_one_hourly(wrap=True)['hourly_jobs']
             jobs = self.jobs_sampler.sample_one_hourly(wrap=True)["hourly_jobs"]
             if len(jobs) > 0:
                 for job in jobs:
@@ -358,7 +361,19 @@ class ComputeClusterEnv(gym.Env):
                     new_jobs_cores.append(job['cores_per_node'])
         elif self.external_hourly_jobs:
             hour_of_day = (self.current_hour - 1) % 24
-            jobs = hourly_sampler.sample(hour_of_day)
+            
+            # How much room is left right now?
+            queue_used = int(np.count_nonzero(job_queue_2d[:, 0] > 0))
+            queue_free = max(0, MAX_QUEUE_SIZE - queue_used)
+
+            # Hard cap: do not generate more than we *could* enqueue anyway
+            max_to_generate = min(queue_free, MAX_NEW_JOBS_PER_HOUR)
+
+            if max_to_generate == 0:
+                jobs = []
+            else:
+                jobs = hourly_sampler.sample(hour_of_day, rng=self.np_random, max_jobs=max_to_generate)
+
             if len(jobs) > 0:
                 for job in jobs:
                     new_jobs_count += 1
@@ -366,19 +381,52 @@ class ComputeClusterEnv(gym.Env):
                     new_jobs_nodes.append(job['nodes'])
                     new_jobs_cores.append(job['cores_per_node'])
         else:
-            new_jobs_count = np.random.randint(0, MAX_NEW_JOBS_PER_HOUR + 1)
-            if self.external_durations:
-                new_jobs_durations = durations_sampler.sample(new_jobs_count)
+#----------------------Use Workload Generator for Randomizer------------------------------------------------------------------------------------
+            if self.workload_gen is not None:
+                # How much room is left right now?
+                queue_used = int(np.count_nonzero(job_queue_2d[:, 0] > 0))
+                queue_free = max(0, MAX_QUEUE_SIZE - queue_used)
+
+                # Hard cap: do not generate more than we *could* enqueue anyway
+                max_to_generate = min(queue_free, MAX_NEW_JOBS_PER_HOUR)
+
+                if max_to_generate == 0:
+                    jobs = []
+                else:
+                    jobs = self.workload_gen.sample(self.current_hour - 1, self.np_random)
+                    # In case the generator wants to produce more than we can enqueue:
+                    if len(jobs) > max_to_generate:
+                        jobs = jobs[:max_to_generate]
+                    new_jobs_count = len(jobs)
+                    if new_jobs_count > 0:
+                        for j in jobs:
+                            new_jobs_durations.append(j.duration)
+                            new_jobs_nodes.append(j.nodes)
+                            new_jobs_cores.append(j.cores_per_node)
+#----------------------Legacy Randomizer--------------------------------------------------------------------------------------------------------
             else:
-                new_jobs_durations = np.random.randint(1, MAX_JOB_DURATION + 1, size=new_jobs_count)
-            # Generate random node and core requirements
-            for _ in range(new_jobs_count):
-                new_jobs_nodes.append(np.random.randint(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1))
-                new_jobs_cores.append(np.random.randint(MIN_CORES_PER_JOB, CORES_PER_NODE + 1))
+               # new_jobs_count = np.random.randint(0, MAX_NEW_JOBS_PER_HOUR + 1)     # Keep legacy code for now
+                new_jobs_count = self.np_random.integers(0, MAX_NEW_JOBS_PER_HOUR + 1) # Introduce new, non-global RNG
+                if self.external_durations:
+                    new_jobs_durations = durations_sampler.sample(new_jobs_count)
+                else:
+                 #   new_jobs_durations = np.random.randint(1, MAX_JOB_DURATION + 1, size=new_jobs_count) # Keep legacy code for now
+                    new_jobs_durations = self.np_random.integers(1, MAX_JOB_DURATION + 1, size=new_jobs_count) # Introduce new, non-global RNG
+                # Generate random node and core requirements
+                for _ in range(new_jobs_count):
+                  #  new_jobs_nodes.append(np.random.randint(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1))  # Keep legacy code for now
+                  #  new_jobs_cores.append(np.random.randint(MIN_CORES_PER_JOB, CORES_PER_NODE + 1))  # Keep legacy code for now
+                    new_jobs_nodes.append(self.np_random.integers(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1)) # Introduce new, non-global RNG
+                    new_jobs_cores.append(self.np_random.integers(MIN_CORES_PER_JOB, CORES_PER_NODE + 1)) # Introduce new, non-global RNG
+#----------------------------------------------------------------------------------------------------------------------------------------------
+
+
 
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
         new_jobs, self.next_empty_slot = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, self.next_empty_slot)
         self.jobs_submitted += len(new_jobs)
+        self.jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
+
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -589,13 +637,13 @@ class ComputeClusterEnv(gym.Env):
                 # Assign job to first job_nodes candidates
                 job_allocation = []
                 for i in range(job_nodes):
-                    node_idx = int(candidate_nodes[i])
-                    cores_available[node_idx] -= int(job_cores_per_node)
-                    nodes[node_idx] = max(int(nodes[node_idx]), int(job_duration))
-                    job_allocation.append((node_idx, int(job_cores_per_node)))
+                    node_idx = candidate_nodes[i]
+                    cores_available[node_idx] -= job_cores_per_node
+                    nodes[node_idx] = max(nodes[node_idx], job_duration)
+                    job_allocation.append((node_idx, job_cores_per_node))
 
                 running_jobs[self.next_job_id] = {
-                    "duration": int(job_duration),
+                    "duration": job_duration,
                     "allocation": job_allocation,
                 }
                 self.next_job_id += 1
@@ -610,16 +658,16 @@ class ComputeClusterEnv(gym.Env):
                 # Track job completion and wait time
                 if is_baseline:
                     self.baseline_jobs_completed += 1
-                    self.baseline_total_job_wait_time += int(job_age)
+                    self.baseline_total_job_wait_time += job_age
                 else:
                     self.jobs_completed += 1
-                    self.total_job_wait_time += int(job_age)
+                    self.total_job_wait_time += job_age
 
                 num_processed_jobs += 1
                 continue
 
             # Not enough resources -> job waits and ages (or gets dropped)
-            new_age = int(job_age) + 1
+            new_age = job_age + 1
 
             if new_age > MAX_JOB_AGE:
                 # Clear job from queue

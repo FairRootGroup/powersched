@@ -34,7 +34,7 @@ def test_poisson_mean_sanity():
     rng = np.random.default_rng(1)
     counts = [len(gen.sample(h, rng)) for h in range(2000)]
     mean = float(np.mean(counts))
-    assert 45.0 < mean < 55.0, mean  # loose band, just to catch obvious bugs
+    assert 48.0 < mean < 52.0, mean  # tighter band, still reliable for 2000 samples
 
 if __name__ == "__main__":
     test_determinism()

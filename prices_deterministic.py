@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import deque
 
 class Prices:
     ELECTRICITY_PRICE_BASE = 20
@@ -75,8 +76,6 @@ class Prices:
         self.price_index += 1
 
         self.price_history.append(new_price)
-        #if len(self.price_history) > self.HISTORY_WINDOW:
-        #    self.price_history.pop(0)
         # deque automatically removes oldest when maxlen exceeded | Keep the old line for now. Remove during next PR.
 
         return new_price
