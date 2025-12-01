@@ -5,7 +5,8 @@ import gymnasium as gym
 import numpy as np
 from colorama import init, Fore
 
-from prices import Prices
+#from prices import Prices
+from prices_deterministic import Prices # Test re-worked prices script
 from weights import Weights
 from plot import plot, plot_reward
 from sampler_duration import durations_sampler
@@ -81,13 +82,6 @@ class ComputeClusterEnv(gym.Env):
         """Prints only if the render mode is 'human'."""
         if self.render_mode == 'human':
             print(*args)
-            
-            
-    # Centralize Job removal - Sanity Check, that next_empty_slot always points to FIRST empty:
-    def _clear_job_slot(self,job_queue_2d, job_idx, next_empty_slot_ref=None):
-        job_queue_2d[job_idx] = [0, 0, 0, 0]
-        if next_empty_slot_ref is not None and job_idx < next_empty_slot_ref[0]:
-            next_empty_slot_ref[0] = job_idx
             
     # Validator for debugging:
     def _validate_next_empty(self,job_queue_2d, next_empty):
@@ -248,7 +242,11 @@ class ComputeClusterEnv(gym.Env):
         })
 
     def reset(self, seed = None, options = None):
+        super().reset(seed=seed)
+        self.np_random, self._seed = seeding.np_random(seed) 
+        
         self.reset_state()
+        self.prices.reset()
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
@@ -256,7 +254,7 @@ class ComputeClusterEnv(gym.Env):
             # Initialize job queue to be empty
             'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
             # Initialize predicted prices array
-            'predicted_prices': self.prices.get_predicted_prices(),
+            'predicted_prices': self.prices.predicted_prices.copy(),
         }
 
         self.baseline_state = {
@@ -323,11 +321,6 @@ class ComputeClusterEnv(gym.Env):
         self.dropped_this_episode = 0
         self.baseline_dropped_this_episode = 0
         self.prev_excess_dropped = 0
-        
-     #   if self.external_jobs and not self.workload_gen:
-     #       self.jobs_sampler = DurationSampler()
-     #       self.jobs_sampler.parse_jobs(self.external_jobs, 60)
-     #       self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
 
     def step(self, action):
         self.current_step += 1
@@ -336,7 +329,7 @@ class ComputeClusterEnv(gym.Env):
             self.current_episode += 1
         self.env_print(Fore.GREEN + f"\n[[[ Starting episode: {self.current_episode}, step: {self.current_step}, hour: {self.current_hour}" + Fore.RESET)
 
-        self.state['predicted_prices'] = self.prices.get_predicted_prices()
+        self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
         current_price = self.state['predicted_prices'][0]
         self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
 
@@ -580,6 +573,7 @@ class ComputeClusterEnv(gym.Env):
 
     def assign_jobs_to_available_nodes(self, job_queue_2d, nodes, cores_available, running_jobs, next_empty_slot, is_baseline=False):
         num_processed_jobs = 0
+        num_dropped = 0
 
         for job_idx, job in enumerate(job_queue_2d):
             job_duration, job_age, job_nodes, job_cores_per_node = job
@@ -621,7 +615,7 @@ class ComputeClusterEnv(gym.Env):
                     self.jobs_completed += 1
                     self.total_job_wait_time += int(job_age)
 
-                num_launched += 1
+                num_processed_jobs += 1
                 continue
 
             # Not enough resources -> job waits and ages (or gets dropped)
@@ -645,12 +639,6 @@ class ComputeClusterEnv(gym.Env):
             else:
                 job_queue_2d[job_idx][1] = new_age
                 
-            
-            # DEBUG CHECK for next_empty -> Add a Flag to be called
-            if False:
-                if getattr(self, "strict_checks", False) and (self.current_step % 100 == 0):
-                    self._validate_next_empty(job_queue_2d, next_empty_slot)
-
         return num_processed_jobs, next_empty_slot
 
     def baseline_step(self, current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores):

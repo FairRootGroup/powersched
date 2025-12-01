@@ -37,6 +37,10 @@ def main():
     parser.add_argument("--session", default="default", help="Session ID")
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
     parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
+    parser.add_argument("--workload-gen", type=str, default="", choices=["", "flat", "poisson", "uniform"], help="Enable workload generator (default: disabled).",)
+    parser.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Poisson lambda for jobs/hour.")
+    parser.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
+
 
     args = parser.parse_args()
     prices_file_path = args.prices
@@ -74,15 +78,20 @@ def main():
 
     if not os.path.exists(plots_dir):
         os.makedirs(plots_dir)
+        
+    # Train.py passes strings; the env treats "" as falsy in some places and truthy in others.
+    # To be safe: normalize "" -> None here.
+    def norm_path(x):
+        return None if (x is None or str(x).strip() == "") else x
 
     env = ComputeClusterEnv(weights=weights,
                             session=args.session,
                             render_mode=args.render,
                             quick_plot=args.quick_plot,
-                            external_prices=prices,
-                            external_durations=job_durations_file_path,
-                            external_jobs=jobs_file_path,
-                            external_hourly_jobs=hourly_jobs_file_path,
+                            external_prices=norm_path(prices),
+                            external_durations=norm_path(job_durations_file_path),
+                            external_jobs=norm_path(jobs_file_path),
+                            external_hourly_jobs=norm_path(hourly_jobs_file_path),
                             plot_rewards=args.plot_rewards,
                             plots_dir=plots_dir,
                             plot_once=args.plot_once,
