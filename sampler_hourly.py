@@ -100,7 +100,7 @@ class HourlySampler:
             zero_pct = (dist["job_count"].count(0) / len(dist["job_count"]) * 100) if dist["job_count"] else 0
             print(f"  Hour {hour:2d}: avg={avg_count:.1f} jobs/hour, {zero_pct:.0f}% zero-job samples, {len(dist['durations'])} total jobs")
 
-    def sample(self, hour_of_day):
+    def sample(self, hour_of_day: int, rng, max_jobs: int | None = None):
         """
         Sample jobs for a given hour of day.
 
@@ -119,17 +119,20 @@ class HourlySampler:
         dist = self.hour_distributions[hour_of_day]
 
         # Sample number of jobs for this hour (can be 0)
-        num_jobs = random.choice(dist["job_count"])
+        num_jobs = rng.choice(dist["job_count"])
 
-        if num_jobs == 0:
+        if num_jobs <= 0:
             return []
 
-        # Sample characteristics for each job
+        if max_jobs is not None:
+            num_jobs = min(num_jobs, int(max_jobs))
+            if num_jobs <= 0:
+                return []
         jobs = []
         for _ in range(num_jobs):
-            duration = random.choice(dist["durations"])
-            nodes = random.choice(dist["nodes"])
-            cores = random.choice(dist["cores_per_node"])
+            duration = rng.choice(dist["durations"])
+            nodes = rng.choice(dist["nodes"])
+            cores = rng.choice(dist["cores_per_node"])
 
             jobs.append({
                 "duration": duration,
