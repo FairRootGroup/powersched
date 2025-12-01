@@ -37,6 +37,9 @@ COST_USED_MW = COST_USED / 1000000 # MW
 
 EPISODE_HOURS = WEEK_HOURS * 2
 
+PENALTY_DROPPED_JOB = -5.0  # explicit penalty for each job dropped due to exceeding MAX_JOB_AGE
+
+
 # possible rewards:
 # - cost savings (due to disabled nodes)
 # - reduced conventional energy usage
@@ -74,6 +77,24 @@ class ComputeClusterEnv(gym.Env):
         """Prints only if the render mode is 'human'."""
         if self.render_mode == 'human':
             print(*args)
+            
+            
+    # Centralize Job removal - Sanity Check, that next_empty_slot always points to FIRST empty:
+    def _clear_job_slot(self,job_queue_2d, job_idx, next_empty_slot_ref=None):
+        job_queue_2d[job_idx] = [0, 0, 0, 0]
+        if next_empty_slot_ref is not None and job_idx < next_empty_slot_ref[0]:
+            next_empty_slot_ref[0] = job_idx
+            
+    # Validator for debugging:
+    def _validate_next_empty(self,job_queue_2d, next_empty):
+        n = len(job_queue_2d)
+        if next_empty < n:
+            assert job_queue_2d[next_empty][0] == 0, "next_empty_slot not empty"
+        # everything before must be non-empty
+        if next_empty > 0:
+            assert np.all(job_queue_2d[:next_empty, 0] != 0), "hole before next_empty_slot"
+
+
 
     def __init__(self,
                  weights: Weights,
@@ -154,6 +175,14 @@ class ComputeClusterEnv(gym.Env):
         self.total_cost = 0
         self.baseline_cost = 0
         self.baseline_cost_off = 0
+        # Job tracking metrics for agent
+        self.jobs_dropped = 0
+        self.dropped_this_episode = 0
+
+        # Job tracking metrics for baseline
+        self.baseline_jobs_dropped = 0
+        self.baseline_dropped_this_episode = 0
+
 
         self.reset_state()
 
@@ -270,6 +299,27 @@ class ComputeClusterEnv(gym.Env):
         self.baseline_jobs_completed = 0
         self.baseline_total_job_wait_time = 0
         self.baseline_max_queue_size_reached = 0
+        # Job tracking metrics for agent
+        self.jobs_dropped = 0
+
+        # Job tracking metrics for baseline
+        self.baseline_jobs_dropped = 0
+        self.baseline_dropped_this_episode = 0
+        
+        # Agent
+        self.jobs_rejected_queue_full = 0  # new jobs we couldn't even enqueue
+
+        # Baseline
+        self.baseline_jobs_rejected_queue_full = 0
+        
+        self.dropped_this_episode = 0
+        self.baseline_dropped_this_episode = 0
+        self.prev_excess_dropped = 0
+        
+     #   if self.external_jobs and not self.workload_gen:
+     #       self.jobs_sampler = DurationSampler()
+     #       self.jobs_sampler.parse_jobs(self.external_jobs, 60)
+     #       self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
 
     def step(self, action):
         self.current_step += 1
@@ -368,6 +418,9 @@ class ComputeClusterEnv(gym.Env):
         baseline_cost, baseline_cost_off = self.baseline_step(current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
         self.baseline_cost += baseline_cost
         self.baseline_cost_off += baseline_cost_off
+        excess = max(0, self.dropped_this_episode - self.baseline_dropped_this_episode)
+        self.new_excess = max(0, excess - self.prev_excess_dropped)
+        self.prev_excess_dropped = excess
 
         # calculate reward
         step_reward, step_cost = self.calculate_reward(num_used_nodes, num_idle_nodes, current_price, average_future_price, num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d, num_unprocessed_jobs)
@@ -411,8 +464,8 @@ class ComputeClusterEnv(gym.Env):
                     plot(self, EPISODE_HOURS, MAX_NODES, True, False, self.current_step)
                     self.next_plot_save += self.steps_per_iteration
                     print(self.next_plot_save)
-
-            terminated = True
+            truncated = True   # Changed distinction, so we can identify if ended due to time-limit
+            terminated = False # Added sanity check
 
             # Record episode costs for long-term analysis
             self.record_episode_completion()
@@ -525,33 +578,22 @@ class ComputeClusterEnv(gym.Env):
             if job_duration <= 0:
                 continue
 
-            # Use NumPy vectorized operations to find candidate nodes
+            # Candidates: node is on and has enough free cores
             mask = (nodes >= 0) & (cores_available >= job_cores_per_node)
             candidate_nodes = np.where(mask)[0]
 
-            # Check if we have enough nodes for this job
             if len(candidate_nodes) >= job_nodes:
-                # We found enough nodes, assign the job
+                # Assign job to first job_nodes candidates
                 job_allocation = []
-
-                # Use the first 'job_nodes' candidates
                 for i in range(job_nodes):
-                    node_idx = candidate_nodes[i]
+                    node_idx = int(candidate_nodes[i])
+                    cores_available[node_idx] -= int(job_cores_per_node)
+                    nodes[node_idx] = max(int(nodes[node_idx]), int(job_duration))
+                    job_allocation.append((node_idx, int(job_cores_per_node)))
 
-                    # Update node resources
-                    cores_available[node_idx] -= job_cores_per_node
-
-                    # If this node now has a longer job duration, update it
-                    if nodes[node_idx] < job_duration:
-                        nodes[node_idx] = job_duration
-
-                    # Add to job allocation
-                    job_allocation.append((node_idx, job_cores_per_node))
-
-                # Add job to running_jobs
                 running_jobs[self.next_job_id] = {
-                    'duration': job_duration,
-                    'allocation': job_allocation
+                    "duration": int(job_duration),
+                    "allocation": job_allocation,
                 }
                 self.next_job_id += 1
 
@@ -565,15 +607,40 @@ class ComputeClusterEnv(gym.Env):
                 # Track job completion and wait time
                 if is_baseline:
                     self.baseline_jobs_completed += 1
-                    self.baseline_total_job_wait_time += job_age
+                    self.baseline_total_job_wait_time += int(job_age)
                 else:
                     self.jobs_completed += 1
-                    self.total_job_wait_time += job_age
+                    self.total_job_wait_time += int(job_age)
 
-                num_processed_jobs += 1
+                num_launched += 1
+                continue
+
+            # Not enough resources -> job waits and ages (or gets dropped)
+            new_age = int(job_age) + 1
+
+            if new_age > MAX_JOB_AGE:
+                # Clear job from queue
+                job_queue_2d[job_idx] = [0, 0, 0, 0]
+
+                # Update next_empty_slot if we cleared a slot before it
+                if job_idx < next_empty_slot:
+                    next_empty_slot = job_idx
+                num_dropped += 1
+
+                if is_baseline:
+                    self.baseline_jobs_dropped += 1
+                    self.baseline_dropped_this_episode += 1
+                else:
+                    self.jobs_dropped += 1
+                    self.dropped_this_episode += 1
             else:
-                # Not enough resources for this job, increment its age
-                job_queue_2d[job_idx][1] += 1
+                job_queue_2d[job_idx][1] = new_age
+                
+            
+            # DEBUG CHECK for next_empty -> Add a Flag to be called
+            if False:
+                if getattr(self, "strict_checks", False) and (self.current_step % 100 == 0):
+                    self._validate_next_empty(job_queue_2d, next_empty_slot)
 
         return num_processed_jobs, next_empty_slot
 
@@ -584,6 +651,7 @@ class ComputeClusterEnv(gym.Env):
 
         new_baseline_jobs, self.baseline_next_empty_slot = self.add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores, self.baseline_next_empty_slot)
         self.baseline_jobs_submitted += len(new_baseline_jobs)
+        self.baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
 
         _, self.baseline_next_empty_slot = self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, self.baseline_next_empty_slot, is_baseline=True)
 
@@ -636,6 +704,9 @@ class ComputeClusterEnv(gym.Env):
         self.price_rewards.append(price_reward_norm * 100)
         self.job_age_penalties.append(job_age_penalty_norm * 100)
         self.idle_penalties.append(idle_penalty_norm * 100)
+        
+        # Penalty is always non-positive
+        drop_penalty = min(0, PENALTY_DROPPED_JOB * self.new_excess)
 
         reward = (
             efficiency_reward_weighted
@@ -643,6 +714,7 @@ class ComputeClusterEnv(gym.Env):
             + price_reward_weighted
             + job_age_penalty_weighted
             + idle_penalty_weighted
+            + drop_penalty
         )
 
         self.env_print(f"    > $$$TOTAL: {reward:.4f} = {efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + {idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f}")
@@ -755,6 +827,10 @@ class ComputeClusterEnv(gym.Env):
         # Calculate completion rates
         completion_rate = (self.jobs_completed / self.jobs_submitted * 100) if self.jobs_submitted > 0 else 0
         baseline_completion_rate = (self.baseline_jobs_completed / self.baseline_jobs_submitted * 100) if self.baseline_jobs_submitted > 0 else 0
+        
+        drop_rate = (self.jobs_dropped / self.jobs_submitted * 100) if self.jobs_submitted else 0.0
+        baseline_drop_rate = (self.baseline_jobs_dropped / self.baseline_jobs_submitted * 100) if self.baseline_jobs_submitted else 0.0
+
 
         episode_data = {
             'episode': self.current_episode,
@@ -777,7 +853,16 @@ class ComputeClusterEnv(gym.Env):
             'baseline_jobs_completed': self.baseline_jobs_completed,
             'baseline_avg_wait_time': float(baseline_avg_wait_time),
             'baseline_completion_rate': float(baseline_completion_rate),
-            'baseline_max_queue_size': self.baseline_max_queue_size_reached
+            'baseline_max_queue_size': self.baseline_max_queue_size_reached,
+            
+            #Drop metrics
+            "jobs_dropped": self.jobs_dropped,
+            "drop_rate": float(drop_rate),
+            "jobs_rejected_queue_full": self.jobs_rejected_queue_full,
+
+            "baseline_jobs_dropped": self.baseline_jobs_dropped,
+            "baseline_drop_rate": float(baseline_drop_rate),
+            "baseline_jobs_rejected_queue_full": self.baseline_jobs_rejected_queue_full,
         }
         self.episode_costs.append(episode_data)
 
