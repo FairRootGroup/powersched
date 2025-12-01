@@ -10,7 +10,11 @@ from weights import Weights
 from plot import plot, plot_reward
 from sampler_duration import durations_sampler
 from sampler_jobs import jobs_sampler
+from sampler_jobs import DurationSampler
 from sampler_hourly import hourly_sampler
+
+# For deterministic RNG 
+from gymnasium.utils import seeding
 
 init()  # Initialize colorama
 
@@ -149,6 +153,10 @@ class ComputeClusterEnv(gym.Env):
         self.episode_costs = []
 
         self.prices = Prices(self.external_prices)
+        
+        #Initialize deterministic RNG, instead of global RNG
+        self.np_random = None
+        self._seed = None
 
         if self.external_durations:
             durations_sampler.init(self.external_durations)
@@ -347,7 +355,8 @@ class ComputeClusterEnv(gym.Env):
         new_jobs_count = 0
 
         if self.external_jobs:
-            jobs = jobs_sampler.sample_one_hourly(wrap=True)['hourly_jobs']
+          #  jobs = jobs_sampler.sample_one_hourly(wrap=True)['hourly_jobs']
+            jobs = self.jobs_sampler.sample_one_hourly(wrap=True)["hourly_jobs"]
             if len(jobs) > 0:
                 for job in jobs:
                     new_jobs_count += 1
