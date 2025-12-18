@@ -749,9 +749,10 @@ class ComputeClusterEnv(gym.Env):
         self.price_rewards.append(price_reward_norm * 100)
         self.job_age_penalties.append(job_age_penalty_norm * 100)
         self.idle_penalties.append(idle_penalty_norm * 100)
-        
-        # Penalty is always non-positive
+
+        # 6. penalty for dropped jobs (WIP - unnormalized, weighted)
         drop_penalty = min(0, PENALTY_DROPPED_JOB * self.new_excess)
+        drop_penalty_weighted = self.weights.drop_weight * drop_penalty
 
         reward = (
             efficiency_reward_weighted
@@ -759,10 +760,10 @@ class ComputeClusterEnv(gym.Env):
             + price_reward_weighted
             + job_age_penalty_weighted
             + idle_penalty_weighted
-            + drop_penalty
+            + drop_penalty_weighted
         )
 
-        self.env_print(f"    > $$$TOTAL: {reward:.4f} = {efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + {idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f}")
+        self.env_print(f"    > $$$TOTAL: {reward:.4f} = {efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + {idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f} + {drop_penalty_weighted:.4f}")
         self.env_print(f"    > step cost: €{total_cost:.4f}")
 
         return reward, total_cost
