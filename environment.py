@@ -182,6 +182,8 @@ class ComputeClusterEnv(gym.Env):
         # Job tracking metrics for agent
         self.jobs_dropped = 0
         self.dropped_this_episode = 0
+        self.jobs_rejected_queue_full = 0
+        self.baseline_jobs_rejected_queue_full = 0
 
         # Job tracking metrics for baseline
         self.baseline_jobs_dropped = 0
@@ -369,7 +371,7 @@ class ComputeClusterEnv(gym.Env):
         new_jobs_cores = []
         new_jobs_count = 0
 
-        if self.external_jobs:
+        if self.external_jobs and not self.workload_gen:
             jobs = self.jobs_sampler.sample_one_hourly(wrap=True)["hourly_jobs"]
             if len(jobs) > 0:
                 for job in jobs:
