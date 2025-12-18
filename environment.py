@@ -13,7 +13,7 @@ from sampler_duration import durations_sampler
 from sampler_jobs import DurationSampler
 from sampler_hourly import hourly_sampler
 
-# For deterministic RNG 
+# For deterministic RNG
 from gymnasium.utils import seeding
 
 init()  # Initialize colorama
@@ -81,7 +81,7 @@ class ComputeClusterEnv(gym.Env):
         """Prints only if the render mode is 'human'."""
         if self.render_mode == 'human':
             print(*args)
-            
+
     # Validator for debugging:
     def _validate_next_empty(self,job_queue_2d, next_empty):
         n = len(job_queue_2d)
@@ -114,7 +114,7 @@ class ComputeClusterEnv(gym.Env):
                  skip_plot_used_nodes,
                  skip_plot_job_queue,
                  steps_per_iteration,
-                 evaluation_mode=False, 
+                 evaluation_mode=False,
                  workload_gen=None):
         super().__init__()
 
@@ -147,7 +147,7 @@ class ComputeClusterEnv(gym.Env):
         self.episode_costs = []
 
         self.prices = Prices(self.external_prices)
-        
+
         #Initialize deterministic RNG, instead of global RNG
         self.np_random = None
         self._seed = None
@@ -246,8 +246,8 @@ class ComputeClusterEnv(gym.Env):
 
     def reset(self, seed = None, options = None):
         super().reset(seed=seed)
-        self.np_random, self._seed = seeding.np_random(seed) 
-        
+        self.np_random, self._seed = seeding.np_random(seed)
+
         self.reset_state()
         self.prices.reset()
 
@@ -314,17 +314,17 @@ class ComputeClusterEnv(gym.Env):
         # Job tracking metrics for baseline
         self.baseline_jobs_dropped = 0
         self.baseline_dropped_this_episode = 0
-        
+
         # Agent
         self.jobs_rejected_queue_full = 0  # new jobs we couldn't even enqueue
 
         # Baseline
         self.baseline_jobs_rejected_queue_full = 0
-        
+
         self.dropped_this_episode = 0
         self.baseline_dropped_this_episode = 0
         self.prev_excess_dropped = 0
-        
+
 
     def step(self, action):
         self.current_step += 1
@@ -361,7 +361,7 @@ class ComputeClusterEnv(gym.Env):
                     new_jobs_cores.append(job['cores_per_node'])
         elif self.external_hourly_jobs:
             hour_of_day = (self.current_hour - 1) % 24
-            
+
             # How much room is left right now?
             queue_used = int(np.count_nonzero(job_queue_2d[:, 0] > 0))
             queue_free = max(0, MAX_QUEUE_SIZE - queue_used)
@@ -684,7 +684,7 @@ class ComputeClusterEnv(gym.Env):
                     self.dropped_this_episode += 1
             else:
                 job_queue_2d[job_idx][1] = new_age
-                
+
         return num_processed_jobs, next_empty_slot, num_dropped
 
     def baseline_step(self, current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores):
@@ -871,7 +871,7 @@ class ComputeClusterEnv(gym.Env):
         # Calculate completion rates
         completion_rate = (self.jobs_completed / self.jobs_submitted * 100) if self.jobs_submitted > 0 else 0
         baseline_completion_rate = (self.baseline_jobs_completed / self.baseline_jobs_submitted * 100) if self.baseline_jobs_submitted > 0 else 0
-        
+
         drop_rate = (self.jobs_dropped / self.jobs_submitted * 100) if self.jobs_submitted else 0.0
         baseline_drop_rate = (self.baseline_jobs_dropped / self.baseline_jobs_submitted * 100) if self.baseline_jobs_submitted else 0.0
 
@@ -898,7 +898,7 @@ class ComputeClusterEnv(gym.Env):
             'baseline_avg_wait_time': float(baseline_avg_wait_time),
             'baseline_completion_rate': float(baseline_completion_rate),
             'baseline_max_queue_size': self.baseline_max_queue_size_reached,
-            
+
             #Drop metrics
             "jobs_dropped": self.jobs_dropped,
             "drop_rate": float(drop_rate),
