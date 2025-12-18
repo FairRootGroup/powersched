@@ -441,7 +441,7 @@ class ComputeClusterEnv(gym.Env):
 
         # assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
-        num_launched_jobs, self.next_empty_slot = self.assign_jobs_to_available_nodes(job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs, self.next_empty_slot)
+        num_launched_jobs, self.next_empty_slot, num_dropped_this_step = self.assign_jobs_to_available_nodes(job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs, self.next_empty_slot)
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
         # Calculate node utilization stats
@@ -468,9 +468,7 @@ class ComputeClusterEnv(gym.Env):
         baseline_cost, baseline_cost_off = self.baseline_step(current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
         self.baseline_cost += baseline_cost
         self.baseline_cost_off += baseline_cost_off
-        excess = max(0, self.dropped_this_episode - self.baseline_dropped_this_episode)
-        self.new_excess = max(0, excess - self.prev_excess_dropped)
-        self.prev_excess_dropped = excess
+        self.num_dropped_this_step = num_dropped_this_step
 
         # calculate reward
         step_reward, step_cost = self.calculate_reward(num_used_nodes, num_idle_nodes, current_price, average_future_price, num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d, num_unprocessed_jobs)
@@ -687,7 +685,7 @@ class ComputeClusterEnv(gym.Env):
             else:
                 job_queue_2d[job_idx][1] = new_age
                 
-        return num_processed_jobs, next_empty_slot
+        return num_processed_jobs, next_empty_slot, num_dropped
 
     def baseline_step(self, current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores):
         job_queue_2d = self.baseline_state['job_queue'].reshape(-1, 4)
@@ -698,7 +696,7 @@ class ComputeClusterEnv(gym.Env):
         self.baseline_jobs_submitted += len(new_baseline_jobs)
         self.baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
 
-        _, self.baseline_next_empty_slot = self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, self.baseline_next_empty_slot, is_baseline=True)
+        _, self.baseline_next_empty_slot, _ = self.assign_jobs_to_available_nodes(job_queue_2d, self.baseline_state['nodes'], self.baseline_cores_available, self.baseline_running_jobs, self.baseline_next_empty_slot, is_baseline=True)
 
         num_used_nodes = np.sum(self.baseline_state['nodes'] > 0)
         num_on_nodes = np.sum(self.baseline_state['nodes'] > -1)
@@ -751,7 +749,7 @@ class ComputeClusterEnv(gym.Env):
         self.idle_penalties.append(idle_penalty_norm * 100)
 
         # 6. penalty for dropped jobs (WIP - unnormalized, weighted)
-        drop_penalty = min(0, PENALTY_DROPPED_JOB * self.new_excess)
+        drop_penalty = min(0, PENALTY_DROPPED_JOB * self.num_dropped_this_step)
         drop_penalty_weighted = self.weights.drop_weight * drop_penalty
 
         reward = (
