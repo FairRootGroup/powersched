@@ -342,7 +342,6 @@ class ComputeClusterEnv(gym.Env):
         self.baseline_jobs_rejected_queue_full = 0
 
         self.dropped_this_episode = 0
-        self.baseline_dropped_this_episode = 0
 
 
     def step(self, action):
