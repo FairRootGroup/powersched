@@ -38,7 +38,7 @@ class Prices:
             self.MIN_PRICE = 16
 
         # IMPORTANT: initialize state in one place
-        self.reset()
+        self.reset(start_index=0)
 
     # ---------- core price model (pure) ----------
     def _synthetic_price_at(self, t: int) -> float:
@@ -49,18 +49,27 @@ class Prices:
     def get_real_price(self, shifted_price):
         return shifted_price - self.price_shift
 
-    def reset(self):
-        """Reset internal timeline/state to episode start (determinism-critical)."""
-        self.price_index = self.PREDICTION_WINDOW
-        self.price_history = deque(maxlen=self.HISTORY_WINDOW)
+    def reset(self, start_index: int = 0):
+        """Reset internal timeline/state to episode start.
+
+        start_index is the index in external_prices for the *first* element
+        of the 24h prediction window.
+        """
+        self.price_history = []
 
         if self.external_prices is not None:
-            self.predicted_prices = np.array(
-                self.external_prices[:self.PREDICTION_WINDOW],
-                dtype=np.float32,
-                copy=True,
-            )
+            n = len(self.external_prices)
+            start_index = start_index % n
+
+            # 24-hour prediction window starting at start_index, with wrap
+            idxs = (np.arange(self.PREDICTION_WINDOW, dtype=np.int64) + start_index) % n
+            self.predicted_prices = self.external_prices[idxs].astype(np.float32, copy=True)
+
+            # next unseen price *after* the window
+            self.price_index = (start_index + self.PREDICTION_WINDOW) % n
         else:
+            # synthetic mode
+            self.price_index = self.PREDICTION_WINDOW
             self.predicted_prices = np.array(
                 [self._synthetic_price_at(i) for i in range(self.PREDICTION_WINDOW)],
                 dtype=np.float32,

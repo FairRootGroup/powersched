@@ -187,6 +187,9 @@ class ComputeClusterEnv(gym.Env):
         # Job tracking metrics for baseline
         self.baseline_jobs_dropped = 0
         self.baseline_dropped_this_episode = 0
+        #Initialize to -1, so that first reset() sets it to 0
+        self.episode_idx = -1
+
 
 
         self.reset_state()
@@ -248,8 +251,26 @@ class ComputeClusterEnv(gym.Env):
         super().reset(seed=seed)
         self.np_random, self._seed = seeding.np_random(seed)
 
+        # Track which episode this env instance is on
+        if not hasattr(self, "episode_idx"):
+            self.episode_idx = 0
+        else:
+            self.episode_idx += 1
+
+        # Reset counters & metrics
         self.reset_state()
-        self.prices.reset()
+        
+         # Choose starting index in the external price series 
+        if self.prices is not None and getattr(self.prices, "external_prices", None) is not None:
+            n_prices = len(self.prices.external_prices)
+            episode_span = EPISODE_HOURS  # e.g. 14 * 24 = 336 hours per episode
+
+            # Episode k starts at hour k * episode_span (wrapping around the year)
+            start_index = (self.episode_idx * episode_span) % n_prices
+            self.prices.reset(start_index=start_index)
+        else:
+            # Synthetic prices or no external prices
+            self.prices.reset(start_index=0)
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
