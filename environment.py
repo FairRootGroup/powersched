@@ -5,7 +5,6 @@ import gymnasium as gym
 import numpy as np
 from colorama import init, Fore
 
-#from prices import Prices
 from prices_deterministic import Prices # Test re-worked prices script
 from weights import Weights
 from plot import plot, plot_reward
@@ -344,7 +343,6 @@ class ComputeClusterEnv(gym.Env):
 
         self.dropped_this_episode = 0
         self.baseline_dropped_this_episode = 0
-        self.prev_excess_dropped = 0
 
 
     def step(self, action):
