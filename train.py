@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--price-weight", type=float, default=0.2, help="Weight for price reward")
     parser.add_argument("--idle-weight", type=float, default=0.1, help="Weight for idle penalty")
     parser.add_argument("--job-age-weight", type=float, default=0.0, help="Weight for job age penalty")
+    parser.add_argument("--drop-weight", type=float, default=0.0, help="Weight for dropped jobs penalty (WIP - default 0.0)")
     parser.add_argument("--iter-limit", type=int, default=0, help=f"Max number of training iterations (1 iteration = {STEPS_PER_ITERATION} steps)")
     parser.add_argument("--session", default="default", help="Session ID")
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
@@ -76,7 +77,8 @@ def main():
         efficiency_weight=args.efficiency_weight,
         price_weight=args.price_weight,
         idle_weight=args.idle_weight,
-        job_age_weight=args.job_age_weight
+        job_age_weight=args.job_age_weight,
+        drop_weight=args.drop_weight
     )
 
     weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_d{weights.job_age_weight}"
