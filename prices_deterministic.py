@@ -15,7 +15,7 @@ class Prices:
 
         self.price_shift = 0
         self.price_index = 0
-        self.price_history = []
+        self.price_history = deque(maxlen=self.HISTORY_WINDOW)
         self.predicted_prices = None
 
         if self.original_prices is not None:
@@ -55,7 +55,7 @@ class Prices:
         start_index is the index in external_prices for the *first* element
         of the 24h prediction window.
         """
-        self.price_history = []
+        self.price_history = deque(maxlen=self.HISTORY_WINDOW)
 
         if self.external_prices is not None:
             n = len(self.external_prices)
@@ -85,7 +85,6 @@ class Prices:
         self.price_index += 1
 
         self.price_history.append(new_price)
-        # deque automatically removes oldest when maxlen exceeded | Keep the old line for now. Remove during next PR.
 
         return new_price
 
