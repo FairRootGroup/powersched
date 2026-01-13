@@ -1,6 +1,6 @@
 # determinism test for workload generator
 import numpy as np
-from workloadgen import WorkloadGenerator, WorkloadGenConfig
+from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
 
 def jobs_to_tuples(jobs):
     return [(j.duration, j.nodes, j.cores_per_node) for j in jobs]

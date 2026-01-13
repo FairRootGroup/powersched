@@ -1,4 +1,4 @@
-from sampler_hourly import hourly_sampler
+from src.sampler_hourly import hourly_sampler
 import argparse
 
 def main():

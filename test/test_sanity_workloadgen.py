@@ -1,6 +1,6 @@
 # sanity test for workload generator
 import numpy as np
-from workloadgen import WorkloadGenerator, WorkloadGenConfig
+from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
 
 def assert_job_valid(j, cfg):
     assert cfg.min_duration <= j.duration <= cfg.max_duration

@@ -1,4 +1,4 @@
-from sampler_duration import durations_sampler
+from src.sampler_duration import durations_sampler
 import argparse
 
 def main():

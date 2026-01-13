@@ -82,10 +82,10 @@ class HourlySampler:
                     job_counts.append(count)
 
             self.hour_distributions[hour] = {
-                "job_count": job_counts if job_counts else [0],
-                "durations": durations if durations else [1],
-                "nodes": nodes if nodes else [1],
-                "cores_per_node": cores_per_node if cores_per_node else [1]
+                "job_count": np.array(job_counts if job_counts else [0]),
+                "durations": np.array(durations if durations else [1]),
+                "nodes": np.array(nodes if nodes else [1]),
+                "cores_per_node": np.array(cores_per_node if cores_per_node else [1])
             }
 
         self.initialized = True
@@ -96,7 +96,7 @@ class HourlySampler:
         for hour in range(24):
             dist = self.hour_distributions[hour]
             avg_count = np.mean(dist["job_count"])
-            zero_pct = (dist["job_count"].count(0) / len(dist["job_count"]) * 100) if dist["job_count"] else 0
+            zero_pct = (np.count_nonzero(dist["job_count"] == 0) / len(dist["job_count"]) * 100) if len(dist["job_count"]) > 0 else 0
             print(f"  Hour {hour:2d}: avg={avg_count:.1f} jobs/hour, {zero_pct:.0f}% zero-job samples, {len(dist['durations'])} total jobs")
 
     def sample(self, hour_of_day: int, rng, max_jobs: int | None = None):
@@ -151,12 +151,12 @@ class HourlySampler:
             dist = self.hour_distributions[hour]
             stats[hour] = {
                 "avg_jobs_per_hour": np.mean(dist["job_count"]),
-                "max_jobs_per_hour": max(dist["job_count"]),
-                "zero_job_percentage": (dist["job_count"].count(0) / len(dist["job_count"]) * 100),
+                "max_jobs_per_hour": np.max(dist["job_count"]),
+                "zero_job_percentage": (np.count_nonzero(dist["job_count"] == 0) / len(dist["job_count"]) * 100),
                 "total_jobs_observed": len(dist["durations"]),
-                "avg_duration_minutes": np.mean(dist["durations"]) if dist["durations"] else 0,
-                "avg_nodes": np.mean(dist["nodes"]) if dist["nodes"] else 0,
-                "avg_cores_per_node": np.mean(dist["cores_per_node"]) if dist["cores_per_node"] else 0
+                "avg_duration_minutes": np.mean(dist["durations"]) if len(dist["durations"]) > 0 else 0,
+                "avg_nodes": np.mean(dist["nodes"]) if len(dist["nodes"]) > 0 else 0,
+                "avg_cores_per_node": np.mean(dist["cores_per_node"]) if len(dist["cores_per_node"]) > 0 else 0
             }
         return stats
 

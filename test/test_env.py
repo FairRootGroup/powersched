@@ -1,11 +1,12 @@
-from environment import ComputeClusterEnv
-from weights import Weights
+from src.environment import ComputeClusterEnv
+from src.weights import Weights
 
 weights = Weights(
     efficiency_weight=0.7,
     price_weight=0.2,
     idle_weight=0.1,
-    job_age_weight=0.0
+    job_age_weight=0.0,
+    drop_weight=0.0
 )
 
 env = ComputeClusterEnv(

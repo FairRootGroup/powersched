@@ -1,23 +1,23 @@
 from stable_baselines3 import PPO
 import os
-from environment import ComputeClusterEnv, Weights, PlottingComplete
-from callbacks import ComputeClusterCallback
-from plot import plot_cumulative_savings
+from src.environment import ComputeClusterEnv, Weights, PlottingComplete
+from src.callbacks import ComputeClusterCallback
+from src.plot import plot_cumulative_savings
 import re
 import glob
 import argparse
 import pandas as pd
-from workloadgen import WorkloadGenerator, WorkloadGenConfig
+from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
 
-# Import environment variables:
-from environment import (
+# Import environment constants from config module:
+from src.config import (
     MAX_JOB_DURATION,
     MIN_NODES_PER_JOB, MAX_NODES_PER_JOB,
     MIN_CORES_PER_JOB,
     CORES_PER_NODE,
 )
 
-        
+
 # Train.py passes strings; the env treats "" as falsy in some places and truthy in others.
 # To be safe: normalize "" -> None here.
 def norm_path(x):
@@ -97,7 +97,7 @@ def main():
         os.makedirs(plots_dir)
 
     # Load Workload Generator:
-    
+
     workload_gen = None
     if args.workload_gen:
         cfg = WorkloadGenConfig(
@@ -133,7 +133,7 @@ def main():
                             skip_plot_used_nodes=args.skip_plot_used_nodes,
                             skip_plot_job_queue=args.skip_plot_job_queue,
                             steps_per_iteration=STEPS_PER_ITERATION,
-                            evaluation_mode=args.evaluate_savings, 
+                            evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen)
     env.reset()
 

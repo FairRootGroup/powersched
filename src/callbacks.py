@@ -1,5 +1,4 @@
-from environment import EPISODE_HOURS
-
+from src.config import EPISODE_HOURS
 from stable_baselines3.common.callbacks import BaseCallback
 
 class ComputeClusterCallback(BaseCallback):
@@ -24,10 +23,10 @@ class ComputeClusterCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         env = self.training_env.envs[0].unwrapped
-        if env.current_hour == EPISODE_HOURS-1:
-            self.logger.record("metrics/cost", env.total_cost)
-            self.logger.record("metrics/savings", env.baseline_cost - env.total_cost)
-            self.logger.record("metrics/savings_off", env.baseline_cost_off - env.total_cost)
+        if env.metrics.current_hour == EPISODE_HOURS-1:
+            self.logger.record("metrics/cost", env.metrics.total_cost)
+            self.logger.record("metrics/savings", env.metrics.baseline_cost - env.metrics.total_cost)
+            self.logger.record("metrics/savings_off", env.metrics.baseline_cost_off - env.metrics.total_cost)
 
         return True
 

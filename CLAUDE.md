@@ -6,15 +6,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 PowerSched is a reinforcement learning project that uses PPO (Proximal Policy Optimization) to optimize compute cluster scheduling based on electricity prices and job efficiency. The system trains an RL agent to make decisions about when to turn nodes on/off and how to schedule jobs in a high-performance computing environment.
 
+## Project Structure
+
+```
+powersched/
+├── src/                    # Core source code
+│   ├── environment.py      # Main RL environment
+│   ├── config.py           # Configuration constants
+│   ├── job_management.py   # Job queue and scheduling
+│   ├── node_management.py  # Node control logic
+│   ├── reward_calculation.py # Reward computation
+│   ├── metrics_tracker.py  # Performance metrics
+│   ├── workload_generator.py # Job generation
+│   ├── baseline.py         # Baseline comparisons
+│   ├── prices.py           # Price modeling
+│   ├── prices_deterministic.py # Deterministic pricing
+│   ├── sampler_*.py        # Job samplers
+│   ├── callbacks.py        # Training callbacks
+│   ├── weights.py          # Reward weights
+│   └── plot.py             # Visualization
+├── test/                   # Test files (all start with test_)
+│   ├── test_checkenv.py    # Environment validation
+│   ├── test_env.py         # Quick environment test
+│   ├── test_sampler_*.py   # Sampler tests
+│   └── test_*.py           # Other unit tests
+├── train.py                # Main training script
+├── train_iter.py           # Sequential training
+├── data/                   # Sample data
+├── data-internal/          # Full Slurm logs
+└── sessions/               # Training outputs
+```
+
 ## Core Components
 
-- **Environment** (`environment.py`): Gymnasium-compatible RL environment simulating a compute cluster with 335 nodes, job queues, and electricity pricing
+- **Environment** (`src/environment.py`): Gymnasium-compatible RL environment simulating a compute cluster with 335 nodes, job queues, and electricity pricing
 - **Training** (`train.py`): Main training script using stable-baselines3 PPO with tensorboard logging and model checkpointing
-- **Pricing** (`prices.py`): Electricity price modeling and data handling
-- **Samplers**: Job duration (`sampler_duration.py`), job characteristics (`sampler_jobs.py`), and hourly statistical sampler (`sampler_hourly.py`) sampling from real data
-- **Plotting** (`plot.py`): Visualization of training progress, rewards, and cluster state
-- **Callbacks** (`callbacks.py`): Custom callbacks for training monitoring and logging
-- **Weights** (`weights.py`): Reward weight configuration and management
+- **Pricing** (`src/prices.py`, `src/prices_deterministic.py`): Electricity price modeling and data handling
+- **Samplers**: Job duration (`src/sampler_duration.py`), job characteristics (`src/sampler_jobs.py`), and hourly statistical sampler (`src/sampler_hourly.py`) sampling from real data
+- **Plotting** (`src/plot.py`): Visualization of training progress, rewards, and cluster state
+- **Callbacks** (`src/callbacks.py`): Custom callbacks for training monitoring and logging
+- **Weights** (`src/weights.py`): Reward weight configuration and management
 
 ## Development Commands
 
@@ -25,12 +56,12 @@ pip install -r requirements.txt
 
 **Environment Check:**
 ```bash
-python ./checkenv.py
+python -m test.test_checkenv
 ```
 
 **Quick Test Run:**
 ```bash
-python ./testenv.py
+python -m test.test_env
 ```
 
 **Main Training:**
@@ -60,10 +91,14 @@ python ./train_iter.py
 
 **Run Tests:**
 ```bash
-python sampler_duration_test.py --print-stats --plot
-python sampler_jobs_test.py --file-path data/jobs.log
-python sampler_jobs_test_aggregated.py --file-path data/jobs.log
-python sampler_hourly_test.py --file-path data-internal/allusers-main-30.log --test-day
+python -m test.test_sampler_duration --print-stats --plot
+python -m test.test_sampler_jobs --file-path data/jobs.log
+python -m test.test_sampler_jobs_aggregated --file-path data/jobs.log
+python -m test.test_sampler_hourly --file-path data-internal/allusers-main-30.log --test-day
+python -m test.test_price_history
+python -m test.test_prices_cycling
+python -m test.test_determinism_workloadgen
+python -m test.test_sanity_workloadgen
 ```
 
 ## Key Training Parameters
@@ -89,11 +124,11 @@ Additional training options:
 
 ## Samplers
 
-The project includes three job samplers:
+The project includes three job samplers (all in `src/`):
 
-1. **Duration Sampler** (`sampler_duration.py`): Samples job durations from simple duration logs
-2. **Jobs Sampler** (`sampler_jobs.py`): Pattern-based replay of historical job batches with full characteristics
-3. **Hourly Sampler** (`sampler_hourly.py`): Statistical sampler that builds hour-of-day distributions from Slurm logs
+1. **Duration Sampler** (`src/sampler_duration.py`): Samples job durations from simple duration logs
+2. **Jobs Sampler** (`src/sampler_jobs.py`): Pattern-based replay of historical job batches with full characteristics
+3. **Hourly Sampler** (`src/sampler_hourly.py`): Statistical sampler that builds hour-of-day distributions from Slurm logs
    - Captures daily patterns (busy vs quiet hours)
    - Properly handles zero-job hours
    - Samples job count, duration, nodes, and cores-per-node independently

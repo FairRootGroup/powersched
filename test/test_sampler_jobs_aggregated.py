@@ -1,4 +1,4 @@
-from sampler_jobs import jobs_sampler
+from src.sampler_jobs import jobs_sampler
 import argparse
 
 def main():
