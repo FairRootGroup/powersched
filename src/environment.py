@@ -219,6 +219,8 @@ class ComputeClusterEnv(gym.Env):
 
             # Episode k starts at hour k * episode_span (wrapping around the year)
             start_index = (self.episode_idx * episode_span) % n_prices
+            if options and "price_start_index" in options: # For testing Purposes. Leave out 'options' to advance episode.
+                start_index = int(options["price_start_index"]) % n_prices
             self.prices.reset(start_index=start_index)
         else:
             # Synthetic prices or no external prices
