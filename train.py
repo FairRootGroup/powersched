@@ -2,13 +2,13 @@ from stable_baselines3 import PPO
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
 from src.callbacks import ComputeClusterCallback
-from src.plot import plot_cumulative_savings
+from src.plotter import plot_dashboard, plot_cumulative_savings
 import re
 import glob
 import argparse
 import pandas as pd
 from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
-
+import time
 # Import environment constants from config module:
 from src.config import (
     MAX_JOB_DURATION,
@@ -39,6 +39,7 @@ def main():
     parser.add_argument('--plot-price-reward', action='store_true', help='Include price reward in the plot (dashed line).')
     parser.add_argument('--plot-idle-penalty', action='store_true', help='Include idle penalty in the plot (dashed line).')
     parser.add_argument('--plot-job-age-penalty', action='store_true', help='Include job age penalty in the plot (dashed line).')
+    parser.add_argument('--plot-total-reward', action='store_true', help='Include total reward per step in the dashboard (raw values).')
     parser.add_argument('--skip-plot-price', action='store_true', help='Skip electricity price in the plot (blue line).')
     parser.add_argument('--skip-plot-online-nodes', action='store_true', help='Skip online nodes in the plot (blue line).')
     parser.add_argument('--skip-plot-used-nodes', action='store_true', help='Skip used nodes in the plot (blue line).')
@@ -56,6 +57,9 @@ def main():
     parser.add_argument("--workload-gen", type=str, default="", choices=["", "flat", "poisson", "uniform"], help="Enable workload generator (default: disabled).",)
     parser.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Poisson lambda for jobs/hour.")
     parser.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
+    parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
+    parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
+
 
 
     args = parser.parse_args()
@@ -145,10 +149,14 @@ def main():
         model_files.sort(key=lambda filename: int(re.match(r"(\d+)", os.path.basename(filename)).group()))
         latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
-        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir)
+        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir
+                         , n_steps=64, batch_size=64
+                         )
     else:
         print(f"Starting a new model training...")
-        model = PPO('MultiInputPolicy', env, verbose=1, tensorboard_log=log_dir, ent_coef=args.ent_coef)
+        model = PPO('MultiInputPolicy', env, verbose=1, tensorboard_log=log_dir, ent_coef=args.ent_coef
+                         , n_steps=64, batch_size=64
+                         )
 
     iters = 0
 
@@ -185,7 +193,8 @@ def main():
                 obs, reward, terminated, truncated, _ = env.step(action)
                 episode_reward += reward
                 step_count += 1
-                # print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.total_cost:.2f}")
+                if step_count%1000==0:
+                    print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.total_cost:.2f}")
                 done = terminated or truncated
 
             savings_vs_baseline = env.baseline_cost - env.total_cost
@@ -193,7 +202,10 @@ def main():
             completion_rate = (env.jobs_completed / env.jobs_submitted * 100) if env.jobs_submitted > 0 else 0
             avg_wait = env.total_job_wait_time / env.jobs_completed if env.jobs_completed > 0 else 0
             print(f"  Episode {episode + 1}: "
-                f"Cost=€{env.total_cost:.0f}, "
+                f"Agent Cost=€{env.total_cost:.0f}, "
+                
+                f"Baseline Cost=€{env.baseline_cost:.0f} | Baseline Off=€{env.baseline_cost_off:.0f}, "
+                
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
                 f"Jobs={env.jobs_completed}/{env.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
@@ -204,7 +216,7 @@ def main():
         # Generate cumulative savings plot
         session_dir = f"sessions/{args.session}"
         try:
-            results = plot_cumulative_savings(env, env.episode_costs, session_dir, months=args.eval_months, save=True, show=args.render == 'human')
+            results = plot_cumulative_savings(env, env.episode_costs, session_dir, save=True, show=args.render == 'human')
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")
@@ -240,6 +252,30 @@ def main():
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 
+        # Optional: single dashboard plot combining the per-hour traces from the LAST episode
+        # and cumulative savings across all evaluated episodes.
+        if args.plot_dashboard:
+            try:
+                plot_dashboard(
+                    env,
+                    num_hours=args.dashboard_hours,
+                 #   max_nodes=env.max_nodes if hasattr(env, "max_nodes") else env.num_nodes if hasattr(env, "num_nodes") else 0,
+                    max_nodes=335,
+                    episode_costs=[  # adapt to what your plot_dashboard expects
+                        {
+                            "agent_cost": ep["agent_cost"],
+                            "baseline_cost": ep["baseline_cost"],
+                            "baseline_cost_off": ep["baseline_cost_off"],
+                        }
+                        for ep in env.episode_costs
+                    ],
+                    save=True,
+                    show=(args.render == "human"),
+                    suffix=f"eval_{args.eval_months}m",
+                )
+            except Exception as e:
+                print(f"Could not generate dashboard plot: {e}")
+
         print("\nEvaluation complete!")
         env.close()
         return
@@ -248,12 +284,40 @@ def main():
         while True:
             print(f"Training iteration {iters + 1} ({STEPS_PER_ITERATION * (iters + 1)} steps)...")
             iters += 1
+            t0 = time.time()
+            if (iters+1)%10==0:
+                print(f"Running... at {iters + 1} of {STEPS_PER_ITERATION * (iters + 1)} steps")
             if args.iter_limit > 0 and iters > args.iter_limit:
                 print(f"iterations limit ({args.iter_limit}) reached: {iters}.")
                 break
             try:
                 model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
+                print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
                 model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
+                
+                if args.plot_dashboard:
+                    try:
+                        plot_dashboard(
+                            env,
+                            num_hours=args.dashboard_hours,
+                            #   max_nodes=env.max_nodes if hasattr(env, "max_nodes") else env.num_nodes if hasattr(env, "num_nodes") else 0,
+                            max_nodes=335,
+                            episode_costs=[
+                                {
+                                    "agent_cost": ep["agent_cost"],
+                                    "baseline_cost": ep["baseline_cost"],
+                                    "baseline_cost_off": ep["baseline_cost_off"],
+                                }
+                                for ep in getattr(env, "episode_costs", [])
+                            ],
+                            save=True,
+                            show=False,
+                            suffix=STEPS_PER_ITERATION * iters,
+                        )
+                    except Exception as e:
+                        print(f"Dashboard plot failed (non-fatal): {e}")
+
+                
             except PlottingComplete:
                 print("Plotting complete, terminating training...")
                 break

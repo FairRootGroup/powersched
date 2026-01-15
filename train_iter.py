@@ -111,6 +111,9 @@ def run(
         "--hourly-jobs", f"{hourly_jobs}",
         "--session", f"{session}"
     ]
+    if plot_dashboard:
+        command += ["--plot-dashboard", "--dashboard-hours", str(dashboard_hours)]
+        
     print(f"executing: {command}")
     current_env = os.environ.copy()
     result = subprocess.run(command, text=True, env=current_env)
@@ -146,6 +149,9 @@ def main():
     parser.add_argument("--fix-weights", type=str, help="Comma-separated list of weights to fix (efficiency,price,idle,job-age,drop)")
     parser.add_argument("--fix-values", type=str, help="Comma-separated list of values for fixed weights")
     parser.add_argument("--iter-limit-per-step", type=int, help="Max number of training iterations per step (1 iteration = {TIMESTEPS} steps)")
+    parser.add_argument("--plot-dashboard", action="store_true", help="Forward to train.py to generate dashboard plots.")
+    parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Forward to train.py.")
+
     parser.add_argument("--session", help="Session ID")
 
     args = parser.parse_args()
@@ -169,7 +175,7 @@ def main():
     for combo in combinations:
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
         print(f"Running with weights: efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
-        run(efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight, args.iter_limit_per_step, args.session, args.prices, args.job_durations, args.jobs, args.hourly_jobs)
+        run(efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight, args.iter_limit_per_step, args.session, args.prices, args.job_durations, args.jobs, args.hourly_jobs,plot_dashboard=args.plot_dashboard,dashboard_hours=args.dashboard_hours)
 
 if __name__ == "__main__":
     main()
