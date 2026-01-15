@@ -80,7 +80,8 @@ class ComputeClusterEnv(gym.Env):
                  skip_plot_job_queue,
                  steps_per_iteration,
                  evaluation_mode=False,
-                 workload_gen=None):
+                 workload_gen=None,
+                 carry_over_state=False):
         super().__init__()
 
         self.weights = weights
@@ -119,6 +120,7 @@ class ComputeClusterEnv(gym.Env):
         self.np_random = None
         self._seed = None
         self.workload_gen = workload_gen
+        self.carry_over_state = carry_over_state
 
         if self.external_durations:
             durations_sampler.init(self.external_durations)
@@ -151,6 +153,9 @@ class ComputeClusterEnv(gym.Env):
 
         # Initialize reward calculator
         self.reward_calculator = RewardCalculator(self.prices)
+
+        self.reset_timeline_state()
+        self.metrics.reset_episode_metrics()
 
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
@@ -192,21 +197,59 @@ class ComputeClusterEnv(gym.Env):
             self.episode_idx += 1
 
         # Reset metrics
-        self.metrics.reset_state_metrics()
-
-        # Choose starting index in the external price series
-        if self.prices is not None and getattr(self.prices, "external_prices", None) is not None:
-            n_prices = len(self.prices.external_prices)
-            episode_span = EPISODE_HOURS
-
-            # Episode k starts at hour k * episode_span (wrapping around the year)
-            start_index = (self.episode_idx * episode_span) % n_prices
-            if options and "price_start_index" in options: # For testing Purposes. Leave out 'options' to advance episode.
-                start_index = int(options["price_start_index"]) % n_prices
-            self.prices.reset(start_index=start_index)
+        if self.carry_over_state:
+            self.metrics.reset_episode_metrics()
         else:
-            # Synthetic prices or no external prices
-            self.prices.reset(start_index=0)
+            self.metrics.reset_state_metrics()
+
+        self.metrics.current_hour = 0
+
+        if not self.carry_over_state:
+            # Choose starting index in the external price series
+            if self.prices is not None and getattr(self.prices, "external_prices", None) is not None:
+                n_prices = len(self.prices.external_prices)
+                episode_span = EPISODE_HOURS
+
+                # Episode k starts at hour k * episode_span (wrapping around the year)
+                start_index = (self.episode_idx * episode_span) % n_prices
+                if options and "price_start_index" in options: # For testing Purposes. Leave out 'options' to advance episode.
+                    start_index = int(options["price_start_index"]) % n_prices
+                self.prices.reset(start_index=start_index)
+            else:
+                # Synthetic prices or no external prices
+                self.prices.reset(start_index=0)
+
+            self.state = {
+                # Initialize all nodes to be 'online but free' (0)
+                'nodes': np.zeros(MAX_NODES, dtype=np.int32),
+                # Initialize job queue to be empty
+                'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
+                # Initialize predicted prices array
+                'predicted_prices': self.prices.predicted_prices.copy(),
+            }
+
+            self.baseline_state = {
+                'nodes': np.zeros(MAX_NODES, dtype=np.int32),
+                'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
+            }
+
+            self.cores_available = np.full(MAX_NODES, CORES_PER_NODE, dtype=np.int32)
+            self.baseline_cores_available = np.full(MAX_NODES, CORES_PER_NODE, dtype=np.int32)
+
+            # Job tracking: { job_id: {'duration': remaining_hours, 'allocation': [(node_idx1, cores1), ...]}, ... }
+            self.running_jobs = {}
+            self.baseline_running_jobs = {}
+
+            self.next_job_id = 0  # shared between baseline and normal jobs
+
+            # Track next empty slot in job queue for O(1) insertion
+            self.next_empty_slot = 0
+            self.baseline_next_empty_slot = 0
+
+        return self.state, {}
+
+    def reset_timeline_state(self):
+        self.metrics.current_hour = 0
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
@@ -224,7 +267,6 @@ class ComputeClusterEnv(gym.Env):
 
         self.cores_available = np.full(MAX_NODES, CORES_PER_NODE, dtype=np.int32)
         self.baseline_cores_available = np.full(MAX_NODES, CORES_PER_NODE, dtype=np.int32)
-
         # Job tracking: { job_id: {'duration': remaining_hours, 'allocation': [(node_idx1, cores1), ...]}, ... }
         self.running_jobs = {}
         self.baseline_running_jobs = {}
@@ -235,11 +277,10 @@ class ComputeClusterEnv(gym.Env):
         self.next_empty_slot = 0
         self.baseline_next_empty_slot = 0
 
-        return self.state, {}
-
     def step(self, action):
         self.current_step += 1
         self.metrics.current_hour += 1
+        self.metrics.total_time_hours += 1
         if self.metrics.current_hour == 1:
             self.current_episode += 1
         self.env_print(Fore.GREEN + f"\n[[[ Starting episode: {self.current_episode}, step: {self.current_step}, hour: {self.metrics.current_hour}" + Fore.RESET)
@@ -272,7 +313,9 @@ class ComputeClusterEnv(gym.Env):
             new_jobs_nodes, new_jobs_cores, self.next_empty_slot
         )
         self.metrics.jobs_submitted += len(new_jobs)
+        self.metrics.episode_jobs_submitted += len(new_jobs)
         self.metrics.jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
+        self.metrics.episode_jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -288,10 +331,37 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
+        # Create metrics dict for job assignment
+        job_metrics = {
+            'jobs_completed': self.metrics.jobs_completed,
+            'total_job_wait_time': self.metrics.total_job_wait_time,
+            'jobs_dropped': self.metrics.jobs_dropped,
+            'dropped_this_episode': self.metrics.dropped_this_episode,
+            'baseline_jobs_completed': self.metrics.baseline_jobs_completed,
+            'baseline_total_job_wait_time': self.metrics.baseline_total_job_wait_time,
+            'baseline_jobs_dropped': self.metrics.baseline_jobs_dropped,
+            'baseline_dropped_this_episode': self.metrics.baseline_dropped_this_episode,
+            'episode_jobs_completed': self.metrics.episode_jobs_completed,
+            'episode_total_job_wait_time': self.metrics.episode_total_job_wait_time,
+            'episode_jobs_dropped': self.metrics.episode_jobs_dropped,
+            'episode_baseline_jobs_completed': self.metrics.episode_baseline_jobs_completed,
+            'episode_baseline_total_job_wait_time': self.metrics.episode_baseline_total_job_wait_time,
+            'episode_baseline_jobs_dropped': self.metrics.episode_baseline_jobs_dropped,
+        }
+
         num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
             self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
         )
+
+        # Update metrics from job_metrics dict
+        self.metrics.jobs_completed = job_metrics['jobs_completed']
+        self.metrics.total_job_wait_time = job_metrics['total_job_wait_time']
+        self.metrics.jobs_dropped = job_metrics['jobs_dropped']
+        self.metrics.dropped_this_episode = job_metrics['dropped_this_episode']
+        self.metrics.episode_jobs_completed = job_metrics['episode_jobs_completed']
+        self.metrics.episode_total_job_wait_time = job_metrics['episode_total_job_wait_time']
+        self.metrics.episode_jobs_dropped = job_metrics['episode_jobs_dropped']
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
@@ -313,18 +383,53 @@ class ComputeClusterEnv(gym.Env):
         # Track max queue size
         if num_unprocessed_jobs > self.metrics.max_queue_size_reached:
             self.metrics.max_queue_size_reached = num_unprocessed_jobs
+        if num_unprocessed_jobs > self.metrics.episode_max_queue_size_reached:
+            self.metrics.episode_max_queue_size_reached = num_unprocessed_jobs
 
         self.env_print(f"[5] Calculating reward...")
 
         # Baseline step
+        baseline_metrics = {
+            'baseline_jobs_submitted': self.metrics.baseline_jobs_submitted,
+            'baseline_jobs_rejected_queue_full': self.metrics.baseline_jobs_rejected_queue_full,
+            'baseline_jobs_completed': self.metrics.baseline_jobs_completed,
+            'baseline_total_job_wait_time': self.metrics.baseline_total_job_wait_time,
+            'baseline_jobs_dropped': self.metrics.baseline_jobs_dropped,
+            'baseline_dropped_this_episode': self.metrics.baseline_dropped_this_episode,
+            'baseline_max_queue_size_reached': self.metrics.baseline_max_queue_size_reached,
+            'episode_baseline_jobs_submitted': self.metrics.episode_baseline_jobs_submitted,
+            'episode_baseline_jobs_rejected_queue_full': self.metrics.episode_baseline_jobs_rejected_queue_full,
+            'episode_baseline_jobs_completed': self.metrics.episode_baseline_jobs_completed,
+            'episode_baseline_total_job_wait_time': self.metrics.episode_baseline_total_job_wait_time,
+            'episode_baseline_jobs_dropped': self.metrics.episode_baseline_jobs_dropped,
+            'episode_baseline_max_queue_size_reached': self.metrics.episode_baseline_max_queue_size_reached,
+        }
+
         baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
             self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print
         )
 
+        # Update metrics from baseline_metrics dict
+        self.metrics.baseline_jobs_submitted = baseline_metrics['baseline_jobs_submitted']
+        self.metrics.baseline_jobs_rejected_queue_full = baseline_metrics['baseline_jobs_rejected_queue_full']
+        self.metrics.baseline_jobs_completed = baseline_metrics['baseline_jobs_completed']
+        self.metrics.baseline_total_job_wait_time = baseline_metrics['baseline_total_job_wait_time']
+        self.metrics.baseline_jobs_dropped = baseline_metrics['baseline_jobs_dropped']
+        self.metrics.baseline_dropped_this_episode = baseline_metrics['baseline_dropped_this_episode']
+        self.metrics.baseline_max_queue_size_reached = baseline_metrics['baseline_max_queue_size_reached']
+        self.metrics.episode_baseline_jobs_submitted = baseline_metrics['episode_baseline_jobs_submitted']
+        self.metrics.episode_baseline_jobs_rejected_queue_full = baseline_metrics['episode_baseline_jobs_rejected_queue_full']
+        self.metrics.episode_baseline_jobs_completed = baseline_metrics['episode_baseline_jobs_completed']
+        self.metrics.episode_baseline_total_job_wait_time = baseline_metrics['episode_baseline_total_job_wait_time']
+        self.metrics.episode_baseline_jobs_dropped = baseline_metrics['episode_baseline_jobs_dropped']
+        self.metrics.episode_baseline_max_queue_size_reached = baseline_metrics['episode_baseline_max_queue_size_reached']
+
         self.metrics.baseline_cost += baseline_cost
         self.metrics.baseline_cost_off += baseline_cost_off
+        self.metrics.episode_baseline_cost += baseline_cost
+        self.metrics.episode_baseline_cost_off += baseline_cost_off
 
         step_reward, step_cost, eff_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
@@ -334,6 +439,7 @@ class ComputeClusterEnv(gym.Env):
 
         self.metrics.episode_reward += step_reward
         self.metrics.total_cost += step_cost
+        self.metrics.episode_total_cost += step_cost
 
         # Store normalized reward components for plotting
         self.metrics.eff_rewards.append(eff_reward_norm * 100)
@@ -385,4 +491,11 @@ class ComputeClusterEnv(gym.Env):
 
         self.env_print(Fore.GREEN + f"]]]" + Fore.RESET)
 
-        return self.state, step_reward, terminated, truncated, {}
+        info = {
+            "step_cost": float(step_cost),
+            "num_unprocessed_jobs": int(num_unprocessed_jobs),
+            "num_on_nodes": int(num_on_nodes),
+            "dropped_this_episode": int(getattr(self.metrics, "dropped_this_episode", 0)),
+        }
+
+        return self.state, step_reward, terminated, truncated, info

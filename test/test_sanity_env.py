@@ -10,6 +10,7 @@ like API compliance, invariants, determinism.'''
 '''
 
 import argparse
+import copy
 import numpy as np
 
 from gymnasium.utils.env_checker import check_env
@@ -117,12 +118,12 @@ def determinism_test(make_env, seed, n_steps=200):
     def rollout():
         env = make_env()
         # Pin external price window so determinism doesn't vary by episode.
-        obs, _ = env.reset(seed=seed, options={"price_start_index": 0})
+        _obs, _ = env.reset(seed=seed, options={"price_start_index": 0})
         traj = []
         done = False
         i = 0
         while not done and i < n_steps:
-            obs, r, term, trunc, info = env.step(actions[i])
+            _obs, r, term, trunc, info = env.step(actions[i])
             # record a small fingerprint
             traj.append((
                 float(r),
@@ -139,6 +140,41 @@ def determinism_test(make_env, seed, n_steps=200):
     a = rollout()
     b = rollout()
     assert a == b, "Determinism failed: same seed + same actions produced different trajectories"
+
+def carry_over_test(make_env, seed, n_steps=1):
+    env = make_env()
+    obs, _ = env.reset(seed=seed)
+    env.action_space.seed(seed)
+    actions = [env.action_space.sample() for _ in range(n_steps)]
+    for action in actions:
+        obs, r, term, trunc, info = env.step(action)
+        if term or trunc:
+            break
+
+    snapshot = {
+        "nodes": env.state["nodes"].copy(),
+        "job_queue": env.state["job_queue"].copy(),
+        "predicted_prices": env.state["predicted_prices"].copy(),
+        "cores_available": env.cores_available.copy(),
+        "running_jobs": copy.deepcopy(env.running_jobs),
+        "price_index": env.prices.price_index,
+        "next_job_id": env.next_job_id,
+        "next_empty_slot": env.next_empty_slot,
+        "current_hour": env.metrics.current_hour,
+    }
+
+    env.reset(seed=seed)
+
+    assert np.array_equal(env.state["nodes"], snapshot["nodes"]), "carry-over failed: nodes reset"
+    assert np.array_equal(env.state["job_queue"], snapshot["job_queue"]), "carry-over failed: job_queue reset"
+    assert np.array_equal(env.state["predicted_prices"], snapshot["predicted_prices"]), "carry-over failed: predicted_prices reset"
+    assert np.array_equal(env.cores_available, snapshot["cores_available"]), "carry-over failed: cores_available reset"
+    assert env.running_jobs == snapshot["running_jobs"], "carry-over failed: running_jobs reset"
+    assert env.prices.price_index == snapshot["price_index"], "carry-over failed: price_index reset"
+    assert env.next_job_id == snapshot["next_job_id"], "carry-over failed: next_job_id reset"
+    assert env.next_empty_slot == snapshot["next_empty_slot"], "carry-over failed: next_empty_slot reset"
+    assert env.metrics.current_hour == 0, "carry-over failed: current_hour not reset"
+    env.close()
 
 
 # -----------------------------
@@ -172,6 +208,8 @@ def parse_args():
               help="Where to sample the job from.")
     p.add_argument("--print-job-index", type=int, default=-1,
               help="Queue index to print (>=0), or -1 to print first active job.")
+    p.add_argument("--carry-over-state", action="store_true",
+              help="Carry over nodes/jobs/prices across episodes (timeline mode).")
 
 
     return p.parse_args()
@@ -229,8 +267,9 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         skip_plot_job_queue=True,
         steps_per_iteration=EPISODE_HOURS,  # prevent plot cadence surprises
         evaluation_mode=False,
-     #   plot_total_reward=False,
-        workload_gen=workload_gen
+      #  plot_total_reward=False,
+        workload_gen=workload_gen,
+        carry_over_state=args.carry_over_state
     )
 
 def maybe_print_job(env, obs, step_idx, every, kind="queue", job_index=-1):
@@ -287,13 +326,17 @@ def main():
                 options["price_start_index"] = 0
             return super().reset(seed=seed, options=options)
 
+    def make_env_with_carry(carry_over_state, env_cls=ComputeClusterEnv):
+        local_args = argparse.Namespace(**vars(args))
+        local_args.carry_over_state = carry_over_state
+        return make_env_from_args(local_args, env_cls=env_cls)
 
 # -------------------------------------
 
     seed = 123
     action = np.array([1, 0], dtype=np.int64)  # "maintain, magnitude 1" effectively
 
-    env = make_env_from_args(args, env_cls=DeterministicPriceEnv)
+    env = make_env_with_carry(False, env_cls=DeterministicPriceEnv)
 
     o1, _ = env.reset(seed=seed)
     o1s, r1, t1, tr1, i1 = env.step(action)
@@ -320,7 +363,7 @@ def main():
     # 1) Gym API compliance (optional)
     if args.check_gym:
         # Pin external price window so gym's determinism check is meaningful.
-        env = make_env_from_args(args, env_cls=DeterministicPriceEnv)
+        env = make_env_with_carry(False, env_cls=DeterministicPriceEnv)
         check_env(env, skip_render_check=True)
         env.close()
         print("[OK] gymnasium check_env passed")
@@ -354,8 +397,13 @@ def main():
 
     # 3) Determinism (optional)
     if args.check_determinism:
-        determinism_test(lambda: make_env_from_args(args), seed=args.seed, n_steps=min(args.steps, 500))
+        determinism_test(lambda: make_env_with_carry(False), seed=args.seed, n_steps=min(args.steps, 500))
         print("[OK] determinism test passed")
+
+    # 4) Carry-over continuity (optional)
+    if args.carry_over_state:
+        carry_over_test(lambda: make_env_with_carry(True), seed=args.seed, n_steps=min(args.steps, 10))
+        print("[OK] carry-over continuity test passed")
 
     print("done")
 
