@@ -81,7 +81,21 @@ def generate_weight_combinations(step=0.1, fixed_weights=None):
 
     return combinations
 
-def run(efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight, iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs):
+def run(
+    efficiency_weight,
+    price_weight,
+    idle_weight,
+    job_age_weight,
+    drop_weight,
+    iter_limit_per_step,
+    session,
+    prices,
+    job_durations,
+    jobs,
+    hourly_jobs,
+    plot_dashboard=False,
+    dashboard_hours=24 * 14,
+):
     python_executable = sys.executable
     command = [
         python_executable, "train.py",
@@ -99,9 +113,9 @@ def run(efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weigh
     ]
     print(f"executing: {command}")
     current_env = os.environ.copy()
-    result = subprocess.run(command, capture_output=False, text=True, env=current_env)
+    result = subprocess.run(command, text=True, env=current_env)
     if result.returncode != 0:
-        print(f"Error occurred: {result.stderr}")
+        print("Error occurred: train.py returned a non-zero exit code.")
     return result.stdout
 
 def parse_fixed_weights(fix_weights_str, fix_values_str):
