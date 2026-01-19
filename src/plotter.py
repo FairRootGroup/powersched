@@ -87,10 +87,10 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     hours = np.arange(num_hours)
 
     # ----- header text -----
-    completion_rate = (env.jobs_completed / env.jobs_submitted * 100) if getattr(env, "jobs_submitted", 0) > 0 else 0.0
-    baseline_completion_rate = (env.baseline_jobs_completed / env.baseline_jobs_submitted * 100) if getattr(env, "baseline_jobs_submitted", 0) > 0 else 0.0
-    avg_wait = (env.total_job_wait_time / env.jobs_completed) if getattr(env, "jobs_completed", 0) > 0 else 0.0
-    baseline_avg_wait = (env.baseline_total_job_wait_time / env.baseline_jobs_completed) if getattr(env, "baseline_jobs_completed", 0) > 0 else 0.0
+    completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if getattr(env, "jobs_submitted", 0) > 0 else 0.0
+    baseline_completion_rate = (env.metrics.baseline_jobs_completed / env.metrics.baseline_jobs_submitted * 100) if getattr(env, "baseline_jobs_submitted", 0) > 0 else 0.0
+    avg_wait = (env.metrics.total_job_wait_time / env.metrics.jobs_completed) if getattr(env, "jobs_completed", 0) > 0 else 0.0
+    baseline_avg_wait = (env.baseline_total_job_wait_time / env.metrics.baseline_jobs_completed) if getattr(env, "baseline_jobs_completed", 0) > 0 else 0.0
 
     base_cost = float(getattr(env, "baseline_cost", 0.0))
     base_cost_off = float(getattr(env, "baseline_cost_off", 0.0))
@@ -103,8 +103,8 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         f"{env.session} | ep:{env.current_episode} step:{env.current_step} | {env.weights}\n"
         f"Cost: €{agent_cost:.0f}, Base: €{base_cost:.0f} (+{base_cost - agent_cost:.0f}, {pct_vs_base:.1f}%), "
         f"Base_Off: €{base_cost_off:.0f} (+{base_cost_off - agent_cost:.0f}, {pct_vs_base_off:.1f}%)\n"
-        f"Jobs: {env.jobs_completed}/{env.jobs_submitted} ({completion_rate:.0f}%, wait={avg_wait:.1f}h, Q={env.max_queue_size_reached}) | "
-        f"Base: {env.baseline_jobs_completed}/{env.baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, wait={baseline_avg_wait:.1f}h, Q={env.baseline_max_queue_size_reached})"
+        f"Jobs: {env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%, wait={avg_wait:.1f}h, Q={env.metrics.max_queue_size_reached}) | "
+        f"Base: {env.metrics.baseline_jobs_completed}/{env.metrics.baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, wait={baseline_avg_wait:.1f}h, Q={env.metrics.baseline_max_queue_size_reached})"
     )
 
     # ----- collect per-hour panels (one / panel, optional overlay) -----
@@ -129,20 +129,20 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
 
     # Price
     if not getattr(env, "skip_plot_price", False):
-        add_panel("Electricity price", getattr(env, "price_stats", None), "€/MWh", None)
+        add_panel("Electricity price", getattr(env.metrics, "price_stats", None), "€/MWh", None)
 
     # Nodes
     if not getattr(env, "skip_plot_online_nodes", False):
-        add_panel("Online nodes", getattr(env, "on_nodes", None), "count", (0, max_nodes * 1.1))
+        add_panel("Online nodes", getattr(env.metrics, "on_nodes", None), "count", (0, max_nodes * 1.1))
     if not getattr(env, "skip_plot_used_nodes", False):
-        add_panel("Used nodes", getattr(env, "used_nodes", None), "count", (0, max_nodes))
+        add_panel("Used nodes", getattr(env.metrics, "used_nodes", None), "count", (0, max_nodes))
 
     # Queue + running jobs (same plot)
     if not getattr(env, "skip_plot_job_queue", False):
-        running_series = getattr(env, "running_jobs_counts", None)
+        running_series = getattr(env.metrics, "running_jobs_counts", None)
         add_panel(
             "Job queue & running jobs",
-            getattr(env, "job_queue_sizes", None),
+            getattr(env.metrics, "job_queue_sizes", None),
             "jobs",
             None,
             overlay=("Running jobs", running_series),
@@ -150,15 +150,15 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
 
     # Reward components
     if getattr(env, "plot_eff_reward", False):
-        add_panel("Efficiency reward (%)", getattr(env, "eff_rewards", None), "score", None)
+        add_panel("Efficiency reward (%)", getattr(env.metrics, "eff_rewards", None), "score", None)
     if getattr(env, "plot_price_reward", False):
-        add_panel("Price reward (%)", getattr(env, "price_rewards", None), "score", None)
+        add_panel("Price reward (%)", getattr(env.metrics, "price_rewards", None), "score", None)
     if getattr(env, "plot_idle_penalty", False):
-        add_panel("Idle penalty (%)", getattr(env, "idle_penalties", None), "score", None)
+        add_panel("Idle penalty (%)", getattr(env.metrics, "idle_penalties", None), "score", None)
     if getattr(env, "plot_job_age_penalty", False):
-        add_panel("Job-age penalty (%)", getattr(env, "job_age_penalties", None), "score", None)
+        add_panel("Job-age penalty (%)", getattr(env.metrics, "job_age_penalties", None), "score", None)
     if getattr(env, "plot_total_reward", False):
-        add_panel("Total reward", getattr(env, "rewards", None), "reward", None)
+        add_panel("Total reward", getattr(env.metrics, "rewards", None), "reward", None)
 
     if not panels:
         print("plot_dashboard(): nothing to plot.")

@@ -60,8 +60,6 @@ def main():
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
 
-
-
     args = parser.parse_args()
     prices_file_path = args.prices
     job_durations_file_path = args.job_durations
@@ -194,29 +192,27 @@ def main():
                 episode_reward += reward
                 step_count += 1
                 if step_count%1000==0:
-                    print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.total_cost:.2f}")
+                    print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.metrics.total_cost:.2f}")
                 done = terminated or truncated
 
-            savings_vs_baseline = env.baseline_cost - env.total_cost
-            savings_vs_baseline_off = env.baseline_cost_off - env.total_cost
-            completion_rate = (env.jobs_completed / env.jobs_submitted * 100) if env.jobs_submitted > 0 else 0
-            avg_wait = env.total_job_wait_time / env.jobs_completed if env.jobs_completed > 0 else 0
+            savings_vs_baseline = env.metrics.baseline_cost - env.metrics.total_cost
+            savings_vs_baseline_off = env.metrics.baseline_cost_off - env.metrics.total_cost
+            completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
+            avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
             print(f"  Episode {episode + 1}: "
-                f"Agent Cost=€{env.total_cost:.0f}, "
-                
-                f"Baseline Cost=€{env.baseline_cost:.0f} | Baseline Off=€{env.baseline_cost_off:.0f}, "
-                
+                f"Agent Cost=€{env.metrics.total_cost:.0f}, "
+                f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
-                f"Jobs={env.jobs_completed}/{env.jobs_submitted} ({completion_rate:.0f}%), "
+                f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
-                f"MaxQueue={env.max_queue_size_reached}")
+                f"MaxQueue={env.metrics.max_queue_size_reached}")
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
         # Generate cumulative savings plot
         session_dir = f"sessions/{args.session}"
         try:
-            results = plot_cumulative_savings(env, env.episode_costs, session_dir, save=True, show=args.render == 'human')
+            results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")
@@ -230,14 +226,14 @@ def main():
                 print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
 
                 # Calculate job metrics across all episodes
-                total_jobs_submitted = sum(ep['jobs_submitted'] for ep in env.episode_costs)
-                total_jobs_completed = sum(ep['jobs_completed'] for ep in env.episode_costs)
-                total_baseline_submitted = sum(ep['baseline_jobs_submitted'] for ep in env.episode_costs)
-                total_baseline_completed = sum(ep['baseline_jobs_completed'] for ep in env.episode_costs)
-                avg_wait_time = sum(ep['avg_wait_time'] * ep['jobs_completed'] for ep in env.episode_costs) / total_jobs_completed if total_jobs_completed > 0 else 0
-                avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * ep['baseline_jobs_completed'] for ep in env.episode_costs) / total_baseline_completed if total_baseline_completed > 0 else 0
-                avg_max_queue = sum(ep['max_queue_size'] for ep in env.episode_costs) / len(env.episode_costs)
-                avg_baseline_max_queue = sum(ep['baseline_max_queue_size'] for ep in env.episode_costs) / len(env.episode_costs)
+                total_jobs_submitted = sum(ep['jobs_submitted'] for ep in env.metrics.episode_costs)
+                total_jobs_completed = sum(ep['jobs_completed'] for ep in env.metrics.episode_costs)
+                total_baseline_submitted = sum(ep['baseline_jobs_submitted'] for ep in env.metrics.episode_costs)
+                total_baseline_completed = sum(ep['baseline_jobs_completed'] for ep in env.metrics.episode_costs)
+                avg_wait_time = sum(ep['avg_wait_time'] * ep['jobs_completed'] for ep in env.metrics.episode_costs) / total_jobs_completed if total_jobs_completed > 0 else 0
+                avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * ep['baseline_jobs_completed'] for ep in env.metrics.episode_costs) / total_baseline_completed if total_baseline_completed > 0 else 0
+                avg_max_queue = sum(ep['max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
+                avg_baseline_max_queue = sum(ep['baseline_max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
 
                 print(f"\n=== JOB PROCESSING METRICS ===")
                 print(f"\nAgent:")
@@ -267,7 +263,7 @@ def main():
                             "baseline_cost": ep["baseline_cost"],
                             "baseline_cost_off": ep["baseline_cost_off"],
                         }
-                        for ep in env.episode_costs
+                        for ep in env.metrics.episode_costs
                     ],
                     save=True,
                     show=(args.render == "human"),
@@ -294,7 +290,7 @@ def main():
                 model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
                 print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
                 model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
-                
+
                 if args.plot_dashboard:
                     try:
                         plot_dashboard(
@@ -317,7 +313,6 @@ def main():
                     except Exception as e:
                         print(f"Dashboard plot failed (non-fatal): {e}")
 
-                
             except PlottingComplete:
                 print("Plotting complete, terminating training...")
                 break
