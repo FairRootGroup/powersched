@@ -95,6 +95,7 @@ def run(
     hourly_jobs,
     plot_dashboard=False,
     dashboard_hours=24 * 14,
+    carry_over_state=False,
 ):
     python_executable = sys.executable
     command = [
@@ -113,6 +114,8 @@ def run(
     ]
     if plot_dashboard:
         command += ["--plot-dashboard", "--dashboard-hours", str(dashboard_hours)]
+    if carry_over_state:
+        command += ["--carry-over-state"]
         
     print(f"executing: {command}")
     current_env = os.environ.copy()
@@ -151,6 +154,7 @@ def main():
     parser.add_argument("--iter-limit-per-step", type=int, help="Max number of training iterations per step (1 iteration = {TIMESTEPS} steps)")
     parser.add_argument("--plot-dashboard", action="store_true", help="Forward to train.py to generate dashboard plots.")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Forward to train.py.")
+    parser.add_argument("--carry-over-state", action="store_true", help="Forward to train.py to carry state across episodes.")
 
     parser.add_argument("--session", help="Session ID")
 
@@ -175,7 +179,22 @@ def main():
     for combo in combinations:
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
         print(f"Running with weights: efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
-        run(efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight, args.iter_limit_per_step, args.session, args.prices, args.job_durations, args.jobs, args.hourly_jobs,plot_dashboard=args.plot_dashboard,dashboard_hours=args.dashboard_hours)
+        run(
+            efficiency_weight,
+            price_weight,
+            idle_weight,
+            job_age_weight,
+            drop_weight,
+            args.iter_limit_per_step,
+            args.session,
+            args.prices,
+            args.job_durations,
+            args.jobs,
+            args.hourly_jobs,
+            plot_dashboard=args.plot_dashboard,
+            dashboard_hours=args.dashboard_hours,
+            carry_over_state=args.carry_over_state,
+        )
 
 if __name__ == "__main__":
     main()

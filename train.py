@@ -59,6 +59,7 @@ def main():
     parser.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
+    parser.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
 
     args = parser.parse_args()
     prices_file_path = args.prices
@@ -136,7 +137,8 @@ def main():
                             skip_plot_job_queue=args.skip_plot_job_queue,
                             steps_per_iteration=STEPS_PER_ITERATION,
                             evaluation_mode=args.evaluate_savings,
-                            workload_gen=workload_gen)
+                            workload_gen=workload_gen,
+                            carry_over_state=args.carry_over_state)
     env.reset()
 
     # Check if there are any saved models in models_dir

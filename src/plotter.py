@@ -149,15 +149,15 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         )
 
     # Reward components
-    if getattr(env, "plot_eff_reward", False):
+    if not getattr(env, "plot_eff_reward", False):
         add_panel("Efficiency reward (%)", getattr(env.metrics, "eff_rewards", None), "score", None)
-    if getattr(env, "plot_price_reward", False):
+    if not getattr(env, "plot_price_reward", False):
         add_panel("Price reward (%)", getattr(env.metrics, "price_rewards", None), "score", None)
-    if getattr(env, "plot_idle_penalty", False):
+    if not getattr(env, "plot_idle_penalty", False):
         add_panel("Idle penalty (%)", getattr(env.metrics, "idle_penalties", None), "score", None)
-    if getattr(env, "plot_job_age_penalty", False):
+    if not getattr(env, "plot_job_age_penalty", False):
         add_panel("Job-age penalty (%)", getattr(env.metrics, "job_age_penalties", None), "score", None)
-    if getattr(env, "plot_total_reward", False):
+    if not getattr(env, "plot_total_reward", False):
         add_panel("Total reward", getattr(env.metrics, "rewards", None), "reward", None)
 
     if not panels:
