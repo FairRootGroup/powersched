@@ -26,10 +26,14 @@ powersched/
 │   ├── weights.py          # Reward weights
 │   └── plot.py             # Visualization
 ├── test/                   # Test files (all start with test_)
+│   ├── run_all.py          # Run all tests
 │   ├── test_checkenv.py    # Environment validation
 │   ├── test_env.py         # Quick environment test
+│   ├── test_sanity_env.py  # Environment sanity checks (invariants, determinism)
 │   ├── test_sampler_*.py   # Sampler tests
 │   └── test_*.py           # Other unit tests
+├── .github/workflows/      # CI/CD
+│   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
 ├── data/                   # Sample data
@@ -89,17 +93,39 @@ This runs the trained model for the specified number of months and generates:
 python ./train_iter.py
 ```
 
-**Run Tests:**
+**Run All Tests:**
 ```bash
-python -m test.test_sampler_duration --print-stats --plot
-python -m test.test_sampler_jobs --file-path data/jobs.log
-python -m test.test_sampler_jobs_aggregated --file-path data/jobs.log
-python -m test.test_sampler_hourly --file-path data-internal/allusers-main-30.log --test-day
+python test/run_all.py
+```
+
+**Run Individual Tests:**
+```bash
+# Environment tests
+python -m test.test_checkenv
+python -m test.test_env
+
+# Environment sanity tests (three modes)
+python -m test.test_sanity_env --steps 200                                    # Quick invariants
+python -m test.test_sanity_env --check-gym --check-determinism --steps 300    # Full checks
+python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300  # With external data
+
+# Workload generator tests
+python -m test.test_sanity_workloadgen
+python -m test.test_determinism_workloadgen
+
+# Price tests
 python -m test.test_price_history
 python -m test.test_prices_cycling
-python -m test.test_determinism_workloadgen
-python -m test.test_sanity_workloadgen
+
+# Sampler tests
+python -m test.test_sampler_duration --print-stats --test-samples 10
+python -m test.test_sampler_hourly --file-path data/allusers-gpu-30.log --test-day
+python -m test.test_sampler_jobs --file-path data/allusers-gpu-30.log
+python -m test.test_sampler_jobs_aggregated --file-path data/allusers-gpu-30.log
 ```
+
+**GitHub Actions:**
+Tests run automatically on push/PR to master/main via `.github/workflows/tests.yml`.
 
 ## Key Training Parameters
 

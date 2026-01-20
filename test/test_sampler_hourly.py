@@ -1,7 +1,9 @@
 from src.sampler_hourly import hourly_sampler
 import argparse
+import numpy as np
 
 def main():
+    rng = np.random.default_rng()
     parser = argparse.ArgumentParser(description='Test the hourly job sampler with Slurm logs.')
     parser.add_argument('--file-path', required=True, help='Path to the Slurm log file')
     parser.add_argument('--print-stats', action='store_true', help='Print summary statistics.')
@@ -30,7 +32,7 @@ def main():
         print(f"\n=== Test Sampling {args.test_samples} Hours ===")
         for i in range(args.test_samples):
             hour = i % 24
-            jobs = hourly_sampler.sample(hour)
+            jobs = hourly_sampler.sample(hour, rng)
             print(f"\nHour {hour:2d}:00 - Sampled {len(jobs)} jobs:")
             for j, job in enumerate(jobs[:5]):  # Show first 5 jobs
                 print(f"  Job {j+1}: {job['duration']} min, {job['nodes']} nodes, {job['cores_per_node']} cores/node")
@@ -41,7 +43,7 @@ def main():
         print("\n=== Sampling Full 24-Hour Day ===")
         total_jobs = 0
         for hour in range(24):
-            jobs = hourly_sampler.sample(hour)
+            jobs = hourly_sampler.sample(hour, rng)
             total_jobs += len(jobs)
             print(f"Hour {hour:2d}:00 - {len(jobs):3d} jobs", end="")
             if len(jobs) == 0:

@@ -12,8 +12,8 @@ weights = Weights(
 env = ComputeClusterEnv(
     weights=weights,
     session='test',
-    render_mode='human',
-    quick_plot=True,
+    render_mode='',
+    quick_plot=False,
     external_prices=None,
     external_durations=None,
     external_jobs=None,
@@ -36,12 +36,13 @@ episodes = 1
 
 for episode in range(episodes):
     print("episode: ", episode)
-    terminated = False
-    obs = env.reset()
-    while not terminated:
+    done = False
+    obs, info = env.reset()
+    while not done:
         random_action = env.action_space.sample()
-        print("  action: ", random_action)
+        # print("  action: ", random_action)
         obs, reward, terminated, truncated, info = env.step(random_action)
-        print("  reward: [", reward, "]")
+        done = terminated or truncated
+        # print("  reward: [", reward, "]")
 
 print('done')
