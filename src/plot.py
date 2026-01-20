@@ -77,31 +77,17 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     plt.close(fig)
 
 def plot_reward(env, num_used_nodes, num_idle_nodes, current_price, num_off_nodes, average_future_price, num_processed_jobs, num_node_changes, job_queue_2d, max_nodes):
-    from src.reward_calculation import calculate_reward
-
     used_nodes, idle_nodes, rewards = [], [], []
-
-    # Prepare reward bounds
-    reward_bounds = {
-        'min_efficiency_reward': env.min_efficiency_reward,
-        'max_efficiency_reward': env.max_efficiency_reward,
-        'min_price_reward': env.min_price_reward,
-        'max_price_reward': env.max_price_reward,
-        'min_idle_penalty': env.min_idle_penalty,
-        'max_idle_penalty': env.max_idle_penalty,
-        'min_job_age_penalty': env.min_job_age_penalty,
-        'max_job_age_penalty': env.max_job_age_penalty,
-    }
+    noop_print = lambda *args: None
 
     num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
 
     for i in range(max_nodes + 1):
         for j in range(max_nodes + 1 - i):
-            reward, _, _, _, _, _ = calculate_reward(
+            reward, _, _, _, _, _ = env.reward_calculator.calculate(
                 i, j, current_price, average_future_price, num_off_nodes,
                 num_processed_jobs, num_node_changes, job_queue_2d,
-                num_unprocessed_jobs, env.weights, env.prices, reward_bounds,
-                0, lambda *args: None  # dummy env_print
+                num_unprocessed_jobs, env.weights, 0, noop_print
             )
             used_nodes.append(i)
             idle_nodes.append(j)
@@ -121,11 +107,11 @@ def plot_reward(env, num_used_nodes, num_idle_nodes, current_price, num_off_node
     plt.plot([0, max_nodes], [max_nodes, 0], 'r--', linewidth=2, label='Max Nodes Constraint')
     plt.plot([0, max_nodes - num_off_nodes], [max_nodes - num_off_nodes, 0], 'b--', linewidth=2, label='Online/Offline Separator')
 
-    current_reward, _, _, _, _, _ = calculate_reward(
+    current_reward, _, _, _, _, _ = env.reward_calculator.calculate(
         num_used_nodes, num_idle_nodes, current_price, average_future_price,
         max_nodes - num_used_nodes - num_idle_nodes, num_processed_jobs,
         num_node_changes, job_queue_2d, num_unprocessed_jobs,
-        env.weights, env.prices, reward_bounds, 0, lambda *args: None
+        env.weights, 0, noop_print
     )
     plt.scatter(num_used_nodes, num_idle_nodes, color='red', s=100, zorder=5, label=f'Current Reward: {current_reward:.2f}')
 

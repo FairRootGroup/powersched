@@ -15,19 +15,15 @@ from src.sampler_hourly import hourly_sampler
 # Import refactored modules
 from src.config import (
     MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
-    MAX_JOB_AGE, MAX_NEW_JOBS_PER_HOUR,
-    CORES_PER_NODE, MAX_CORES_PER_JOB,
-    MAX_NODES_PER_JOB, EPISODE_HOURS,
-    PENALTY_WAITING_JOB
+    MAX_JOB_AGE, CORES_PER_NODE, MAX_CORES_PER_JOB,
+    MAX_NODES_PER_JOB, EPISODE_HOURS
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
     assign_jobs_to_available_nodes
 )
 from src.node_management import adjust_nodes
-from src.reward_calculation import (
-    power_cost, reward_efficiency, reward_price, calculate_reward
-)
+from src.reward_calculation import RewardCalculator
 from src.baseline import baseline_step
 from src.workload_generator import generate_jobs
 from src.metrics_tracker import MetricsTracker
@@ -153,22 +149,8 @@ class ComputeClusterEnv(gym.Env):
         print(f"prices.MAX_PRICE: {self.prices.MAX_PRICE:.2f}, prices.MIN_PRICE: {self.prices.MIN_PRICE:.2f}")
         print(f"Price Statistics: {self.prices.get_price_stats()}")
 
-        # Calculate reward bounds for normalization
-        cost_for_min_efficiency = power_cost(0, MAX_NODES, self.prices.MAX_PRICE)
-        cost_for_max_efficiency = power_cost(MAX_NODES, 0, self.prices.MIN_PRICE)
-
-        self.min_efficiency_reward = reward_efficiency(0, cost_for_min_efficiency)
-        self.max_efficiency_reward = max(1.0, reward_efficiency(MAX_NODES, cost_for_max_efficiency))
-
-        self.min_price_reward = 0
-        self.max_price_reward = reward_price(self.prices.MIN_PRICE, self.prices.MAX_PRICE, MAX_NEW_JOBS_PER_HOUR, self.prices)
-
-        from src.reward_calculation import penalty_idle
-        self.min_idle_penalty = penalty_idle(0)
-        self.max_idle_penalty = penalty_idle(MAX_NODES)
-
-        self.min_job_age_penalty = -0.0
-        self.max_job_age_penalty = PENALTY_WAITING_JOB * MAX_JOB_AGE * MAX_QUEUE_SIZE
+        # Initialize reward calculator
+        self.reward_calculator = RewardCalculator(self.prices)
 
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
@@ -381,23 +363,10 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.baseline_cost += baseline_cost
         self.metrics.baseline_cost_off += baseline_cost_off
 
-        # Calculate reward
-        reward_bounds = {
-            'min_efficiency_reward': self.min_efficiency_reward,
-            'max_efficiency_reward': self.max_efficiency_reward,
-            'min_price_reward': self.min_price_reward,
-            'max_price_reward': self.max_price_reward,
-            'min_idle_penalty': self.min_idle_penalty,
-            'max_idle_penalty': self.max_idle_penalty,
-            'min_job_age_penalty': self.min_job_age_penalty,
-            'max_job_age_penalty': self.max_job_age_penalty,
-        }
-
-        step_reward, step_cost, eff_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm = calculate_reward(
+        step_reward, step_cost, eff_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
             num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d,
-            num_unprocessed_jobs, self.weights, self.prices, reward_bounds,
-            num_dropped_this_step, self.env_print
+            num_unprocessed_jobs, self.weights, num_dropped_this_step, self.env_print
         )
 
         self.metrics.episode_reward += step_reward
