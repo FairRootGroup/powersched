@@ -111,7 +111,7 @@ def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running
         running_jobs: Dictionary of currently running jobs
         next_empty_slot: Index of next empty slot in queue
         next_job_id: Next available job ID
-        metrics: Dictionary to update with job completion metrics
+        metrics: MetricsTracker object to update with job completion metrics
         is_baseline: Whether this is baseline simulation
 
     Returns:
@@ -154,11 +154,11 @@ def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running
 
             # Track job completion and wait time
             if is_baseline:
-                metrics['baseline_jobs_completed'] += 1
-                metrics['baseline_total_job_wait_time'] += job_age
+                metrics.baseline_jobs_completed += 1
+                metrics.baseline_total_job_wait_time += job_age
             else:
-                metrics['jobs_completed'] += 1
-                metrics['total_job_wait_time'] += job_age
+                metrics.jobs_completed += 1
+                metrics.total_job_wait_time += job_age
 
             num_processed_jobs += 1
             continue
@@ -176,11 +176,11 @@ def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running
             num_dropped += 1
 
             if is_baseline:
-                metrics['baseline_jobs_dropped'] += 1
-                metrics['baseline_dropped_this_episode'] += 1
+                metrics.baseline_jobs_dropped += 1
+                metrics.baseline_dropped_this_episode += 1
             else:
-                metrics['jobs_dropped'] += 1
-                metrics['dropped_this_episode'] += 1
+                metrics.jobs_dropped += 1
+                metrics.dropped_this_episode += 1
         else:
             job_queue_2d[job_idx][1] = new_age
 
