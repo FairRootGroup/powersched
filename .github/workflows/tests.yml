@@ -1,0 +1,69 @@
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas  # needed by some tests
+
+      - name: Run environment check
+        run: python -m test.test_checkenv
+
+      - name: Run environment test
+        run: python -m test.test_env
+
+      - name: Run workload generator sanity tests
+        run: python -m test.test_sanity_workloadgen
+
+      - name: Run workload generator determinism tests
+        run: python -m test.test_determinism_workloadgen
+
+      - name: Run price history tests
+        run: python -m test.test_price_history
+
+      - name: Run price cycling tests
+        run: python -m test.test_prices_cycling
+
+      - name: Run environment sanity tests (quick invariants)
+        run: python -m test.test_sanity_env --steps 200
+
+      - name: Run environment sanity tests (full)
+        run: python -m test.test_sanity_env --check-gym --check-determinism --steps 300
+
+      - name: Run environment sanity tests (with external data)
+        run: python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300
+
+      - name: Run duration sampler test
+        run: python -m test.test_sampler_duration --print-stats --test-samples 10
+
+      - name: Run hourly sampler test
+        run: python -m test.test_sampler_hourly --file-path data/allusers-gpu-30.log --test-day
+
+      - name: Run jobs sampler test
+        run: python -m test.test_sampler_jobs --file-path data/allusers-gpu-30.log
+
+      - name: Run jobs aggregated sampler test
+        run: python -m test.test_sampler_jobs_aggregated --file-path data/allusers-gpu-30.log
