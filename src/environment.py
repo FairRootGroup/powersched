@@ -288,28 +288,10 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        # Create metrics dict for job assignment
-        job_metrics = {
-            'jobs_completed': self.metrics.jobs_completed,
-            'total_job_wait_time': self.metrics.total_job_wait_time,
-            'jobs_dropped': self.metrics.jobs_dropped,
-            'dropped_this_episode': self.metrics.dropped_this_episode,
-            'baseline_jobs_completed': self.metrics.baseline_jobs_completed,
-            'baseline_total_job_wait_time': self.metrics.baseline_total_job_wait_time,
-            'baseline_jobs_dropped': self.metrics.baseline_jobs_dropped,
-            'baseline_dropped_this_episode': self.metrics.baseline_dropped_this_episode,
-        }
-
         num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-            self.next_empty_slot, self.next_job_id, job_metrics, is_baseline=False
+            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
         )
-
-        # Update metrics from job_metrics dict
-        self.metrics.jobs_completed = job_metrics['jobs_completed']
-        self.metrics.total_job_wait_time = job_metrics['total_job_wait_time']
-        self.metrics.jobs_dropped = job_metrics['jobs_dropped']
-        self.metrics.dropped_this_episode = job_metrics['dropped_this_episode']
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
@@ -335,30 +317,11 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"[5] Calculating reward...")
 
         # Baseline step
-        baseline_metrics = {
-            'baseline_jobs_submitted': self.metrics.baseline_jobs_submitted,
-            'baseline_jobs_rejected_queue_full': self.metrics.baseline_jobs_rejected_queue_full,
-            'baseline_jobs_completed': self.metrics.baseline_jobs_completed,
-            'baseline_total_job_wait_time': self.metrics.baseline_total_job_wait_time,
-            'baseline_jobs_dropped': self.metrics.baseline_jobs_dropped,
-            'baseline_dropped_this_episode': self.metrics.baseline_dropped_this_episode,
-            'baseline_max_queue_size_reached': self.metrics.baseline_max_queue_size_reached,
-        }
-
         baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
-            self.baseline_next_empty_slot, self.next_job_id, baseline_metrics, self.env_print
+            self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print
         )
-
-        # Update metrics from baseline_metrics dict
-        self.metrics.baseline_jobs_submitted = baseline_metrics['baseline_jobs_submitted']
-        self.metrics.baseline_jobs_rejected_queue_full = baseline_metrics['baseline_jobs_rejected_queue_full']
-        self.metrics.baseline_jobs_completed = baseline_metrics['baseline_jobs_completed']
-        self.metrics.baseline_total_job_wait_time = baseline_metrics['baseline_total_job_wait_time']
-        self.metrics.baseline_jobs_dropped = baseline_metrics['baseline_jobs_dropped']
-        self.metrics.baseline_dropped_this_episode = baseline_metrics['baseline_dropped_this_episode']
-        self.metrics.baseline_max_queue_size_reached = baseline_metrics['baseline_max_queue_size_reached']
 
         self.metrics.baseline_cost += baseline_cost
         self.metrics.baseline_cost_off += baseline_cost_off
