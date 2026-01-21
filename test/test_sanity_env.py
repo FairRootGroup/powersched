@@ -15,6 +15,7 @@ import numpy as np
 from gymnasium.utils.env_checker import check_env
 
 from src.environment import ComputeClusterEnv, Weights
+from src.plot_config import PlotConfig
 import pandas as pd
 from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
 
@@ -211,25 +212,18 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         weights=weights,
         session=args.session,
         render_mode=args.render,
-        quick_plot=False,
         external_prices=load_prices(args.prices),
         external_durations=norm_path(args.job_durations),
         external_jobs=norm_path(args.jobs),
         external_hourly_jobs=norm_path(args.hourly_jobs),
-        plot_rewards=False,
-        plots_dir="plots",
-        plot_once=False,
-        plot_eff_reward=False,
-        plot_price_reward=False,
-        plot_idle_penalty=False,
-        plot_job_age_penalty=False,
-        skip_plot_price=True,
-        skip_plot_online_nodes=True,
-        skip_plot_used_nodes=True,
-        skip_plot_job_queue=True,
+        plot_config=PlotConfig(
+            skip_plot_price=True,
+            skip_plot_online_nodes=True,
+            skip_plot_used_nodes=True,
+            skip_plot_job_queue=True,
+        ),
         steps_per_iteration=EPISODE_HOURS,  # prevent plot cadence surprises
         evaluation_mode=False,
-     #   plot_total_reward=False,
         workload_gen=workload_gen
     )
 

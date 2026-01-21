@@ -9,6 +9,7 @@ from src.plotter import plot_dashboard, plot_cumulative_savings, _compute_cumula
 from src.plot import plot as plot_simple, plot_cumulative_savings as plot_cumulative_savings_simple
 from src.weights import Weights
 from src.metrics_tracker import MetricsTracker
+from src.plot_config import PlotConfig
 
 
 class MockEnv:
@@ -56,16 +57,14 @@ class MockEnv:
         # Baseline wait time (used directly in plotting)
         self.baseline_total_job_wait_time = 1200
 
-        # Plot flags
-        self.skip_plot_price = False
-        self.skip_plot_online_nodes = False
-        self.skip_plot_used_nodes = False
-        self.skip_plot_job_queue = False
-        self.plot_eff_reward = True
-        self.plot_price_reward = True
-        self.plot_idle_penalty = True
-        self.plot_job_age_penalty = True
-        self.plot_total_reward = True
+        # Plot config
+        self.plot_config = PlotConfig(
+            plot_eff_reward=True,
+            plot_price_reward=True,
+            plot_idle_penalty=True,
+            plot_job_age_penalty=True,
+            plot_total_reward=True,
+        )
 
         # Additional attributes for plot_simple (src/plot.py)
         self.next_plot_save = 0
@@ -168,15 +167,12 @@ class TestPlotDashboard:
             env = MockEnv(num_hours=48)
             env.plots_dir = tmpdir
             # Skip all panels
-            env.skip_plot_price = True
-            env.skip_plot_online_nodes = True
-            env.skip_plot_used_nodes = True
-            env.skip_plot_job_queue = True
-            env.plot_eff_reward = False
-            env.plot_price_reward = False
-            env.plot_idle_penalty = False
-            env.plot_job_age_penalty = False
-            env.plot_total_reward = False
+            env.plot_config = PlotConfig(
+                skip_plot_price=True,
+                skip_plot_online_nodes=True,
+                skip_plot_used_nodes=True,
+                skip_plot_job_queue=True,
+            )
 
             # Should print message and not crash
             plot_dashboard(env, num_hours=48, max_nodes=335, save=True, show=False)
@@ -190,15 +186,10 @@ class TestPlotDashboard:
             env = MockEnv(num_hours=48)
             env.plots_dir = tmpdir
             # Only show price and nodes
-            env.skip_plot_price = False
-            env.skip_plot_online_nodes = False
-            env.skip_plot_used_nodes = True
-            env.skip_plot_job_queue = True
-            env.plot_eff_reward = False
-            env.plot_price_reward = False
-            env.plot_idle_penalty = False
-            env.plot_job_age_penalty = False
-            env.plot_total_reward = False
+            env.plot_config = PlotConfig(
+                skip_plot_used_nodes=True,
+                skip_plot_job_queue=True,
+            )
 
             plot_dashboard(env, num_hours=48, max_nodes=335, save=True, show=False)
 
@@ -303,14 +294,12 @@ class TestPlotSimple:
     def test_with_skip_flags(self, output_dir):
         env = MockEnv(num_hours=48)
         env.plots_dir = output_dir + "/"
-        env.skip_plot_price = True
-        env.skip_plot_online_nodes = True
-        env.skip_plot_used_nodes = True
-        env.skip_plot_job_queue = True
-        env.plot_eff_reward = False
-        env.plot_price_reward = False
-        env.plot_idle_penalty = False
-        env.plot_job_age_penalty = False
+        env.plot_config = PlotConfig(
+            skip_plot_price=True,
+            skip_plot_online_nodes=True,
+            skip_plot_used_nodes=True,
+            skip_plot_job_queue=True,
+        )
 
         plot_simple(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=2)
 

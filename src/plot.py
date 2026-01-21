@@ -11,7 +11,7 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     color = 'tab:blue'
     ax1.set_xlabel('Hours')
     ax1.set_ylabel('Electricity Price (€/MWh)', color=color)
-    if not env.skip_plot_price:
+    if not env.plot_config.skip_plot_price:
         ax1.plot(hours, env.metrics.price_stats, color=color, label='Electricity Price (€/MWh)')
     ax1.tick_params(axis='y', labelcolor=color)
 
@@ -20,25 +20,25 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     ax2.set_ylabel('Count / Rewards', color='tab:orange')
 
     # Original metrics
-    if not env.skip_plot_online_nodes:
+    if not env.plot_config.skip_plot_online_nodes:
         ax2.plot(hours, env.metrics.on_nodes, color='orange', label='Online Nodes')
-    if not env.skip_plot_used_nodes:
+    if not env.plot_config.skip_plot_used_nodes:
         ax2.plot(hours, env.metrics.used_nodes, color='green', label='Used Nodes')
-    if not env.skip_plot_job_queue:
+    if not env.plot_config.skip_plot_job_queue:
         ax2.plot(hours, env.metrics.job_queue_sizes, color='red', label='Job Queue Size')
 
     # New metrics with dashed lines
-    if env.plot_eff_reward:
+    if env.plot_config.plot_eff_reward:
         ax2.plot(hours, env.metrics.eff_rewards, color='brown', linestyle='--', label='Efficiency Rewards')
-    if env.plot_price_reward:
+    if env.plot_config.plot_price_reward:
         ax2.plot(hours, env.metrics.price_rewards, color='blue', linestyle='--', label='Price Rewards')
-    if env.plot_idle_penalty:
+    if env.plot_config.plot_idle_penalty:
         ax2.plot(hours, env.metrics.idle_penalties, color='green', linestyle='--', label='Idle Penalties')
-    if env.plot_job_age_penalty:
+    if env.plot_config.plot_job_age_penalty:
         ax2.plot(hours, env.metrics.job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties Penalties')
 
     ax2.tick_params(axis='y')
-    if env.plot_idle_penalty or env.plot_job_age_penalty:
+    if env.plot_config.plot_idle_penalty or env.plot_config.plot_job_age_penalty:
         ax2.set_ylim(-100, max_nodes)
     else:
         ax2.set_ylim(0, max_nodes)

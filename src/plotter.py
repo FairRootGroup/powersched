@@ -128,17 +128,17 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         panels.append((title, s, ylabel, ylim, ov))
 
     # Price
-    if not env.skip_plot_price:
+    if not env.plot_config.skip_plot_price:
         add_panel("Electricity price", env.metrics.price_stats, "€/MWh", None)
 
     # Nodes
-    if not env.skip_plot_online_nodes:
+    if not env.plot_config.skip_plot_online_nodes:
         add_panel("Online nodes", env.metrics.on_nodes, "count", (0, max_nodes * 1.1))
-    if not env.skip_plot_used_nodes:
+    if not env.plot_config.skip_plot_used_nodes:
         add_panel("Used nodes", env.metrics.used_nodes, "count", (0, max_nodes))
 
     # Queue + running jobs (same plot)
-    if not env.skip_plot_job_queue:
+    if not env.plot_config.skip_plot_job_queue:
         running_series = getattr(env.metrics, "running_jobs_counts", None)  # optional, may not exist
         add_panel(
             "Job queue & running jobs",
@@ -149,15 +149,15 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         )
 
     # Reward components
-    if env.plot_eff_reward:
+    if env.plot_config.plot_eff_reward:
         add_panel("Efficiency reward (%)", env.metrics.eff_rewards, "score", None)
-    if env.plot_price_reward:
+    if env.plot_config.plot_price_reward:
         add_panel("Price reward (%)", env.metrics.price_rewards, "score", None)
-    if env.plot_idle_penalty:
+    if env.plot_config.plot_idle_penalty:
         add_panel("Idle penalty (%)", env.metrics.idle_penalties, "score", None)
-    if env.plot_job_age_penalty:
+    if env.plot_config.plot_job_age_penalty:
         add_panel("Job-age penalty (%)", env.metrics.job_age_penalties, "score", None)
-    if env.plot_total_reward:
+    if env.plot_config.plot_total_reward:
         add_panel("Total reward", getattr(env.metrics, "rewards", None), "reward", None)  # optional, may not exist
 
     if not panels:
