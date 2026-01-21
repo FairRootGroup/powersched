@@ -1,6 +1,7 @@
 from stable_baselines3 import PPO
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
+from src.plot_config import PlotConfig
 from src.callbacks import ComputeClusterCallback
 from src.plotter import plot_dashboard, plot_cumulative_savings
 import re
@@ -55,8 +56,8 @@ def main():
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
     parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
     parser.add_argument("--workload-gen", type=str, default="", choices=["", "flat", "poisson", "uniform"], help="Enable workload generator (default: disabled).",)
-    parser.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Poisson lambda for jobs/hour.")
-    parser.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
+    parser.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Poisson lambda for jobs/hour for the workload generator.")
+    parser.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for the workload generator.")
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
 
@@ -115,25 +116,29 @@ def main():
         )
         workload_gen = WorkloadGenerator(cfg)
 
+    plot_config = PlotConfig(
+        quick_plot=args.quick_plot,
+        plot_rewards=args.plot_rewards,
+        plot_once=args.plot_once,
+        plot_eff_reward=args.plot_eff_reward,
+        plot_price_reward=args.plot_price_reward,
+        plot_idle_penalty=args.plot_idle_penalty,
+        plot_job_age_penalty=args.plot_job_age_penalty,
+        plot_total_reward=args.plot_total_reward,
+        skip_plot_price=args.skip_plot_price,
+        skip_plot_online_nodes=args.skip_plot_online_nodes,
+        skip_plot_used_nodes=args.skip_plot_used_nodes,
+        skip_plot_job_queue=args.skip_plot_job_queue,
+    )
+
     env = ComputeClusterEnv(weights=weights,
                             session=args.session,
                             render_mode=args.render,
-                            quick_plot=args.quick_plot,
                             external_prices=prices,
                             external_durations=norm_path(job_durations_file_path),
                             external_jobs=norm_path(jobs_file_path),
                             external_hourly_jobs=norm_path(hourly_jobs_file_path),
-                            plot_rewards=args.plot_rewards,
-                            plots_dir=plots_dir,
-                            plot_once=args.plot_once,
-                            plot_eff_reward=args.plot_eff_reward,
-                            plot_price_reward=args.plot_price_reward,
-                            plot_idle_penalty=args.plot_idle_penalty,
-                            plot_job_age_penalty=args.plot_job_age_penalty,
-                            skip_plot_price=args.skip_plot_price,
-                            skip_plot_online_nodes=args.skip_plot_online_nodes,
-                            skip_plot_used_nodes=args.skip_plot_used_nodes,
-                            skip_plot_job_queue=args.skip_plot_job_queue,
+                            plot_config=plot_config,
                             steps_per_iteration=STEPS_PER_ITERATION,
                             evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen)

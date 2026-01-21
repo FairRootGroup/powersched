@@ -7,6 +7,7 @@ from colorama import init, Fore
 
 from src.prices_deterministic import Prices
 from src.weights import Weights
+from src.plot_config import PlotConfig
 from src.plot import plot, plot_reward
 from src.sampler_duration import durations_sampler
 from src.sampler_jobs import DurationSampler
@@ -62,22 +63,11 @@ class ComputeClusterEnv(gym.Env):
                  weights: Weights,
                  session,
                  render_mode,
-                 quick_plot,
                  external_prices,
                  external_durations,
                  external_jobs,
                  external_hourly_jobs,
-                 plot_rewards,
-                 plots_dir,
-                 plot_once,
-                 plot_eff_reward,
-                 plot_price_reward,
-                 plot_idle_penalty,
-                 plot_job_age_penalty,
-                 skip_plot_price,
-                 skip_plot_online_nodes,
-                 skip_plot_used_nodes,
-                 skip_plot_job_queue,
+                 plot_config: PlotConfig,
                  steps_per_iteration,
                  evaluation_mode=False,
                  workload_gen=None):
@@ -86,22 +76,11 @@ class ComputeClusterEnv(gym.Env):
         self.weights = weights
         self.session = session
         self.render_mode = render_mode
-        self.quick_plot = quick_plot
         self.external_prices = external_prices
         self.external_durations = external_durations
         self.external_jobs = external_jobs
         self.external_hourly_jobs = external_hourly_jobs
-        self.plot_rewards = plot_rewards
-        self.plots_dir = plots_dir
-        self.plot_once = plot_once
-        self.plot_eff_reward = plot_eff_reward
-        self.plot_price_reward = plot_price_reward
-        self.plot_idle_penalty = plot_idle_penalty
-        self.plot_job_age_penalty = plot_job_age_penalty
-        self.skip_plot_price = skip_plot_price
-        self.skip_plot_online_nodes = skip_plot_online_nodes
-        self.skip_plot_used_nodes = skip_plot_used_nodes
-        self.skip_plot_job_queue = skip_plot_job_queue
+        self.plot_config = plot_config
         self.steps_per_iteration = steps_per_iteration
         self.evaluation_mode = evaluation_mode
 
@@ -112,6 +91,7 @@ class ComputeClusterEnv(gym.Env):
 
         # Initialize cost tracking for long-term analysis
         self.session_dir = f"sessions/{session}"
+        self.plots_dir = f"sessions/{session}/plots/"
 
         self.prices = Prices(self.external_prices)
 
@@ -353,7 +333,7 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"price: current: {current_price}, average future: {average_future_price:.4f}")
         self.env_print(f"step reward: {step_reward:.4f}, episode reward: {self.metrics.episode_reward:.4f}")
 
-        if self.plot_rewards:
+        if self.plot_config.plot_rewards:
             plot_reward(self, num_used_nodes, num_idle_nodes, current_price, num_off_nodes, average_future_price, num_launched_jobs, num_node_changes, job_queue_2d, MAX_NODES)
 
         truncated = False
@@ -361,7 +341,7 @@ class ComputeClusterEnv(gym.Env):
         if self.metrics.current_hour == EPISODE_HOURS:
             if self.render_mode == 'human':
                 plot(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
-                if self.plot_once:
+                if self.plot_config.plot_once:
                     raise PlottingComplete
             else:
                 # Only do training plots in training mode
@@ -380,7 +360,7 @@ class ComputeClusterEnv(gym.Env):
 
         if self.render_mode == 'human':
             # go slow to be able to read stuff in human mode
-            if not self.quick_plot:
+            if not self.plot_config.quick_plot:
                 time.sleep(1)
 
         self.env_print(Fore.GREEN + f"]]]" + Fore.RESET)

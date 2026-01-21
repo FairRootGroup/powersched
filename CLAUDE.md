@@ -24,6 +24,7 @@ powersched/
 │   ├── sampler_*.py        # Job samplers
 │   ├── callbacks.py        # Training callbacks
 │   ├── weights.py          # Reward weights
+│   ├── plot_config.py      # Plot configuration
 │   └── plot.py             # Visualization
 ├── test/                   # Test files (all start with test_)
 │   ├── run_all.py          # Run all tests
