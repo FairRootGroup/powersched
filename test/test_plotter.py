@@ -42,6 +42,18 @@ class MockEnv:
         self.metrics.baseline_cost = 6000
         self.metrics.baseline_cost_off = 5500
 
+        self.metrics.episode_jobs_submitted = 120
+        self.metrics.episode_jobs_completed = 110
+        self.metrics.episode_total_job_wait_time = 240
+        self.metrics.episode_max_queue_size_reached = 60
+        self.metrics.episode_baseline_jobs_submitted = 120
+        self.metrics.episode_baseline_jobs_completed = 100
+        self.metrics.episode_baseline_total_job_wait_time = 300
+        self.metrics.episode_baseline_max_queue_size_reached = 80
+        self.metrics.episode_total_cost = 900
+        self.metrics.episode_baseline_cost = 1100
+        self.metrics.episode_baseline_cost_off = 1000
+
         # Time series data
         self.metrics.price_stats = list(np.random.uniform(50, 150, num_hours))
         self.metrics.on_nodes = list(np.random.randint(100, 300, num_hours))
@@ -54,16 +66,24 @@ class MockEnv:
         self.metrics.job_age_penalties = list(np.random.uniform(0, 0.3, num_hours))
         self.metrics.rewards = list(np.random.uniform(-1, 1, num_hours))
 
-        # Baseline wait time (used directly in plotting)
-        self.baseline_total_job_wait_time = 1200
+        self.metrics.episode_price_stats = list(self.metrics.price_stats)
+        self.metrics.episode_on_nodes = list(self.metrics.on_nodes)
+        self.metrics.episode_used_nodes = list(self.metrics.used_nodes)
+        self.metrics.episode_job_queue_sizes = list(self.metrics.job_queue_sizes)
+        self.metrics.episode_running_jobs_counts = list(self.metrics.running_jobs_counts)
+        self.metrics.episode_eff_rewards = list(self.metrics.eff_rewards)
+        self.metrics.episode_price_rewards = list(self.metrics.price_rewards)
+        self.metrics.episode_idle_penalties = list(self.metrics.idle_penalties)
+        self.metrics.episode_job_age_penalties = list(self.metrics.job_age_penalties)
+        self.metrics.episode_rewards = list(self.metrics.rewards)
 
         # Plot config
         self.plot_config = PlotConfig(
-            plot_eff_reward=True,
-            plot_price_reward=True,
-            plot_idle_penalty=True,
-            plot_job_age_penalty=True,
-            plot_total_reward=True,
+            plot_eff_reward=False,
+            plot_price_reward=False,
+            plot_idle_penalty=False,
+            plot_job_age_penalty=False,
+            plot_total_reward=False,
         )
 
         # Additional attributes for plot_simple (src/plot.py)
@@ -168,6 +188,11 @@ class TestPlotDashboard:
             env.plots_dir = tmpdir
             # Skip all panels
             env.plot_config = PlotConfig(
+                plot_eff_reward=True,
+                plot_price_reward=True,
+                plot_idle_penalty=True,
+                plot_job_age_penalty=True,
+                plot_total_reward=True,
                 skip_plot_price=True,
                 skip_plot_online_nodes=True,
                 skip_plot_used_nodes=True,
