@@ -35,7 +35,7 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     if env.plot_config.plot_idle_penalty:
         ax2.plot(hours, env.metrics.idle_penalties, color='green', linestyle='--', label='Idle Penalties')
     if env.plot_config.plot_job_age_penalty:
-        ax2.plot(hours, env.metrics.job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties Penalties')
+        ax2.plot(hours, env.metrics.job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties')
 
     ax2.tick_params(axis='y')
     if env.plot_config.plot_idle_penalty or env.plot_config.plot_job_age_penalty:
