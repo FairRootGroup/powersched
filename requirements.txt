@@ -4,3 +4,4 @@ tensorboard
 matplotlib
 colorama
 numpy
+pandas
