@@ -39,7 +39,9 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
         new_jobs_nodes, new_jobs_cores, baseline_next_empty_slot
     )
     metrics.baseline_jobs_submitted += len(new_baseline_jobs)
+    metrics.episode_baseline_jobs_submitted += len(new_baseline_jobs)
     metrics.baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
+    metrics.episode_baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
 
     _, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
@@ -54,6 +56,8 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     # Track baseline max queue size
     if num_unprocessed_jobs > metrics.baseline_max_queue_size_reached:
         metrics.baseline_max_queue_size_reached = num_unprocessed_jobs
+    if num_unprocessed_jobs > metrics.episode_baseline_max_queue_size_reached:
+        metrics.episode_baseline_max_queue_size_reached = num_unprocessed_jobs
 
     baseline_state['job_queue'] = job_queue_2d.flatten()
 

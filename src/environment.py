@@ -70,7 +70,8 @@ class ComputeClusterEnv(gym.Env):
                  plot_config: PlotConfig,
                  steps_per_iteration,
                  evaluation_mode=False,
-                 workload_gen=None):
+                 workload_gen=None,
+                 carry_over_state=False):
         super().__init__()
 
         self.weights = weights
@@ -99,6 +100,7 @@ class ComputeClusterEnv(gym.Env):
         self.np_random = None
         self._seed = None
         self.workload_gen = workload_gen
+        self.carry_over_state = carry_over_state
 
         if self.external_durations:
             durations_sampler.init(self.external_durations)
@@ -132,6 +134,11 @@ class ComputeClusterEnv(gym.Env):
         # Initialize reward calculator
         self.reward_calculator = RewardCalculator(self.prices)
 
+        self.metrics.reset_timeline_metrics()
+        self.metrics.reset_episode_metrics()
+        self._reset_timeline_state(start_index=0)
+        self.np_random, self._seed = seeding.np_random(None)
+
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
         #   action_magnitude: 0-MAX_CHANGE (+1ed in the action)
@@ -161,32 +168,8 @@ class ComputeClusterEnv(gym.Env):
             ),
         })
 
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.np_random, self._seed = seeding.np_random(seed)
-
-        # Track which episode this env instance is on
-        if not hasattr(self, "episode_idx"):
-            self.episode_idx = 0
-        else:
-            self.episode_idx += 1
-
-        # Reset metrics
-        self.metrics.reset_state_metrics()
-
-        # Choose starting index in the external price series
-        if self.prices is not None and self.prices.external_prices is not None:
-            n_prices = len(self.prices.external_prices)
-            episode_span = EPISODE_HOURS
-
-            # Episode k starts at hour k * episode_span (wrapping around the year)
-            start_index = (self.episode_idx * episode_span) % n_prices
-            if options and "price_start_index" in options: # For testing Purposes. Leave out 'options' to advance episode.
-                start_index = int(options["price_start_index"]) % n_prices
-            self.prices.reset(start_index=start_index)
-        else:
-            # Synthetic prices or no external prices
-            self.prices.reset(start_index=0)
+    def _reset_timeline_state(self, start_index):
+        self.prices.reset(start_index=start_index)
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
@@ -215,11 +198,59 @@ class ComputeClusterEnv(gym.Env):
         self.next_empty_slot = 0
         self.baseline_next_empty_slot = 0
 
+    def reset(self, seed=None, options=None):
+        if options is None:
+            options = {}
+
+        if not self.carry_over_state:
+            super().reset(seed=seed)
+            self.np_random, self._seed = seeding.np_random(seed)
+        else:
+            super().reset(seed=None)
+            if self.np_random is None:
+                self.np_random, self._seed = seeding.np_random(seed)
+
+        # Track which episode this env instance is on
+        if not hasattr(self, "episode_idx"):
+            self.episode_idx = 0
+        else:
+            self.episode_idx += 1
+
+        if not self.carry_over_state:
+            self.metrics.reset_timeline_metrics()
+            self.metrics.reset_episode_metrics()
+
+            # Choose starting index in the external price series
+            if self.prices is not None and self.prices.external_prices is not None:
+                n_prices = len(self.prices.external_prices)
+                episode_span = EPISODE_HOURS
+
+                # Episode k starts at hour k * episode_span (wrapping around the year)
+                start_index = (self.episode_idx * episode_span) % n_prices
+                if "price_start_index" in options:  # For testing purposes.
+                    start_index = int(options["price_start_index"]) % n_prices
+            else:
+                # Synthetic prices or no external prices
+                start_index = int(options.get("price_start_index", 0))
+
+            self._reset_timeline_state(start_index=start_index)
+        else:
+            self.metrics.reset_episode_metrics()
+            if "price_start_index" in options:
+                if self.prices is not None and self.prices.external_prices is not None:
+                    n_prices = len(self.prices.external_prices)
+                    start_index = int(options["price_start_index"]) % n_prices
+                else:
+                    start_index = int(options["price_start_index"])
+                self.prices.reset(start_index=start_index)
+                self.state["predicted_prices"] = self.prices.predicted_prices.copy()
+
         return self.state, {}
 
     def step(self, action):
         self.current_step += 1
         self.metrics.current_hour += 1
+        self.metrics.total_time_hours += 1
         if self.metrics.current_hour == 1:
             self.current_episode += 1
         self.env_print(Fore.GREEN + f"\n[[[ Starting episode: {self.current_episode}, step: {self.current_step}, hour: {self.metrics.current_hour}" + Fore.RESET)
@@ -252,7 +283,9 @@ class ComputeClusterEnv(gym.Env):
             new_jobs_nodes, new_jobs_cores, self.next_empty_slot
         )
         self.metrics.jobs_submitted += len(new_jobs)
+        self.metrics.episode_jobs_submitted += len(new_jobs)
         self.metrics.jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
+        self.metrics.episode_jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -289,10 +322,16 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.used_nodes.append(num_used_nodes)
         self.metrics.job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.price_stats.append(current_price)
+        self.metrics.episode_on_nodes.append(num_on_nodes)
+        self.metrics.episode_used_nodes.append(num_used_nodes)
+        self.metrics.episode_job_queue_sizes.append(num_unprocessed_jobs)
+        self.metrics.episode_price_stats.append(current_price)
 
         # Track max queue size
         if num_unprocessed_jobs > self.metrics.max_queue_size_reached:
             self.metrics.max_queue_size_reached = num_unprocessed_jobs
+        if num_unprocessed_jobs > self.metrics.episode_max_queue_size_reached:
+            self.metrics.episode_max_queue_size_reached = num_unprocessed_jobs
 
         self.env_print(f"[5] Calculating reward...")
 
@@ -305,6 +344,8 @@ class ComputeClusterEnv(gym.Env):
 
         self.metrics.baseline_cost += baseline_cost
         self.metrics.baseline_cost_off += baseline_cost_off
+        self.metrics.episode_baseline_cost += baseline_cost
+        self.metrics.episode_baseline_cost_off += baseline_cost_off
 
         step_reward, step_cost, eff_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
@@ -314,12 +355,19 @@ class ComputeClusterEnv(gym.Env):
 
         self.metrics.episode_reward += step_reward
         self.metrics.total_cost += step_cost
+        self.metrics.episode_total_cost += step_cost
 
         # Store normalized reward components for plotting
         self.metrics.eff_rewards.append(eff_reward_norm * 100)
         self.metrics.price_rewards.append(price_reward_norm * 100)
         self.metrics.job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.idle_penalties.append(idle_penalty_norm * 100)
+        self.metrics.rewards.append(step_reward)
+        self.metrics.episode_eff_rewards.append(eff_reward_norm * 100)
+        self.metrics.episode_price_rewards.append(price_reward_norm * 100)
+        self.metrics.episode_job_age_penalties.append(job_age_penalty_norm * 100)
+        self.metrics.episode_idle_penalties.append(idle_penalty_norm * 100)
+        self.metrics.episode_rewards.append(step_reward)
 
         # print stats
         self.env_print(f"[6] End of step stats...")
@@ -365,4 +413,11 @@ class ComputeClusterEnv(gym.Env):
 
         self.env_print(Fore.GREEN + f"]]]" + Fore.RESET)
 
-        return self.state, step_reward, terminated, truncated, {}
+        info = {
+            "step_cost": step_cost,
+            "num_unprocessed_jobs": num_unprocessed_jobs,
+            "num_on_nodes": num_on_nodes,
+            "dropped_this_episode": self.metrics.dropped_this_episode,
+        }
+
+        return self.state, step_reward, terminated, truncated, info
