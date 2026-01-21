@@ -195,7 +195,7 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.reset_state_metrics()
 
         # Choose starting index in the external price series
-        if self.prices is not None and getattr(self.prices, "external_prices", None) is not None:
+        if self.prices is not None and self.prices.external_prices is not None:
             n_prices = len(self.prices.external_prices)
             episode_span = EPISODE_HOURS
 

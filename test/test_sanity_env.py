@@ -254,7 +254,7 @@ def maybe_print_job(env, obs, step_idx, every, kind="queue", job_index=-1):
         print(f"[job@step {step_idx}] QUEUE idx={idx}: dur_h={d} age_h={a} nodes={nn} cores_per_node={cpn}")
 
     def print_running_job():
-        if not getattr(env, "running_jobs", None):
+        if not env.running_jobs:
             print(f"[job@step {step_idx}] running_jobs empty")
             return
         # deterministic-ish: smallest job_id

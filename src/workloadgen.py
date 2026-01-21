@@ -70,8 +70,8 @@ class WorkloadGenerator:
         mode = self.cfg.arrivals
 
         if mode == "flat":
-            target = int(getattr(self.cfg, "flat_jobs_per_hour", self.cfg.max_new_jobs_per_hour))
-            jitter = int(getattr(self.cfg, "flat_jitter", 0))
+            target = int(self.cfg.flat_jobs_per_hour)
+            jitter = int(self.cfg.flat_jitter)
 
             if jitter <= 0:
                 k = target

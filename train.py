@@ -304,7 +304,7 @@ def main():
                                     "baseline_cost": ep["baseline_cost"],
                                     "baseline_cost_off": ep["baseline_cost_off"],
                                 }
-                                for ep in getattr(env, "episode_costs", [])
+                                for ep in env.metrics.episode_costs
                             ],
                             save=True,
                             show=False,

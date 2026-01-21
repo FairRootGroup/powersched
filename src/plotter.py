@@ -87,14 +87,14 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     hours = np.arange(num_hours)
 
     # ----- header text -----
-    completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if getattr(env, "jobs_submitted", 0) > 0 else 0.0
-    baseline_completion_rate = (env.metrics.baseline_jobs_completed / env.metrics.baseline_jobs_submitted * 100) if getattr(env, "baseline_jobs_submitted", 0) > 0 else 0.0
-    avg_wait = (env.metrics.total_job_wait_time / env.metrics.jobs_completed) if getattr(env, "jobs_completed", 0) > 0 else 0.0
-    baseline_avg_wait = (env.baseline_total_job_wait_time / env.metrics.baseline_jobs_completed) if getattr(env, "baseline_jobs_completed", 0) > 0 else 0.0
+    completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0.0
+    baseline_completion_rate = (env.metrics.baseline_jobs_completed / env.metrics.baseline_jobs_submitted * 100) if env.metrics.baseline_jobs_submitted > 0 else 0.0
+    avg_wait = (env.metrics.total_job_wait_time / env.metrics.jobs_completed) if env.metrics.jobs_completed > 0 else 0.0
+    baseline_avg_wait = (env.baseline_total_job_wait_time / env.metrics.baseline_jobs_completed) if env.metrics.baseline_jobs_completed > 0 else 0.0
 
-    base_cost = float(getattr(env, "baseline_cost", 0.0))
-    base_cost_off = float(getattr(env, "baseline_cost_off", 0.0))
-    agent_cost = float(getattr(env, "total_cost", 0.0))
+    base_cost = float(env.metrics.baseline_cost)
+    base_cost_off = float(env.metrics.baseline_cost_off)
+    agent_cost = float(env.metrics.total_cost)
 
     pct_vs_base = ((base_cost - agent_cost) / base_cost * 100.0) if base_cost > 0 else 0.0
     pct_vs_base_off = ((base_cost_off - agent_cost) / base_cost_off * 100.0) if base_cost_off > 0 else 0.0
@@ -128,37 +128,37 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         panels.append((title, s, ylabel, ylim, ov))
 
     # Price
-    if not getattr(env, "skip_plot_price", False):
-        add_panel("Electricity price", getattr(env.metrics, "price_stats", None), "€/MWh", None)
+    if not env.skip_plot_price:
+        add_panel("Electricity price", env.metrics.price_stats, "€/MWh", None)
 
     # Nodes
-    if not getattr(env, "skip_plot_online_nodes", False):
-        add_panel("Online nodes", getattr(env.metrics, "on_nodes", None), "count", (0, max_nodes * 1.1))
-    if not getattr(env, "skip_plot_used_nodes", False):
-        add_panel("Used nodes", getattr(env.metrics, "used_nodes", None), "count", (0, max_nodes))
+    if not env.skip_plot_online_nodes:
+        add_panel("Online nodes", env.metrics.on_nodes, "count", (0, max_nodes * 1.1))
+    if not env.skip_plot_used_nodes:
+        add_panel("Used nodes", env.metrics.used_nodes, "count", (0, max_nodes))
 
     # Queue + running jobs (same plot)
-    if not getattr(env, "skip_plot_job_queue", False):
-        running_series = getattr(env.metrics, "running_jobs_counts", None)
+    if not env.skip_plot_job_queue:
+        running_series = getattr(env.metrics, "running_jobs_counts", None)  # optional, may not exist
         add_panel(
             "Job queue & running jobs",
-            getattr(env.metrics, "job_queue_sizes", None),
+            env.metrics.job_queue_sizes,
             "jobs",
             None,
             overlay=("Running jobs", running_series),
         )
 
     # Reward components
-    if getattr(env, "plot_eff_reward", False):
-        add_panel("Efficiency reward (%)", getattr(env.metrics, "eff_rewards", None), "score", None)
-    if getattr(env, "plot_price_reward", False):
-        add_panel("Price reward (%)", getattr(env.metrics, "price_rewards", None), "score", None)
-    if getattr(env, "plot_idle_penalty", False):
-        add_panel("Idle penalty (%)", getattr(env.metrics, "idle_penalties", None), "score", None)
-    if getattr(env, "plot_job_age_penalty", False):
-        add_panel("Job-age penalty (%)", getattr(env.metrics, "job_age_penalties", None), "score", None)
-    if getattr(env, "plot_total_reward", False):
-        add_panel("Total reward", getattr(env.metrics, "rewards", None), "reward", None)
+    if env.plot_eff_reward:
+        add_panel("Efficiency reward (%)", env.metrics.eff_rewards, "score", None)
+    if env.plot_price_reward:
+        add_panel("Price reward (%)", env.metrics.price_rewards, "score", None)
+    if env.plot_idle_penalty:
+        add_panel("Idle penalty (%)", env.metrics.idle_penalties, "score", None)
+    if env.plot_job_age_penalty:
+        add_panel("Job-age penalty (%)", env.metrics.job_age_penalties, "score", None)
+    if env.plot_total_reward:
+        add_panel("Total reward", getattr(env.metrics, "rewards", None), "reward", None)  # optional, may not exist
 
     if not panels:
         print("plot_dashboard(): nothing to plot.")
@@ -214,7 +214,7 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         fname = f"{prefix}_{suffix}_{timestamp}.png"
-        save_path = os.path.join(getattr(env, "plots_dir", "."), fname)
+        save_path = os.path.join(env.plots_dir, fname)
         plt.savefig(save_path, dpi=200, bbox_inches="tight")
         print(f"Dashboard figure saved as: {save_path}")
     if show:
@@ -267,7 +267,7 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
     ax2.set_ylim(0, max_pct * 1.1 if max_pct > 0 else 100)
 
     # Title and summary box
-    weights_str = str(getattr(env, "weights", ""))
+    weights_str = str(env.weights)
     plt.title(
         f"PowerSched Long-Term Cost Savings Analysis\n{weights_str}\n"
         f"Savings vs Baseline: €{final_savings:,.0f} ({avg_monthly_savings:.1f}% avg) | "
@@ -295,7 +295,7 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
     # Save/show
     prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_d{env.weights.job_age_weight}"
     if session_dir is None:
-        session_dir = getattr(env, "plots_dir", ".")
+        session_dir = env.plots_dir
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         fname = f"cumulative_savings_{prefix}_{suffix}_{timestamp}.png"
