@@ -7,6 +7,7 @@ import sys
 TESTS = [
     ["python", "-m", "test.test_checkenv"],
     ["python", "-m", "test.test_env"],
+    ["python", "-m", "test.test_plotter"],
     ["python", "-m", "test.test_sanity_workloadgen"],
     ["python", "-m", "test.test_determinism_workloadgen"],
     ["python", "-m", "test.test_price_history"],
