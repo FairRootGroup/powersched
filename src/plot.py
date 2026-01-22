@@ -12,7 +12,7 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     ax1.set_xlabel('Hours')
     ax1.set_ylabel('Electricity Price (€/MWh)', color=color)
     if env.plot_config.plot_price:
-        ax1.plot(hours, env.metrics.price_stats, color=color, label='Electricity Price (€/MWh)')
+        ax1.plot(hours, env.metrics.episode_price_stats, color=color, label='Electricity Price (€/MWh)')
     ax1.tick_params(axis='y', labelcolor=color)
 
     # Right y-axis for counts and rewards
@@ -21,21 +21,21 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
 
     # Original metrics
     if env.plot_config.plot_online_nodes:
-        ax2.plot(hours, env.metrics.on_nodes, color='orange', label='Online Nodes')
+        ax2.plot(hours, env.metrics.episode_on_nodes, color='orange', label='Online Nodes')
     if env.plot_config.plot_used_nodes:
-        ax2.plot(hours, env.metrics.used_nodes, color='green', label='Used Nodes')
+        ax2.plot(hours, env.metrics.episode_used_nodes, color='green', label='Used Nodes')
     if env.plot_config.plot_job_queue:
-        ax2.plot(hours, env.metrics.job_queue_sizes, color='red', label='Job Queue Size')
+        ax2.plot(hours, env.metrics.episode_job_queue_sizes, color='red', label='Job Queue Size')
 
     # New metrics with dashed lines
     if env.plot_config.plot_eff_reward:
-        ax2.plot(hours, env.metrics.eff_rewards, color='brown', linestyle='--', label='Efficiency Rewards')
+        ax2.plot(hours, env.metrics.episode_eff_rewards, color='brown', linestyle='--', label='Efficiency Rewards')
     if env.plot_config.plot_price_reward:
-        ax2.plot(hours, env.metrics.price_rewards, color='blue', linestyle='--', label='Price Rewards')
+        ax2.plot(hours, env.metrics.episode_price_rewards, color='blue', linestyle='--', label='Price Rewards')
     if env.plot_config.plot_idle_penalty:
-        ax2.plot(hours, env.metrics.idle_penalties, color='green', linestyle='--', label='Idle Penalties')
+        ax2.plot(hours, env.metrics.episode_idle_penalties, color='green', linestyle='--', label='Idle Penalties')
     if env.plot_config.plot_job_age_penalty:
-        ax2.plot(hours, env.metrics.job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties')
+        ax2.plot(hours, env.metrics.episode_job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties')
 
     ax2.tick_params(axis='y')
     if env.plot_config.plot_idle_penalty or env.plot_config.plot_job_age_penalty:
@@ -44,20 +44,36 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
         ax2.set_ylim(0, max_nodes)
 
     # Calculate job metrics
-    completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
-    baseline_completion_rate = (env.metrics.baseline_jobs_completed / env.metrics.baseline_jobs_submitted * 100) if env.metrics.baseline_jobs_submitted > 0 else 0
-    avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
-    baseline_avg_wait = env.metrics.baseline_total_job_wait_time / env.metrics.baseline_jobs_completed if env.metrics.baseline_jobs_completed > 0 else 0
+    completion_rate = (
+        (env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100)
+        if env.metrics.episode_jobs_submitted > 0
+        else 0
+    )
+    baseline_completion_rate = (
+        (env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100)
+        if env.metrics.episode_baseline_jobs_submitted > 0
+        else 0
+    )
+    avg_wait = (
+        env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed
+        if env.metrics.episode_jobs_completed > 0
+        else 0
+    )
+    baseline_avg_wait = (
+        env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed
+        if env.metrics.episode_baseline_jobs_completed > 0
+        else 0
+    )
 
     plt.title(f"{env.session} | ep:{env.current_episode} step:{env.current_step} | {env.weights}\n"
-              f"Cost: €{env.metrics.total_cost:.0f}, Base: €{env.metrics.baseline_cost:.0f} "
-              f"(+{env.metrics.baseline_cost - env.metrics.total_cost:.0f}, {((env.metrics.baseline_cost - env.metrics.total_cost) / env.metrics.baseline_cost) * 100:.1f}%), "
-              f"Base_Off: €{env.metrics.baseline_cost_off:.0f} "
-              f"(+{env.metrics.baseline_cost_off - env.metrics.total_cost:.0f}, {((env.metrics.baseline_cost_off - env.metrics.total_cost) / env.metrics.baseline_cost_off) * 100:.1f}%)\n"
-              f"Jobs: {env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%, "
-              f"wait={avg_wait:.1f}h, Q={env.metrics.max_queue_size_reached}) | "
-              f"Base: {env.metrics.baseline_jobs_completed}/{env.metrics.baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, "
-              f"wait={baseline_avg_wait:.1f}h, Q={env.metrics.baseline_max_queue_size_reached})",
+              f"Cost: €{env.metrics.episode_total_cost:.0f}, Base: €{env.metrics.episode_baseline_cost:.0f} "
+              f"(+{env.metrics.episode_baseline_cost - env.metrics.episode_total_cost:.0f}, {((env.metrics.episode_baseline_cost - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost) * 100:.1f}%), "
+              f"Base_Off: €{env.metrics.episode_baseline_cost_off:.0f} "
+              f"(+{env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost:.0f}, {((env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost_off) * 100:.1f}%)\n"
+              f"Jobs: {env.metrics.episode_jobs_completed}/{env.metrics.episode_jobs_submitted} ({completion_rate:.0f}%, "
+              f"wait={avg_wait:.1f}h, Q={env.metrics.episode_max_queue_size_reached}) | "
+              f"Base: {env.metrics.episode_baseline_jobs_completed}/{env.metrics.episode_baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, "
+              f"wait={baseline_avg_wait:.1f}h, Q={env.metrics.episode_baseline_max_queue_size_reached})",
               fontsize=9)
 
     # Combine legends from both axes
