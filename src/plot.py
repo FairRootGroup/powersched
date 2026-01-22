@@ -64,12 +64,22 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
         if env.metrics.episode_baseline_jobs_completed > 0
         else 0
     )
+    baseline_savings_pct = (
+        ((env.metrics.episode_baseline_cost - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost) * 100
+        if env.metrics.episode_baseline_cost > 0
+        else 0
+    )
+    baseline_off_savings_pct = (
+        ((env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost_off) * 100
+        if env.metrics.episode_baseline_cost_off > 0
+        else 0
+    )
 
     plt.title(f"{env.session} | ep:{env.current_episode} step:{env.current_step} | {env.weights}\n"
               f"Cost: €{env.metrics.episode_total_cost:.0f}, Base: €{env.metrics.episode_baseline_cost:.0f} "
-              f"(+{env.metrics.episode_baseline_cost - env.metrics.episode_total_cost:.0f}, {((env.metrics.episode_baseline_cost - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost) * 100:.1f}%), "
+              f"(+{env.metrics.episode_baseline_cost - env.metrics.episode_total_cost:.0f}, {baseline_savings_pct:.1f}%), "
               f"Base_Off: €{env.metrics.episode_baseline_cost_off:.0f} "
-              f"(+{env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost:.0f}, {((env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost_off) * 100:.1f}%)\n"
+              f"(+{env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost:.0f}, {baseline_off_savings_pct:.1f}%)\n"
               f"Jobs: {env.metrics.episode_jobs_completed}/{env.metrics.episode_jobs_submitted} ({completion_rate:.0f}%, "
               f"wait={avg_wait:.1f}h, Q={env.metrics.episode_max_queue_size_reached}) | "
               f"Base: {env.metrics.episode_baseline_jobs_completed}/{env.metrics.episode_baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, "
