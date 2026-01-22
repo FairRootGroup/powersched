@@ -188,10 +188,10 @@ class TestPlotDashboard:
             env.plots_dir = tmpdir
             # Skip all panels (plot_* defaults to False, so reward panels are already off)
             env.plot_config = PlotConfig(
-                skip_plot_price=True,
-                skip_plot_online_nodes=True,
-                skip_plot_used_nodes=True,
-                skip_plot_job_queue=True,
+                plot_price=False,
+                plot_online_nodes=False,
+                plot_used_nodes=False,
+                plot_job_queue=False,
             )
 
             # Should print message and not crash
@@ -207,8 +207,8 @@ class TestPlotDashboard:
             env.plots_dir = tmpdir
             # Only show price and nodes
             env.plot_config = PlotConfig(
-                skip_plot_used_nodes=True,
-                skip_plot_job_queue=True,
+                plot_used_nodes=False,
+                plot_job_queue=False,
             )
 
             plot_dashboard(env, num_hours=48, max_nodes=335, save=True, show=False)
@@ -311,14 +311,14 @@ class TestPlotSimple:
             files = os.listdir(tmpdir)
             assert len(files) == 0
 
-    def test_with_skip_flags(self, output_dir):
+    def test_with_plot_flags_disabled(self, output_dir):
         env = MockEnv(num_hours=48)
         env.plots_dir = output_dir + "/"
         env.plot_config = PlotConfig(
-            skip_plot_price=True,
-            skip_plot_online_nodes=True,
-            skip_plot_used_nodes=True,
-            skip_plot_job_queue=True,
+            plot_price=False,
+            plot_online_nodes=False,
+            plot_used_nodes=False,
+            plot_job_queue=False,
         )
 
         plot_simple(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=2)
@@ -454,7 +454,7 @@ def main():
     test_ps = TestPlotSimple()
     test_ps.test_saves_file(output_dir)
     test_ps.test_no_save()
-    test_ps.test_with_skip_flags(output_dir)
+    test_ps.test_with_plot_flags_disabled(output_dir)
     print("[OK] plot tests passed")
 
     print("\nTesting plot_cumulative_savings (src/plot.py)...")

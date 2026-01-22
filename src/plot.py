@@ -11,7 +11,7 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     color = 'tab:blue'
     ax1.set_xlabel('Hours')
     ax1.set_ylabel('Electricity Price (€/MWh)', color=color)
-    if not env.plot_config.skip_plot_price:
+    if env.plot_config.plot_price:
         ax1.plot(hours, env.metrics.price_stats, color=color, label='Electricity Price (€/MWh)')
     ax1.tick_params(axis='y', labelcolor=color)
 
@@ -20,11 +20,11 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     ax2.set_ylabel('Count / Rewards', color='tab:orange')
 
     # Original metrics
-    if not env.plot_config.skip_plot_online_nodes:
+    if env.plot_config.plot_online_nodes:
         ax2.plot(hours, env.metrics.on_nodes, color='orange', label='Online Nodes')
-    if not env.plot_config.skip_plot_used_nodes:
+    if env.plot_config.plot_used_nodes:
         ax2.plot(hours, env.metrics.used_nodes, color='green', label='Used Nodes')
-    if not env.plot_config.skip_plot_job_queue:
+    if env.plot_config.plot_job_queue:
         ax2.plot(hours, env.metrics.job_queue_sizes, color='red', label='Job Queue Size')
 
     # New metrics with dashed lines

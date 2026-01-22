@@ -144,17 +144,17 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         panels.append((title, s, ylabel, ylim, ov))
 
     # Price
-    if not env.plot_config.skip_plot_price:
+    if env.plot_config.plot_price:
         add_panel("Electricity price", env.metrics.episode_price_stats, "€/MWh", None)
 
     # Nodes
-    if not env.plot_config.skip_plot_online_nodes:
+    if env.plot_config.plot_online_nodes:
         add_panel("Online nodes", env.metrics.episode_on_nodes, "count", (0, max_nodes * 1.1))
-    if not env.plot_config.skip_plot_used_nodes:
+    if env.plot_config.plot_used_nodes:
         add_panel("Used nodes", env.metrics.episode_used_nodes, "count", (0, max_nodes))
 
     # Queue + running jobs (same plot)
-    if not env.plot_config.skip_plot_job_queue:
+    if env.plot_config.plot_job_queue:
         running_series = getattr(env.metrics, "episode_running_jobs_counts", None)
         if running_series is None:
             running_series = getattr(env.metrics, "running_jobs_counts", None)

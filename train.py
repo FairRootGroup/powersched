@@ -41,10 +41,10 @@ def main():
     parser.add_argument('--plot-idle-penalty', action='store_true', help='Include idle penalty in the plot (dashed line).')
     parser.add_argument('--plot-job-age-penalty', action='store_true', help='Include job age penalty in the plot (dashed line).')
     parser.add_argument('--plot-total-reward', action='store_true', help='Include total reward per step in the dashboard (raw values).')
-    parser.add_argument('--skip-plot-price', action='store_true', help='Skip electricity price in the plot (blue line).')
-    parser.add_argument('--skip-plot-online-nodes', action='store_true', help='Skip online nodes in the plot (blue line).')
-    parser.add_argument('--skip-plot-used-nodes', action='store_true', help='Skip used nodes in the plot (blue line).')
-    parser.add_argument('--skip-plot-job-queue', action='store_true', help='Skip job queue in the plot (blue line).')
+    parser.add_argument('--plot-price', action=argparse.BooleanOptionalAction, default=True, help='Plot electricity price.')
+    parser.add_argument('--plot-online-nodes', action=argparse.BooleanOptionalAction, default=True, help='Plot online nodes.')
+    parser.add_argument('--plot-used-nodes', action=argparse.BooleanOptionalAction, default=True, help='Plot used nodes.')
+    parser.add_argument('--plot-job-queue', action=argparse.BooleanOptionalAction, default=True, help='Plot job queue.')
     parser.add_argument('--ent-coef', type=float, default=0.0, help='Entropy coefficient for the loss calculation (default: 0.0) (Passed to PPO).')
     parser.add_argument("--efficiency-weight", type=float, default=0.7, help="Weight for efficiency reward")
     parser.add_argument("--price-weight", type=float, default=0.2, help="Weight for price reward")
@@ -125,10 +125,10 @@ def main():
         plot_idle_penalty=args.plot_idle_penalty,
         plot_job_age_penalty=args.plot_job_age_penalty,
         plot_total_reward=args.plot_total_reward,
-        skip_plot_price=args.skip_plot_price,
-        skip_plot_online_nodes=args.skip_plot_online_nodes,
-        skip_plot_used_nodes=args.skip_plot_used_nodes,
-        skip_plot_job_queue=args.skip_plot_job_queue,
+        plot_price=args.plot_price,
+        plot_online_nodes=args.plot_online_nodes,
+        plot_used_nodes=args.plot_used_nodes,
+        plot_job_queue=args.plot_job_queue,
     )
 
     env = ComputeClusterEnv(weights=weights,
