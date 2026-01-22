@@ -186,13 +186,8 @@ class TestPlotDashboard:
         with tempfile.TemporaryDirectory() as tmpdir:
             env = MockEnv(num_hours=48)
             env.plots_dir = tmpdir
-            # Skip all panels
+            # Skip all panels (plot_* defaults to False, so reward panels are already off)
             env.plot_config = PlotConfig(
-                plot_eff_reward=True,
-                plot_price_reward=True,
-                plot_idle_penalty=True,
-                plot_job_age_penalty=True,
-                plot_total_reward=True,
                 skip_plot_price=True,
                 skip_plot_online_nodes=True,
                 skip_plot_used_nodes=True,

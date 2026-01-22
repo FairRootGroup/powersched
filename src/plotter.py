@@ -167,16 +167,15 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         )
 
     # Reward components
-    # Booleans at this place are inverted
-    if not env.plot_config.plot_eff_reward:
+    if env.plot_config.plot_eff_reward:
         add_panel("Efficiency reward (%)", env.metrics.episode_eff_rewards, "score", None)
-    if not env.plot_config.plot_price_reward:
+    if env.plot_config.plot_price_reward:
         add_panel("Price reward (%)", env.metrics.episode_price_rewards, "score", None)
-    if not env.plot_config.plot_idle_penalty:
+    if env.plot_config.plot_idle_penalty:
         add_panel("Idle penalty (%)", env.metrics.episode_idle_penalties, "score", None)
-    if not env.plot_config.plot_job_age_penalty:
+    if env.plot_config.plot_job_age_penalty:
         add_panel("Job-age penalty (%)", env.metrics.episode_job_age_penalties, "score", None)
-    if not env.plot_config.plot_total_reward:
+    if env.plot_config.plot_total_reward:
         add_panel("Total reward", getattr(env.metrics, "episode_rewards", None), "reward", None)
 
     if not panels:
