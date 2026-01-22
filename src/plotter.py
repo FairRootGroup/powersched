@@ -158,13 +158,7 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
         running_series = getattr(env.metrics, "episode_running_jobs_counts", None)
         if running_series is None:
             running_series = getattr(env.metrics, "running_jobs_counts", None)
-        add_panel(
-            "Job queue & running jobs",
-            env.metrics.episode_job_queue_sizes,
-            "jobs",
-            None,
-            overlay=("Running jobs", running_series),
-        )
+        add_panel("Job queue & running jobs",env.metrics.episode_job_queue_sizes,"jobs",None,overlay=("Running jobs", running_series))
 
     # Reward components
     if env.plot_config.plot_eff_reward:

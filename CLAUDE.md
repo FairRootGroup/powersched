@@ -54,8 +54,15 @@ powersched/
 
 ## Development Commands
 
+**Important:** Always activate the virtual environment before running any commands:
+```bash
+source venv/bin/activate
+```
+
 **Setup Environment:**
 ```bash
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 

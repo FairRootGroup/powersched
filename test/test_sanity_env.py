@@ -224,14 +224,10 @@ def parse_args():
     p.add_argument("--workload-gen",type=str,default="",choices=["", "flat", "poisson"],help="Enable workload generator (default: disabled).",)
     p.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Poisson lambda for jobs/hour.")
     p.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
-    p.add_argument("--print-job-every", type=int, default=0,
-              help="Print one sample job every N steps (0 disables).")
-    p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue",
-              help="Where to sample the job from.")
-    p.add_argument("--print-job-index", type=int, default=-1,
-              help="Queue index to print (>=0), or -1 to print first active job.")
-    p.add_argument("--carry-over-state", action="store_true",
-              help="Carry over nodes/jobs/prices across episodes (timeline mode).")
+    p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
+    p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue", help="Where to sample the job from.")
+    p.add_argument("--print-job-index", type=int, default=-1, help="Queue index to print (>=0), or -1 to print first active job.")
+    p.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
 
 
 

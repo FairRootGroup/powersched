@@ -34,6 +34,9 @@ jobs:
       - name: Run environment test
         run: python -m test.test_env
 
+      - name: Run plotter tests
+        run: python -m test.test_plotter
+
       - name: Run workload generator sanity tests
         run: python -m test.test_sanity_workloadgen
 
@@ -54,6 +57,9 @@ jobs:
 
       - name: Run environment sanity tests (with external data)
         run: python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300
+
+      - name: Run environment sanity tests (with external data)
+        run: python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300 --carry-over-state
 
       - name: Run duration sampler test
         run: python -m test.test_sampler_duration --print-stats --test-samples 10

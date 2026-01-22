@@ -15,6 +15,7 @@ TESTS = [
     ["python", "-m", "test.test_sanity_env", "--steps", "200"],
     ["python", "-m", "test.test_sanity_env", "--check-gym", "--check-determinism", "--steps", "300"],
     ["python", "-m", "test.test_sanity_env", "--prices", "data/prices_2023.csv", "--hourly-jobs", "data/allusers-gpu-30.log", "--steps", "300"],
+    ["python", "-m", "test.test_sanity_env", "--prices", "data/prices_2023.csv", "--hourly-jobs", "data/allusers-gpu-30.log", "--steps", "300", "--carry-over-state"],
     ["python", "-m", "test.test_sampler_duration", "--print-stats", "--test-samples", "10"],
     ["python", "-m", "test.test_sampler_hourly", "--file-path", "data/allusers-gpu-30.log", "--test-day"],
     ["python", "-m", "test.test_sampler_jobs", "--file-path", "data/allusers-gpu-30.log"],
