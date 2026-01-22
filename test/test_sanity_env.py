@@ -273,10 +273,10 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         external_jobs=norm_path(args.jobs),
         external_hourly_jobs=norm_path(args.hourly_jobs),
         plot_config=PlotConfig(
-            skip_plot_price=True,
-            skip_plot_online_nodes=True,
-            skip_plot_used_nodes=True,
-            skip_plot_job_queue=True,
+            plot_price=False,
+            plot_online_nodes=False,
+            plot_used_nodes=False,
+            plot_job_queue=False,
         ),
         steps_per_iteration=EPISODE_HOURS,  # prevent plot cadence surprises
         evaluation_mode=False,
