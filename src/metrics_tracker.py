@@ -15,6 +15,7 @@ class MetricsTracker:
     def reset_timeline_metrics(self):
         """Reset metrics that persist across episodes (full reset)."""
         self.total_time_hours = 0
+        self.current_running_jobs = 0
 
         # Cost tracking (cumulative across episodes)
         self.total_cost = 0
@@ -88,6 +89,7 @@ class MetricsTracker:
         self.episode_idle_penalties = []
         self.episode_job_age_penalties = []
         self.episode_rewards = []
+        self.episode_running_jobs_counts = []
 
     def record_episode_completion(self, current_episode):
         """
