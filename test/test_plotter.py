@@ -79,11 +79,11 @@ class MockEnv:
 
         # Plot config
         self.plot_config = PlotConfig(
-            plot_eff_reward=False,
-            plot_price_reward=False,
-            plot_idle_penalty=False,
-            plot_job_age_penalty=False,
-            plot_total_reward=False,
+            plot_eff_reward=True,
+            plot_price_reward=True,
+            plot_idle_penalty=True,
+            plot_job_age_penalty=True,
+            plot_total_reward=True,
         )
 
         # Additional attributes for plot_simple (src/plot.py)
@@ -192,6 +192,11 @@ class TestPlotDashboard:
                 plot_online_nodes=False,
                 plot_used_nodes=False,
                 plot_job_queue=False,
+                plot_eff_reward=False,
+                plot_price_reward=False,
+                plot_idle_penalty=False,
+                plot_job_age_penalty=False,
+                plot_total_reward=False,
             )
 
             # Should print message and not crash

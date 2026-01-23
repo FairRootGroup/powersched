@@ -316,12 +316,15 @@ class ComputeClusterEnv(gym.Env):
         num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
         average_future_price = np.mean(self.state['predicted_prices'])
         num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available)
+        num_running_jobs = len(self.running_jobs)
 
         # update stats
         self.metrics.on_nodes.append(num_on_nodes)
         self.metrics.used_nodes.append(num_used_nodes)
         self.metrics.job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.price_stats.append(current_price)
+        self.metrics.current_running_jobs = num_running_jobs
+        self.metrics.episode_running_jobs_counts.append(num_running_jobs)
         self.metrics.episode_on_nodes.append(num_on_nodes)
         self.metrics.episode_used_nodes.append(num_used_nodes)
         self.metrics.episode_job_queue_sizes.append(num_unprocessed_jobs)
