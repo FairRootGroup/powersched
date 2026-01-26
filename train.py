@@ -3,7 +3,8 @@ import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
 from src.plot_config import PlotConfig
 from src.callbacks import ComputeClusterCallback
-from src.plotter import plot_dashboard, plot_cumulative_savings
+from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_summary
+from src.plot import plot_cumulative_savings as plot_cumulative_savings_legacy
 import re
 import glob
 import argparse
@@ -61,6 +62,7 @@ def main():
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
     parser.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
+    parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
 
     args = parser.parse_args()
     prices_file_path = args.prices
@@ -152,7 +154,15 @@ def main():
     if model_files:
         # Sort the files by extracting the timestep number from the filename and converting it to an integer
         model_files.sort(key=lambda filename: int(re.match(r"(\d+)", os.path.basename(filename)).group()))
-        latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
+        if args.model is not None:
+            selected = os.path.join(models_dir, f"{args.model}.zip")
+            if os.path.exists(selected):
+                latest_model_file = selected
+            else:
+                print(f"Requested model not found: {selected}. Falling back to latest model.")
+                latest_model_file = model_files[-1]
+        else:
+            latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir
                          , n_steps=64, batch_size=64
@@ -206,12 +216,15 @@ def main():
             savings_vs_baseline_off = env.metrics.baseline_cost_off - env.metrics.total_cost
             completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
             avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
+            max_queue = env.metrics.episode_max_queue_size_reached
+            dropped = env.metrics.dropped_this_episode
             print(f"  Episode {episode + 1}: "
                 f"Agent Cost=€{env.metrics.total_cost:.0f}, "
                 f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
                 f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
+                f"MaxQueue={max_queue}, Dropped={dropped}, "
                 f"MaxQueue={env.metrics.max_queue_size_reached}")
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
@@ -220,6 +233,22 @@ def main():
         session_dir = f"sessions/{args.session}"
         try:
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
+            plot_cumulative_savings_legacy(
+                env,
+                env.metrics.episode_costs,
+                session_dir,
+                months=args.eval_months,
+                save=True,
+                show=args.render == 'human',
+            )
+            plot_episode_summary(
+                env,
+                env.metrics.episode_costs,
+                session_dir,
+                save=True,
+                show=args.render == 'human',
+                suffix=f"eval_{args.eval_months}m",
+            )
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")
