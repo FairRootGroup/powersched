@@ -326,3 +326,92 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
         "total_savings_off": final_savings_off,
         "avg_monthly_savings_pct_off": avg_monthly_savings_off,
     }
+
+
+def plot_episode_summary(env, episode_costs, session_dir=None, save=True, show=True, suffix=""):
+    """
+    Per-episode summary: costs, avg wait time, completion rate.
+    """
+    if not episode_costs:
+        print("plot_episode_summary(): no episode_costs, skipping.")
+        return None
+
+    n_eps = len(episode_costs)
+    eps = np.arange(1, n_eps + 1)
+
+    agent_cost = np.array([ep.get("agent_cost", 0.0) for ep in episode_costs], dtype=float)
+    base_cost = np.array([ep.get("baseline_cost", 0.0) for ep in episode_costs], dtype=float)
+    base_off_cost = np.array([ep.get("baseline_cost_off", 0.0) for ep in episode_costs], dtype=float)
+
+    avg_wait = np.array([ep.get("avg_wait_time", 0.0) for ep in episode_costs], dtype=float)
+    completion = np.array([ep.get("completion_rate", 0.0) for ep in episode_costs], dtype=float)
+    max_queue = np.array([ep.get("max_queue_size", 0.0) for ep in episode_costs], dtype=float)
+    dropped = np.array([ep.get("jobs_dropped", 0.0) for ep in episode_costs], dtype=float)
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
+
+    # Costs per episode
+    ax1.plot(eps, agent_cost, label="Agent cost", linewidth=2)
+    ax1.plot(eps, base_cost, label="Baseline cost", linewidth=2)
+    ax1.plot(eps, base_off_cost, label="Baseline_off cost", linewidth=2, linestyle="--")
+    ax1.set_xlabel("Episode")
+    ax1.set_ylabel("Cost (€)")
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(fontsize=9)
+
+    # Wait time + completion rate
+    ax2.plot(eps, avg_wait, label="Avg wait (h)", linewidth=2)
+    ax2.set_xlabel("Episode")
+    ax2.set_ylabel("Avg wait (hours)")
+    ax2.grid(True, alpha=0.3)
+
+    ax2b = ax2.twinx()
+    ax2b.plot(eps, completion, label="Completion rate (%)", linewidth=2, linestyle=":")
+    ax2b.set_ylabel("Completion rate (%)")
+
+    lines = ax2.get_lines() + ax2b.get_lines()
+    labels = [l.get_label() for l in lines]
+    ax2.legend(lines, labels, loc="upper left", fontsize=9)
+
+    # Max queue + dropped jobs
+    ax3.plot(eps, max_queue, label="Max queue (jobs)", linewidth=2)
+    ax3.set_xlabel("Episode")
+    ax3.set_ylabel("Max queue (jobs)")
+    ax3.grid(True, alpha=0.3)
+
+    ax3b = ax3.twinx()
+    ax3b.plot(eps, dropped, label="Dropped jobs", linewidth=2, linestyle="--")
+    ax3b.set_ylabel("Dropped jobs")
+
+    lines = ax3.get_lines() + ax3b.get_lines()
+    labels = [l.get_label() for l in lines]
+    ax3.legend(lines, labels, loc="upper left", fontsize=9)
+
+    weights_str = str(env.weights)
+    fig.suptitle(
+        f"PowerSched Evaluation Summary per Episode\n{weights_str}",
+        fontsize=14,
+    )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    if session_dir is None:
+        session_dir = env.plots_dir
+    if save:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fname = f"episode_summary_{suffix}_{timestamp}.png" if suffix else f"episode_summary_{timestamp}.png"
+        save_path = os.path.join(session_dir, fname)
+        plt.savefig(save_path, dpi=250, bbox_inches="tight")
+        print(f"Episode summary figure saved: {save_path}")
+
+    if show:
+        plt.show()
+
+    plt.close(fig)
+    return {
+        "agent_cost_avg": float(np.mean(agent_cost)) if agent_cost.size else 0.0,
+        "baseline_cost_avg": float(np.mean(base_cost)) if base_cost.size else 0.0,
+        "baseline_off_cost_avg": float(np.mean(base_off_cost)) if base_off_cost.size else 0.0,
+        "avg_wait_time_avg": float(np.mean(avg_wait)) if avg_wait.size else 0.0,
+        "completion_rate_avg": float(np.mean(completion)) if completion.size else 0.0,
+    }
