@@ -414,4 +414,6 @@ def plot_episode_summary(env, episode_costs, session_dir=None, save=True, show=T
         "baseline_off_cost_avg": float(np.mean(base_off_cost)) if base_off_cost.size else 0.0,
         "avg_wait_time_avg": float(np.mean(avg_wait)) if avg_wait.size else 0.0,
         "completion_rate_avg": float(np.mean(completion)) if completion.size else 0.0,
+        "max_queue_avg": float(np.mean(max_queue)) if max_queue.size else 0.0,
+        "dropped_avg": float(np.mean(dropped)) if dropped.size else 0.0,
     }

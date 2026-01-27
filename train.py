@@ -216,15 +216,13 @@ def main():
             savings_vs_baseline_off = env.metrics.baseline_cost_off - env.metrics.total_cost
             completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
             avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
-            max_queue = env.metrics.episode_max_queue_size_reached
-            dropped = env.metrics.dropped_this_episode
             print(f"  Episode {episode + 1}: "
                 f"Agent Cost=€{env.metrics.total_cost:.0f}, "
                 f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
                 f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
-                f"MaxQueue={max_queue}, Dropped={dropped}, "
+                f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
                 f"MaxQueue={env.metrics.max_queue_size_reached}")
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
