@@ -1,13 +1,20 @@
 """Baseline comparison simulation logic for the PowerSched environment."""
 
 import numpy as np
-from src.job_management import process_ongoing_jobs, add_new_jobs, assign_jobs_to_available_nodes
+from src.job_management import (
+    process_ongoing_jobs,
+    add_new_jobs,
+    assign_jobs_to_available_nodes,
+    fill_queue_from_backlog,
+    age_backlog_queue,
+)
 from src.reward_calculation import power_cost
 
 
 def baseline_step(baseline_state, baseline_cores_available, baseline_running_jobs,
                  current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes,
-                 new_jobs_cores, baseline_next_empty_slot, next_job_id, metrics, env_print):
+                 new_jobs_cores, baseline_next_empty_slot, next_job_id, metrics, env_print,
+                 baseline_backlog_queue):
     """
     Run one step of the baseline simulation for comparison.
 
@@ -34,14 +41,18 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
 
     process_ongoing_jobs(baseline_state['nodes'], baseline_cores_available, baseline_running_jobs)
 
-    new_baseline_jobs, baseline_next_empty_slot = add_new_jobs(
-        job_queue_2d, new_jobs_count, new_jobs_durations,
-        new_jobs_nodes, new_jobs_cores, baseline_next_empty_slot
+    # Age helper queue and fill real queue before new arrivals
+    age_backlog_queue(baseline_backlog_queue, metrics, _is_baseline=True)
+    baseline_next_empty_slot, _ = fill_queue_from_backlog(
+        job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot
     )
-    metrics.baseline_jobs_submitted += len(new_baseline_jobs)
-    metrics.episode_baseline_jobs_submitted += len(new_baseline_jobs)
-    metrics.baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
-    metrics.episode_baseline_jobs_rejected_queue_full += (new_jobs_count - len(new_baseline_jobs))
+
+    _new_baseline_jobs, baseline_next_empty_slot = add_new_jobs(
+        job_queue_2d, new_jobs_count, new_jobs_durations,
+        new_jobs_nodes, new_jobs_cores, baseline_next_empty_slot, baseline_backlog_queue
+    )
+    metrics.baseline_jobs_submitted += new_jobs_count
+    metrics.episode_baseline_jobs_submitted += new_jobs_count
 
     _, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
@@ -54,10 +65,11 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
 
     # Track baseline max queue size
-    if num_unprocessed_jobs > metrics.baseline_max_queue_size_reached:
-        metrics.baseline_max_queue_size_reached = num_unprocessed_jobs
-    if num_unprocessed_jobs > metrics.episode_baseline_max_queue_size_reached:
-        metrics.episode_baseline_max_queue_size_reached = num_unprocessed_jobs
+    combined_queue_size = num_unprocessed_jobs + len(baseline_backlog_queue)
+    if combined_queue_size > metrics.baseline_max_queue_size_reached:
+        metrics.baseline_max_queue_size_reached = combined_queue_size
+    if combined_queue_size > metrics.episode_baseline_max_queue_size_reached:
+        metrics.episode_baseline_max_queue_size_reached = combined_queue_size
 
     baseline_state['job_queue'] = job_queue_2d.flatten()
 
