@@ -1,4 +1,5 @@
 from stable_baselines3 import PPO
+from torchinfo import summary
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
 from src.plot_config import PlotConfig
@@ -63,6 +64,8 @@ def main():
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
     parser.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
+    parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
+    parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
 
     args = parser.parse_args()
     prices_file_path = args.prices
@@ -164,14 +167,21 @@ def main():
         else:
             latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
-        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir
-                         , n_steps=64, batch_size=64
-                         )
+        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:
         print(f"Starting a new model training...")
-        model = PPO('MultiInputPolicy', env, verbose=1, tensorboard_log=log_dir, ent_coef=args.ent_coef
-                         , n_steps=64, batch_size=64
-                         )
+        # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
+        net_arch_layers = [int(x) for x in args.net_arch.split(',')]
+        policy_kwargs = dict(
+            # pi = policy (actor) network, vf = value function (critic) network
+            net_arch=dict(pi=net_arch_layers, vf=net_arch_layers)
+        )
+        print(f"Network architecture: {net_arch_layers}")
+        model = PPO('MultiInputPolicy', env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=64, batch_size=64, device=args.device, verbose=1)
+
+    print(f"Device: {model.device}")
+    print(model.policy)
+    summary(model.policy, depth=4)
 
     iters = 0
 
