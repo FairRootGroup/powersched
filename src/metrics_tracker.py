@@ -74,10 +74,6 @@ class MetricsTracker:
         self.episode_baseline_jobs_dropped = 0
         self.episode_baseline_jobs_rejected_queue_full = 0
 
-        # Per-episode drop counters
-        self.dropped_this_episode = 0
-        self.baseline_dropped_this_episode = 0
-
         # Time series data for plotting (episode)
         self.episode_on_nodes = []
         self.episode_used_nodes = []

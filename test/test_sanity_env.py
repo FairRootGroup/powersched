@@ -131,7 +131,7 @@ def determinism_test(make_env, seed, n_steps=200):
                 float(info.get("step_cost", 0.0)),
                 int(info.get("num_unprocessed_jobs", -1)),
                 int(info.get("num_on_nodes", -1)),
-                int(info.get("dropped_this_episode", -1)),
+                int(info.get("episode_jobs_dropped", -1)),
             ))
             done = term or trunc
             i += 1

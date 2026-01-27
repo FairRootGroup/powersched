@@ -420,7 +420,7 @@ class ComputeClusterEnv(gym.Env):
             "step_cost": step_cost,
             "num_unprocessed_jobs": num_unprocessed_jobs,
             "num_on_nodes": num_on_nodes,
-            "dropped_this_episode": self.metrics.dropped_this_episode,
+            "episode_jobs_dropped": self.metrics.episode_jobs_dropped,
         }
 
         return self.state, step_reward, terminated, truncated, info
