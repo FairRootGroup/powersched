@@ -1,4 +1,4 @@
-from src.config import EPISODE_HOURS
+from src.config import EPISODE_HOURS, MAX_QUEUE_SIZE
 from stable_baselines3.common.callbacks import BaseCallback
 
 class ComputeClusterCallback(BaseCallback):
@@ -24,9 +24,11 @@ class ComputeClusterCallback(BaseCallback):
     def _on_step(self) -> bool:
         env = self.training_env.envs[0].unwrapped
         if env.metrics.current_hour == EPISODE_HOURS-1:
-            self.logger.record("metrics/cost", env.metrics.total_cost)
-            self.logger.record("metrics/savings", env.metrics.baseline_cost - env.metrics.total_cost)
-            self.logger.record("metrics/savings_off", env.metrics.baseline_cost_off - env.metrics.total_cost)
+            self.logger.record("metrics/cost", env.metrics.episode_total_cost)
+            self.logger.record("metrics/savings", env.metrics.episode_baseline_cost - env.metrics.episode_total_cost)
+            self.logger.record("metrics/savings_off", env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost)
+            self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
+            self.logger.record("metrics/queue_fill_pct", env.metrics.episode_max_queue_size_reached / MAX_QUEUE_SIZE * 100)
 
         return True
 
