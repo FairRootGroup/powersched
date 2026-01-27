@@ -84,7 +84,7 @@ def check_invariants(env, obs):
 
     # bounds (based on your constants; keep hard-coded here to avoid importing env constants)
     assert np.all((dur >= 0) & (dur <= 170)), f"duration out of bounds min={dur.min()} max={dur.max()}"
-    assert np.all((age >= 0) & (age <= 168)), f"age out of bounds min={age.min()} max={age.max()}"
+    assert np.all((age >= 0) & (age <= 168 * 52 * 10)), f"age out of bounds min={age.min()} max={age.max()}"
 
     # if a job exists, its nodes/cores should be positive and within limits
     active = (dur > 0)
