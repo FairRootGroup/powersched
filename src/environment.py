@@ -1,4 +1,5 @@
 import time
+from collections import deque
 
 from gymnasium import spaces
 import gymnasium as gym
@@ -21,7 +22,7 @@ from src.config import (
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
-    assign_jobs_to_available_nodes
+    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator
@@ -189,6 +190,9 @@ class ComputeClusterEnv(gym.Env):
         self.running_jobs = {}
         self.baseline_running_jobs = {}
 
+        self.backlog_queue = deque()
+        self.baseline_backlog_queue = deque()
+
         self.next_job_id = 0  # shared between baseline and normal jobs
 
         # Track next empty slot in job queue for O(1) insertion
@@ -258,6 +262,12 @@ class ComputeClusterEnv(gym.Env):
         completed_jobs = process_ongoing_jobs(self.state['nodes'], self.cores_available, self.running_jobs)
         self.env_print(f"{len(completed_jobs)} jobs completed: [{' '.join(['#' + str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else ''}]")
 
+        # Age helper queues (jobs waiting outside the fixed queue)
+        age_backlog_queue(self.backlog_queue, self.metrics, _is_baseline=False)
+
+        # Fill real queue from helper before accepting new jobs
+        self.next_empty_slot, _ = fill_queue_from_backlog(job_queue_2d, self.backlog_queue, self.next_empty_slot)
+
         # Generate new jobs
         self.env_print(f"[2] Generating new jobs...")
         new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores = generate_jobs(
@@ -267,16 +277,14 @@ class ComputeClusterEnv(gym.Env):
             hourly_sampler, durations_sampler, self.np_random
         )
 
-        # Add new jobs to queue
+        # Add new jobs to queue (overflow goes to helper)
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
         new_jobs, self.next_empty_slot = add_new_jobs(
             job_queue_2d, new_jobs_count, new_jobs_durations,
-            new_jobs_nodes, new_jobs_cores, self.next_empty_slot
+            new_jobs_nodes, new_jobs_cores, self.next_empty_slot, self.backlog_queue
         )
-        self.metrics.jobs_submitted += len(new_jobs)
-        self.metrics.episode_jobs_submitted += len(new_jobs)
-        self.metrics.jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
-        self.metrics.episode_jobs_rejected_queue_full += (new_jobs_count - len(new_jobs))
+        self.metrics.jobs_submitted += new_jobs_count
+        self.metrics.episode_jobs_submitted += new_jobs_count
 
         self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
         self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
@@ -305,6 +313,8 @@ class ComputeClusterEnv(gym.Env):
         num_off_nodes = np.sum(self.state['nodes'] == -1)
         num_idle_nodes = num_on_nodes - num_used_nodes
         num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
+        combined_queue_size = num_unprocessed_jobs + len(self.backlog_queue)
+        num_unprocessed_jobs = combined_queue_size
         average_future_price = np.mean(self.state['predicted_prices'])
         num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available)
         num_running_jobs = len(self.running_jobs)
@@ -322,10 +332,10 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_price_stats.append(current_price)
 
         # Track max queue size
-        if num_unprocessed_jobs > self.metrics.max_queue_size_reached:
-            self.metrics.max_queue_size_reached = num_unprocessed_jobs
-        if num_unprocessed_jobs > self.metrics.episode_max_queue_size_reached:
-            self.metrics.episode_max_queue_size_reached = num_unprocessed_jobs
+        if combined_queue_size > self.metrics.max_queue_size_reached:
+            self.metrics.max_queue_size_reached = combined_queue_size
+        if combined_queue_size > self.metrics.episode_max_queue_size_reached:
+            self.metrics.episode_max_queue_size_reached = combined_queue_size
 
         self.env_print(f"[5] Calculating reward...")
 
@@ -333,7 +343,8 @@ class ComputeClusterEnv(gym.Env):
         baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
-            self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print
+            self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print,
+            self.baseline_backlog_queue
         )
 
         self.metrics.baseline_cost += baseline_cost

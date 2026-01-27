@@ -6,6 +6,59 @@ from src.config import (
 )
 
 
+def age_backlog_queue(backlog_queue, _metrics, _is_baseline=False):
+    """
+    Age jobs waiting in the backlog queue.
+    NOTE: dropping based on MAX_JOB_AGE is temporarily disabled via an `if False` hotfix,
+    so jobs are always kept even if job[1] > MAX_JOB_AGE.
+    TODO: re-enable drops by removing the `if False` guard and using `job[1] > MAX_JOB_AGE`;
+    metrics updates are already in the disabled branch.
+    """
+    if not backlog_queue:
+        return 0
+
+    dropped = 0
+    kept = []
+    for job in backlog_queue:
+        job[1] += 1
+        # TEMP HOTFIX: disable age-based dropping (keep logic for later).
+        # if False and job[1] > MAX_JOB_AGE:
+        #     dropped += 1
+        #     if _is_baseline:
+        #         _metrics.baseline_jobs_dropped += 1
+        #         _metrics.baseline_dropped_this_episode += 1
+        #         _metrics.episode_baseline_jobs_dropped += 1
+        #     else:
+        #         _metrics.jobs_dropped += 1
+        #         _metrics.dropped_this_episode += 1
+        #         _metrics.episode_jobs_dropped += 1
+        # else:
+        kept.append(job)
+
+    backlog_queue.clear()
+    backlog_queue.extend(kept)
+    return dropped
+
+
+def fill_queue_from_backlog(job_queue_2d, backlog_queue, next_empty_slot):
+    """
+    Move jobs from backlog queue into the real queue (FIFO) until full.
+    """
+    if not backlog_queue:
+        return next_empty_slot, 0
+
+    moved = 0
+    while backlog_queue and next_empty_slot < len(job_queue_2d):
+        job_queue_2d[next_empty_slot] = backlog_queue.popleft()
+        moved += 1
+
+        next_empty_slot += 1
+        while next_empty_slot < len(job_queue_2d) and job_queue_2d[next_empty_slot][0] != 0:
+            next_empty_slot += 1
+
+    return next_empty_slot, moved
+
+
 def validate_next_empty(job_queue_2d, next_empty):
     """Validator for debugging queue consistency."""
     n = len(job_queue_2d)
@@ -61,7 +114,7 @@ def process_ongoing_jobs(nodes, cores_available, running_jobs):
 
 
 def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes,
-                 new_jobs_cores, next_empty_slot):
+                 new_jobs_cores, next_empty_slot, backlog_queue=None):
     """
     Add new jobs to the queue.
 
@@ -74,13 +127,23 @@ def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_node
         next_empty_slot: Index of next empty slot in queue
 
     Returns:
-        Tuple of (list of added jobs, updated next_empty_slot)
+        Tuple of (list of added jobs (real queue + backlog queue), updated next_empty_slot)
     """
     new_jobs = []
     for i in range(new_jobs_count):
         # Check if we have space in the queue
         if next_empty_slot >= len(job_queue_2d):
-            break  # Queue is full
+            if backlog_queue is None:
+                break  # Queue is full
+            job_entry = [
+                new_jobs_durations[i],
+                0,  # Age starts at 0
+                new_jobs_nodes[i],  # Number of nodes required
+                new_jobs_cores[i],  # Cores per node required
+            ]
+            backlog_queue.append(job_entry)
+            new_jobs.append(job_entry)
+            continue
 
         # Add job to the known empty slot
         job_queue_2d[next_empty_slot] = [
