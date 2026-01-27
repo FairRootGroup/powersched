@@ -299,7 +299,7 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
 
     # Combine legends
     lines = line1 + line1b + line2 + line2b
-    labels = [l.get_label() for l in lines]
+    labels = [line.get_label() for line in lines]
     ax1.legend(lines, labels, loc="center right", fontsize=9)
 
     plt.tight_layout()
@@ -370,7 +370,7 @@ def plot_episode_summary(env, episode_costs, session_dir=None, save=True, show=T
     ax2b.set_ylabel("Completion rate (%)")
 
     lines = ax2.get_lines() + ax2b.get_lines()
-    labels = [l.get_label() for l in lines]
+    labels = [line.get_label() for line in lines]
     ax2.legend(lines, labels, loc="upper left", fontsize=9)
 
     # Max queue + dropped jobs
@@ -384,7 +384,7 @@ def plot_episode_summary(env, episode_costs, session_dir=None, save=True, show=T
     ax3b.set_ylabel("Dropped jobs")
 
     lines = ax3.get_lines() + ax3b.get_lines()
-    labels = [l.get_label() for l in lines]
+    labels = [line.get_label() for line in lines]
     ax3.legend(lines, labels, loc="upper left", fontsize=9)
 
     weights_str = str(env.weights)
