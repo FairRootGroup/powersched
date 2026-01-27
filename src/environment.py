@@ -29,8 +29,6 @@ from src.baseline import baseline_step
 from src.workload_generator import generate_jobs
 from src.metrics_tracker import MetricsTracker
 
-# For deterministic RNG
-from gymnasium.utils import seeding
 
 init()  # Initialize colorama
 
@@ -137,7 +135,6 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.reset_timeline_metrics()
         self.metrics.reset_episode_metrics()
         self._reset_timeline_state(start_index=0)
-        self.np_random, self._seed = seeding.np_random(None)
 
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
@@ -202,13 +199,7 @@ class ComputeClusterEnv(gym.Env):
         if options is None:
             options = {}
 
-        if not self.carry_over_state:
-            super().reset(seed=seed)
-            self.np_random, self._seed = seeding.np_random(seed)
-        else:
-            super().reset(seed=None)
-            if self.np_random is None:
-                self.np_random, self._seed = seeding.np_random(seed)
+        super().reset(seed=seed)
 
         # Track which episode this env instance is on
         if not hasattr(self, "episode_idx"):
