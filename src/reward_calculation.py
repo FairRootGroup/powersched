@@ -2,8 +2,8 @@
 
 import numpy as np
 from src.config import (
-    COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE, PENALTY_WAITING_JOB,
-    PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, MAX_JOB_AGE, MAX_QUEUE_SIZE
+    COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE,
+    PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, MAX_QUEUE_SIZE, WEEK_HOURS
 )
 
 
@@ -57,7 +57,7 @@ class RewardCalculator:
 
         # Job age penalty bounds
         self._min_job_age_penalty = 0.0
-        self._max_job_age_penalty = PENALTY_WAITING_JOB * MAX_JOB_AGE * MAX_QUEUE_SIZE
+        self._max_job_age_penalty = 1.0
 
     @staticmethod
     def _normalize(current, minimum, maximum):
@@ -116,19 +116,26 @@ class RewardCalculator:
 
     @staticmethod
     def _penalty_job_age(num_off_nodes, job_queue_2d):
-        """Calculate penalty for jobs waiting in queue when nodes are off."""
-        job_age_penalty = 0
+        """Calculate saturated penalty for jobs waiting in queue when nodes are off."""
+        job_age_penalty = 0.0
         if num_off_nodes > 0:
+            max_age = 0
             for job in job_queue_2d:
                 job_duration, job_age, _, _ = job
-                if job_duration > 0:
-                    job_age_penalty += PENALTY_WAITING_JOB * job_age
+                if job_duration > 0 and job_age > max_age:
+                    max_age = job_age
+            if max_age > 0:
+                tau_hours = WEEK_HOURS / 2.0
+                max_factor = 1.0 - np.exp(-WEEK_HOURS / tau_hours)
+                factor = 1.0 - np.exp(-max_age / tau_hours)
+                factor = min(factor / max_factor, 1.0)
+                job_age_penalty = factor
         return job_age_penalty
 
     def _penalty_job_age_normalized(self, num_off_nodes, job_queue_2d):
         """Calculate normalized job age penalty [-1, 0]."""
         current_penalty = self._penalty_job_age(num_off_nodes, job_queue_2d)
-        normalized_penalty = -self._normalize(current_penalty, self._min_job_age_penalty, self._max_job_age_penalty)
+        normalized_penalty = self._normalize(current_penalty, 0, -1)
         return np.clip(normalized_penalty, -1, 0)
 
     def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:

@@ -233,7 +233,8 @@ def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running
         # Not enough resources -> job waits and ages (or gets dropped)
         new_age = job_age + 1
 
-        if new_age > MAX_JOB_AGE:
+        # TEMP HOTFIX: disable age-based dropping (keep logic for later).
+        if False and new_age > MAX_JOB_AGE:
             # Clear job from queue
             job_queue_2d[job_idx] = [0, 0, 0, 0]
 

@@ -17,7 +17,7 @@ from src.sampler_hourly import hourly_sampler
 # Import refactored modules
 from src.config import (
     MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
-    MAX_JOB_AGE, CORES_PER_NODE, MAX_CORES_PER_JOB,
+    MAX_JOB_AGE, CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
     MAX_NODES_PER_JOB, EPISODE_HOURS
 )
 from src.job_management import (
@@ -153,7 +153,7 @@ class ComputeClusterEnv(gym.Env):
             # job queue: [job duration, job age, job nodes, job cores per node, ...]
             'job_queue': spaces.Box(
                 low=0,
-                high=max(MAX_JOB_DURATION, MAX_JOB_AGE, MAX_NODES_PER_JOB, MAX_CORES_PER_JOB),
+                high=max(MAX_JOB_DURATION, MAX_JOB_AGE_OBS, MAX_NODES_PER_JOB, MAX_CORES_PER_JOB),
                 shape=(MAX_QUEUE_SIZE * 4,),
                 dtype=np.int32
             ),

@@ -5,3 +5,4 @@ matplotlib
 colorama
 numpy
 pandas
+torchinfo
