@@ -90,7 +90,7 @@ def main():
         drop_weight=args.drop_weight
     )
 
-    weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_d{weights.job_age_weight}"
+    weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_a{weights.job_age_weight}_d{weights.drop_weight}"
 
     models_dir = f"sessions/{args.session}/models/{weights_prefix}/"
     log_dir = f"sessions/{args.session}/logs/{weights_prefix}/"
