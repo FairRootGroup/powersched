@@ -119,11 +119,11 @@ class RewardCalculator:
         """Calculate saturated penalty for jobs waiting in queue when nodes are off."""
         job_age_penalty = 0.0
         if num_off_nodes > 0:
-            max_age = 0
-            for job in job_queue_2d:
-                job_duration, job_age, _, _ = job
-                if job_duration > 0 and job_age > max_age:
-                    max_age = job_age
+            # Vectorized max age calculation (much faster than Python loop)
+            # [:, 0] selects column 0 (duration) for all rows; > 0 creates boolean mask
+            valid_mask = job_queue_2d[:, 0] > 0
+            # [valid_mask, 1] selects column 1 (age) only for rows where mask is True
+            max_age = job_queue_2d[valid_mask, 1].max() if valid_mask.any() else 0
             if max_age > 0:
                 tau_hours = WEEK_HOURS / 2.0
                 max_factor = 1.0 - np.exp(-WEEK_HOURS / tau_hours)
