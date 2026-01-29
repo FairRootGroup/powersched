@@ -1,4 +1,5 @@
 from stable_baselines3 import PPO
+from stable_baselines3.common.utils import set_random_seed
 from torchinfo import summary
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
@@ -66,12 +67,19 @@ def main():
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
+    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
+    parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
 
     args = parser.parse_args()
     prices_file_path = args.prices
     job_durations_file_path = args.job_durations
     jobs_file_path = args.jobs
     hourly_jobs_file_path = args.hourly_jobs
+
+    # Set random seed for reproducibility
+    if args.seed is not None:
+        set_random_seed(args.seed)
+        print(f"Random seed set to: {args.seed}")
 
     if norm_path(prices_file_path):
         df = pd.read_csv(prices_file_path, parse_dates=['Date'])
@@ -149,7 +157,7 @@ def main():
                             evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen,
                             carry_over_state=args.carry_over_state)
-    env.reset()
+    env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir
     model_files = glob.glob(models_dir + "*.zip")
@@ -180,8 +188,9 @@ def main():
         model = PPO('MultiInputPolicy', env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=64, batch_size=64, device=args.device, verbose=1)
 
     print(f"Device: {model.device}")
-    print(model.policy)
-    summary(model.policy, depth=4)
+    if args.print_policy:
+        print(model.policy)
+        summary(model.policy, depth=4)
 
     iters = 0
 

@@ -148,6 +148,10 @@ Additional training options:
 - `--iter-limit`: Maximum number of training iterations (1 iteration = 100K steps)
 - `--session`: Session ID for organizing training runs
 - `--render`: Visualization mode ("human" or "none")
+- `--seed`: Random seed for reproducibility (seeds environment, numpy, torch, and PPO)
+- `--device`: Training device ("auto", "cuda", or "cpu")
+- `--net-arch`: Hidden layer sizes for policy/value networks (e.g., "64,64" or "256,128")
+- `--model`: Load a specific model checkpoint by timestep number
 
 ## Data Files
 
