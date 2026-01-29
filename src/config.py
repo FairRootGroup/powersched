@@ -7,7 +7,7 @@ MAX_QUEUE_SIZE = 1000  # Maximum number of jobs in the queue
 MAX_CHANGE = MAX_NODES
 MAX_JOB_DURATION = 170  # maximum job runtime in hours
 # Use a very high cap; age-based dropping is temporarily disabled in code.
-MAX_JOB_AGE = WEEK_HOURS * 52 * 10  # ~10 years in hours
+# MAX_JOB_AGE = WEEK_HOURS * 52 * 10  # ~10 years in hours
 MAX_NEW_JOBS_PER_HOUR = 1500
 
 COST_IDLE = 150  # Watts

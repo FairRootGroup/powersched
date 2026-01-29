@@ -17,7 +17,7 @@ from src.sampler_hourly import hourly_sampler
 # Import refactored modules
 from src.config import (
     MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
-    MAX_JOB_AGE, CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
+    CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
     MAX_NODES_PER_JOB, EPISODE_HOURS
 )
 from src.job_management import (

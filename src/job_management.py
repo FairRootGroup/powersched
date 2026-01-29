@@ -2,7 +2,7 @@
 
 import numpy as np
 from src.config import (
-    MAX_NODES, MAX_JOB_AGE, CORES_PER_NODE
+    MAX_NODES, CORES_PER_NODE
 )
 
 
@@ -234,22 +234,22 @@ def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running
         new_age = job_age + 1
 
         # TEMP HOTFIX: disable age-based dropping (keep logic for later).
-        if False and new_age > MAX_JOB_AGE:
-            # Clear job from queue
-            job_queue_2d[job_idx] = [0, 0, 0, 0]
-
-            # Update next_empty_slot if we cleared a slot before it
-            if job_idx < next_empty_slot:
-                next_empty_slot = job_idx
-            num_dropped += 1
-
-            if is_baseline:
-                metrics.baseline_jobs_dropped += 1
-                metrics.episode_baseline_jobs_dropped += 1
-            else:
-                metrics.jobs_dropped += 1
-                metrics.episode_jobs_dropped += 1
-        else:
-            job_queue_2d[job_idx][1] = new_age
+        #if False and new_age > MAX_JOB_AGE:
+        #    # Clear job from queue
+        #    job_queue_2d[job_idx] = [0, 0, 0, 0]
+        #
+        #    # Update next_empty_slot if we cleared a slot before it
+        #    if job_idx < next_empty_slot:
+        #        next_empty_slot = job_idx
+        #    num_dropped += 1
+        #
+        #    if is_baseline:
+        #        metrics.baseline_jobs_dropped += 1
+        #        metrics.episode_baseline_jobs_dropped += 1
+        #    else:
+        #        metrics.jobs_dropped += 1
+        #        metrics.episode_jobs_dropped += 1
+        #else:
+        job_queue_2d[job_idx][1] = new_age
 
     return num_processed_jobs, next_empty_slot, num_dropped, next_job_id
