@@ -135,7 +135,9 @@ class RewardCalculator:
     def _penalty_job_age_normalized(self, num_off_nodes, job_queue_2d):
         """Calculate normalized job age penalty [-1, 0]."""
         current_penalty = self._penalty_job_age(num_off_nodes, job_queue_2d)
-        normalized_penalty = self._normalize(current_penalty, 0, -1)
+        # _penalty_job_age already returns [0, 1]; negate to get [-1, 0]
+        # normalized_penalty = self._normalize(current_penalty, 0, -1)
+        normalized_penalty = -current_penalty
         return np.clip(normalized_penalty, -1, 0)
 
     def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:
@@ -153,7 +155,6 @@ class RewardCalculator:
         if total_work <= 0.0:
             return 0.0  # nothing on => no "efficiency" signal
         return float(np.clip((used * p_used) / total_work, 0.0, 1.0))
-    
 
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
