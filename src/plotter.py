@@ -222,7 +222,7 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     fig.text(0.01, 0.99, header, ha="left", va="top", fontsize=9, family="monospace")
 
     # Save/show
-    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_d{env.weights.job_age_weight}"
+    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_a{env.weights.job_age_weight}_d{env.weights.drop_weight}"
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         fname = f"{prefix}_{suffix}_{timestamp}.png"
@@ -305,7 +305,7 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
     plt.tight_layout()
 
     # Save/show
-    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_d{env.weights.job_age_weight}"
+    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_a{env.weights.job_age_weight}_d{env.weights.drop_weight}"
     if session_dir is None:
         session_dir = env.plots_dir
     if save:
