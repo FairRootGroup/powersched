@@ -1,5 +1,4 @@
 import re
-import datetime
 import math
 from collections import defaultdict
 import numpy as np
@@ -42,10 +41,10 @@ class HourlySampler:
             ncpus = int(parts[-2])
             nnodes = int(parts[-1])
 
-            # Parse submit time
-            submit_datetime = datetime.datetime.strptime(submit_time, "%Y-%m-%dT%H:%M:%S")
-            hour_of_day = submit_datetime.hour
-            date_key = submit_datetime.strftime("%Y-%m-%d")
+            # Extract hour and date directly from string (much faster than datetime parsing)
+            # Format is fixed: "YYYY-MM-DDTHH:MM:SS"
+            hour_of_day = int(submit_time[11:13])
+            date_key = submit_time[:10]
 
             # Calculate job metrics
             cores_per_node = ncpus // nnodes if nnodes > 0 else 0
