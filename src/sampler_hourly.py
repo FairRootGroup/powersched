@@ -127,19 +127,15 @@ class HourlySampler:
             num_jobs = min(num_jobs, int(max_jobs))
             if num_jobs <= 0:
                 return []
-        jobs = []
-        for _ in range(num_jobs):
-            duration = rng.choice(dist["durations"])
-            nodes = rng.choice(dist["nodes"])
-            cores = rng.choice(dist["cores_per_node"])
+        # Batch sample all job attributes at once (much faster than looping)
+        durations = rng.choice(dist["durations"], size=num_jobs)
+        nodes = rng.choice(dist["nodes"], size=num_jobs)
+        cores = rng.choice(dist["cores_per_node"], size=num_jobs)
 
-            jobs.append({
-                "duration": duration,
-                "nodes": nodes,
-                "cores_per_node": cores
-            })
-
-        return jobs
+        return [
+            {"duration": int(d), "nodes": int(n), "cores_per_node": int(c)}
+            for d, n, c in zip(durations, nodes, cores)
+        ]
 
     def get_stats(self):
         """Return summary statistics of the sampler."""
