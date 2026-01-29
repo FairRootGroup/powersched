@@ -252,7 +252,8 @@ class ComputeClusterEnv(gym.Env):
 
         self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
         current_price = self.state['predicted_prices'][0]
-        self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
+        if self.render_mode == 'human':
+            self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
 
         # reshape the 1d job_queue array into 2d for cleaner code
         job_queue_2d = self.state['job_queue'].reshape(-1, 4)
@@ -286,8 +287,9 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.jobs_submitted += new_jobs_count
         self.metrics.episode_jobs_submitted += new_jobs_count
 
-        self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
-        self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
+        if self.render_mode == 'human':
+            self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
+            self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
         self.env_print(f">>> adding {len(new_jobs)} new jobs to the queue: {' '.join(['[{}h {} {}x{}]'.format(d, a, n, c) for d, a, n, c in new_jobs])}")
         self.env_print("job_queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
 
@@ -380,9 +382,10 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"{len(self.running_jobs)} running jobs: {' '.join(['[#{}: {}h, {}x{}]'.format(job_id, job_data['duration'], len(job_data['allocation']), int(job_data['allocation'][0][1])) for job_id, job_data in self.running_jobs.items()]) if len(self.running_jobs) > 0 else '[]'}")
         self.env_print(f"launched jobs: {num_launched_jobs}, unprocessed jobs: {num_unprocessed_jobs}")
         self.env_print(f"nodes: ON: {num_on_nodes}, OFF: {num_off_nodes}, used: {num_used_nodes}, IDLE: {num_idle_nodes}. node changes: {num_node_changes}")
-        self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=" ", max_line_width=np.inf))
-        self.env_print(f"cores used: {num_used_cores} out of {num_on_nodes * CORES_PER_NODE} available cores")
-        self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
+        if self.render_mode == 'human':
+            self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=" ", max_line_width=np.inf))
+            self.env_print(f"cores used: {num_used_cores} out of {num_on_nodes * CORES_PER_NODE} available cores")
+            self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
         self.env_print(f"price: current: {current_price}, average future: {average_future_price:.4f}")
         self.env_print(f"step reward: {step_reward:.4f}, episode reward: {self.metrics.episode_reward:.4f}")
 
