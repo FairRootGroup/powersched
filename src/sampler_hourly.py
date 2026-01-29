@@ -98,7 +98,7 @@ class HourlySampler:
             zero_pct = (np.count_nonzero(dist["job_count"] == 0) / len(dist["job_count"]) * 100) if len(dist["job_count"]) > 0 else 0
             print(f"  Hour {hour:2d}: avg={avg_count:.1f} jobs/hour, {zero_pct:.0f}% zero-job samples, {len(dist['durations'])} total jobs")
 
-    def sample(self, hour_of_day: int, rng, max_jobs: int | None = None):
+    def sample(self, hour_of_day: int, rng):
         """
         Sample jobs for a given hour of day.
 
@@ -122,10 +122,6 @@ class HourlySampler:
         if num_jobs <= 0:
             return []
 
-        if max_jobs is not None:
-            num_jobs = min(num_jobs, int(max_jobs))
-            if num_jobs <= 0:
-                return []
         # Batch sample all job attributes at once (much faster than looping)
         durations = rng.choice(dist["durations"], size=num_jobs)
         nodes = rng.choice(dist["nodes"], size=num_jobs)
