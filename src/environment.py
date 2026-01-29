@@ -272,7 +272,7 @@ class ComputeClusterEnv(gym.Env):
         # Generate new jobs
         self.env_print(f"[2] Generating new jobs...")
         new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores = generate_jobs(
-            self.metrics.current_hour, job_queue_2d,
+            self.metrics.current_hour,
             self.external_jobs, self.external_hourly_jobs, self.external_durations,
             self.workload_gen, self.jobs_sampler if hasattr(self, 'jobs_sampler') else None,
             hourly_sampler, durations_sampler, self.np_random
