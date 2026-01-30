@@ -118,6 +118,7 @@ class ComputeClusterEnv(gym.Env):
         if self.external_hourly_jobs:
             print(f"Loading hourly jobs from {self.external_hourly_jobs}")
             hourly_sampler.parse_jobs(self.external_hourly_jobs)
+            hourly_sampler.precalculate_hourly_templates(CORES_PER_NODE, MAX_NODES_PER_JOB)
             print(f"Hourly sampler initialized with 24-hour distributions")
 
         self.current_step = 0

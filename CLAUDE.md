@@ -128,6 +128,7 @@ python -m test.test_prices_cycling
 # Sampler tests
 python -m test.test_sampler_duration --print-stats --test-samples 10
 python -m test.test_sampler_hourly --file-path data/allusers-gpu-30.log --test-day
+python -m test.test_sampler_hourly_aggregated --file-path data/allusers-gpu-30.log
 python -m test.test_sampler_jobs --file-path data/allusers-gpu-30.log
 python -m test.test_sampler_jobs_aggregated --file-path data/allusers-gpu-30.log
 ```
@@ -162,15 +163,32 @@ Additional training options:
 
 ## Samplers
 
-The project includes three job samplers (all in `src/`):
+The project includes three job samplers (all in `src/`), each with different use cases:
 
-1. **Duration Sampler** (`src/sampler_duration.py`): Samples job durations from simple duration logs
-2. **Jobs Sampler** (`src/sampler_jobs.py`): Pattern-based replay of historical job batches with full characteristics
-3. **Hourly Sampler** (`src/sampler_hourly.py`): Statistical sampler that builds hour-of-day distributions from Slurm logs
-   - Captures daily patterns (busy vs quiet hours)
-   - Properly handles zero-job hours
-   - Samples job count, duration, nodes, and cores-per-node independently
-   - Generates randomized but realistic job patterns
+### 1. Duration Sampler (`src/sampler_duration.py`)
+Simple sampler that only samples job durations from duration-only logs. Used for basic testing.
+
+### 2. Jobs Sampler (`src/sampler_jobs.py`)
+Deterministic replay sampler that replays historical job batches in sequence:
+- Parses Slurm logs and bins jobs by time period (default: hourly)
+- Replays jobs in chronological order, preserving exact historical patterns
+- Includes **aggregation support**: groups similar jobs by (nodes, cores, duration) to reduce job count
+- Converts sub-hour jobs to hourly equivalents by adjusting resource requirements to preserve core-hours
+- Use `sample_aggregated()` for pre-aggregated jobs, `sample_hourly()` for full hourly conversion
+
+### 3. Hourly Sampler (`src/sampler_hourly.py`)
+Statistical sampler that builds hour-of-day distributions (24 distributions, one per hour):
+- Captures daily patterns (busy hours vs quiet hours)
+- Properly handles zero-job hours in the distribution
+- Samples job count, duration, nodes, and cores-per-node independently
+- Generates randomized but statistically realistic job patterns
+
+**Aggregation support** (used by default in the environment):
+- `precalculate_hourly_templates()`: Pre-computes aggregated job templates per hour
+- Sub-hour jobs are binned by resource profile (nodes, cores) and converted to equivalent 1-hour jobs
+- Hourly+ jobs are kept individually with rounded duration
+- `sample_aggregated()`: Samples from templates with proportional scaling based on sampled job count
+- Preserves resource profiles while reducing the number of discrete job objects
 
 ## Architecture Notes
 
