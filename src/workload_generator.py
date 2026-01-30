@@ -43,15 +43,15 @@ def generate_jobs(current_hour, external_jobs, external_hourly_jobs,
                 new_jobs_cores.append(job['cores_per_node'])
 
     elif external_hourly_jobs:
-        # Use hourly sampler for statistical sampling
+        # Use hourly sampler for statistical sampling with aggregated jobs
         hour_of_day = (current_hour - 1) % 24
 
-        jobs = hourly_sampler.sample(hour_of_day, rng=np_random)
+        jobs = hourly_sampler.sample_aggregated(hour_of_day, rng=np_random)
 
         if len(jobs) > 0:
             for job in jobs:
                 new_jobs_count += 1
-                new_jobs_durations.append(int(np.ceil(job['duration'] / 60)))
+                new_jobs_durations.append(job['duration_hours'])
                 new_jobs_nodes.append(job['nodes'])
                 new_jobs_cores.append(job['cores_per_node'])
 

@@ -67,6 +67,9 @@ jobs:
       - name: Run hourly sampler test
         run: python -m test.test_sampler_hourly --file-path data/allusers-gpu-30.log --test-day
 
+      - name: Run hourly sampler aggregated test
+        run: python -m test.test_sampler_hourly_aggregated --file-path data/allusers-gpu-30.log
+
       - name: Run jobs sampler test
         run: python -m test.test_sampler_jobs --file-path data/allusers-gpu-30.log
 
