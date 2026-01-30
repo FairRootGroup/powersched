@@ -54,7 +54,7 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     metrics.baseline_jobs_submitted += new_jobs_count
     metrics.episode_baseline_jobs_submitted += new_jobs_count
 
-    _, baseline_next_empty_slot, _, next_job_id = assign_jobs_with_backlog_refill(
+    _, baseline_next_empty_slot, _, next_job_id, _ = assign_jobs_with_backlog_refill(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
         baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics,
         baseline_backlog_queue, is_baseline=True
