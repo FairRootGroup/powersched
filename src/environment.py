@@ -334,11 +334,19 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.episode_price_stats.append(current_price)
 
-        # Track max queue size
-        if combined_queue_size > self.metrics.max_queue_size_reached:
-            self.metrics.max_queue_size_reached = combined_queue_size
-        if combined_queue_size > self.metrics.episode_max_queue_size_reached:
-            self.metrics.episode_max_queue_size_reached = combined_queue_size
+        # Track max queue size (queue only, without backlog)
+        queue_only_size = np.sum(job_queue_2d[:, 0] > 0)
+        if queue_only_size > self.metrics.max_queue_size_reached:
+            self.metrics.max_queue_size_reached = queue_only_size
+        if queue_only_size > self.metrics.episode_max_queue_size_reached:
+            self.metrics.episode_max_queue_size_reached = queue_only_size
+
+        # Track max backlog size
+        backlog_size = len(self.backlog_queue)
+        if backlog_size > self.metrics.max_backlog_size_reached:
+            self.metrics.max_backlog_size_reached = backlog_size
+        if backlog_size > self.metrics.episode_max_backlog_size_reached:
+            self.metrics.episode_max_backlog_size_reached = backlog_size
 
         self.env_print(f"[5] Calculating reward...")
 

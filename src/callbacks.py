@@ -27,48 +27,33 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/cost", env.metrics.episode_total_cost)
             self.logger.record("metrics/savings", env.metrics.episode_baseline_cost - env.metrics.episode_total_cost)
             self.logger.record("metrics/savings_off", env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost)
-            self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
-            self.logger.record("metrics/queue_fill_pct", env.metrics.episode_max_queue_size_reached / MAX_QUEUE_SIZE * 100)
-            # Costs / savings (expanded)
-            self.logger.record("metrics/episode_baseline_cost", env.metrics.episode_baseline_cost)
-            self.logger.record("metrics/episode_baseline_cost_off", env.metrics.episode_baseline_cost_off)
+            #self.logger.record("metrics/queue_fill_pct", env.metrics.episode_max_queue_size_reached / MAX_QUEUE_SIZE * 100)
+            self.logger.record("metrics/baseline_cost", env.metrics.episode_baseline_cost)
+            self.logger.record("metrics/baseline_cost_off", env.metrics.episode_baseline_cost_off)
 
             # Job metrics (agent)
-            completion_rate = (
-                env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100
-                if env.metrics.episode_jobs_submitted > 0
-                else 0.0
-            )
-            avg_wait = (
-                env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed
-                if env.metrics.episode_jobs_completed > 0
-                else 0.0
-            )
-            self.logger.record("metrics/episode_jobs_submitted", env.metrics.episode_jobs_submitted)
-            self.logger.record("metrics/episode_jobs_completed", env.metrics.episode_jobs_completed)
-            self.logger.record("metrics/episode_completion_rate", completion_rate)
-            self.logger.record("metrics/episode_avg_wait_hours", avg_wait)
-            self.logger.record("metrics/episode_max_queue_size", env.metrics.episode_max_queue_size_reached)
-            self.logger.record("metrics/episode_jobs_rejected_queue_full", env.metrics.episode_jobs_rejected_queue_full)
+            completion_rate = (env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100 if env.metrics.episode_jobs_submitted > 0 else 0.0)
+            avg_wait = (env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed if env.metrics.episode_jobs_completed > 0 else 0.0)
+            self.logger.record("metrics/jobs_submitted", env.metrics.episode_jobs_submitted)
+            self.logger.record("metrics/jobs_completed", env.metrics.episode_jobs_completed)
+            self.logger.record("metrics/completion_rate", completion_rate)
+            self.logger.record("metrics/avg_wait_hours", avg_wait)
+            self.logger.record("metrics/max_queue_size", env.metrics.episode_max_queue_size_reached)
+            self.logger.record("metrics/max_backlog_size", env.metrics.episode_max_backlog_size_reached)
+            self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
+            self.logger.record("metrics/jobs_rejected_queue_full", env.metrics.episode_jobs_rejected_queue_full)
 
             # Job metrics (baseline)
-            baseline_completion_rate = (
-                env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100
-                if env.metrics.episode_baseline_jobs_submitted > 0
-                else 0.0
-            )
-            baseline_avg_wait = (
-                env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed
-                if env.metrics.episode_baseline_jobs_completed > 0
-                else 0.0
-            )
-            self.logger.record("metrics/episode_baseline_jobs_submitted", env.metrics.episode_baseline_jobs_submitted)
-            self.logger.record("metrics/episode_baseline_jobs_completed", env.metrics.episode_baseline_jobs_completed)
-            self.logger.record("metrics/episode_baseline_completion_rate", baseline_completion_rate)
-            self.logger.record("metrics/episode_baseline_avg_wait_hours", baseline_avg_wait)
-            self.logger.record("metrics/episode_baseline_max_queue_size", env.metrics.episode_baseline_max_queue_size_reached)
-            self.logger.record("metrics/episode_baseline_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
-            self.logger.record("metrics/episode_baseline_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
+            baseline_completion_rate = (env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100 if env.metrics.episode_baseline_jobs_submitted > 0 else 0.0)
+            baseline_avg_wait = (env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed if env.metrics.episode_baseline_jobs_completed > 0 else 0.0)
+            self.logger.record("metrics/baseline_jobs_submitted", env.metrics.episode_baseline_jobs_submitted)
+            self.logger.record("metrics/baseline_jobs_completed", env.metrics.episode_baseline_jobs_completed)
+            self.logger.record("metrics/baseline_completion_rate", baseline_completion_rate)
+            self.logger.record("metrics/baseline_avg_wait_hours", baseline_avg_wait)
+            self.logger.record("metrics/baseline_max_queue_size", env.metrics.episode_baseline_max_queue_size_reached)
+            self.logger.record("metrics/baseline_max_backlog_size", env.metrics.episode_baseline_max_backlog_size_reached)
+            self.logger.record("metrics/baseline_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
+            self.logger.record("metrics/baseline_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
 
         return True
 
