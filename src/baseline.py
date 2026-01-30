@@ -4,7 +4,7 @@ import numpy as np
 from src.job_management import (
     process_ongoing_jobs,
     add_new_jobs,
-    assign_jobs_to_available_nodes,
+    assign_jobs_with_backlog_refill,
     fill_queue_from_backlog,
     age_backlog_queue,
 )
@@ -54,9 +54,10 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     metrics.baseline_jobs_submitted += new_jobs_count
     metrics.episode_baseline_jobs_submitted += new_jobs_count
 
-    _, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
+    _, baseline_next_empty_slot, _, next_job_id = assign_jobs_with_backlog_refill(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
-        baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
+        baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics,
+        baseline_backlog_queue, is_baseline=True
     )
 
     num_used_nodes = np.sum(baseline_state['nodes'] > 0)

@@ -22,7 +22,7 @@ from src.config import (
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
-    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue
+    assign_jobs_with_backlog_refill, fill_queue_from_backlog, age_backlog_queue
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator
@@ -303,9 +303,12 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = assign_jobs_to_available_nodes(
-            job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
+        num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = (
+            assign_jobs_with_backlog_refill(
+                job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
+                self.next_empty_slot, self.next_job_id, self.metrics, self.backlog_queue,
+                is_baseline=False
+            )
         )
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
