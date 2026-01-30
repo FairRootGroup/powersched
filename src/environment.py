@@ -22,7 +22,7 @@ from src.config import (
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
-    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue
+    assign_jobs_with_backlog_refill, fill_queue_from_backlog, age_backlog_queue
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator
@@ -158,6 +158,18 @@ class ComputeClusterEnv(gym.Env):
                 shape=(MAX_QUEUE_SIZE * 4,),
                 dtype=np.int32
             ),
+            'backlog_size': spaces.Box(
+                low=0,
+                high=np.iinfo(np.int32).max,
+                shape=(1,),
+                dtype=np.int32
+            ),
+            'backlog_assigned': spaces.Box(
+                low=0,
+                high=np.iinfo(np.int32).max,
+                shape=(1,),
+                dtype=np.int32
+            ),
             # predicted prices for the next 24h
             'predicted_prices': spaces.Box(
                 low=-1000,
@@ -175,6 +187,8 @@ class ComputeClusterEnv(gym.Env):
             'nodes': np.zeros(MAX_NODES, dtype=np.int32),
             # Initialize job queue to be empty
             'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
+            'backlog_size': np.array([0], dtype=np.int32),
+            'backlog_assigned': np.array([0], dtype=np.int32),
             # Initialize predicted prices array
             'predicted_prices': self.prices.predicted_prices.copy(),
         }
@@ -303,12 +317,17 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = assign_jobs_to_available_nodes(
-            job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
+        num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id, backlog_assigned = (
+            assign_jobs_with_backlog_refill(
+                job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
+                self.next_empty_slot, self.next_job_id, self.metrics, self.backlog_queue,
+                is_baseline=False
+            )
         )
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
+        self.state['backlog_size'][0] = len(self.backlog_queue)
+        self.state['backlog_assigned'][0] = backlog_assigned
 
         # Calculate node utilization stats
         num_used_nodes = np.sum(self.state['nodes'] > 0)
