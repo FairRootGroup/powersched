@@ -27,6 +27,7 @@ class MetricsTracker:
         self.jobs_completed = 0
         self.total_job_wait_time = 0
         self.max_queue_size_reached = 0
+        self.max_backlog_size_reached = 0
         self.jobs_dropped = 0
         self.jobs_rejected_queue_full = 0
 
@@ -35,6 +36,7 @@ class MetricsTracker:
         self.baseline_jobs_completed = 0
         self.baseline_total_job_wait_time = 0
         self.baseline_max_queue_size_reached = 0
+        self.baseline_max_backlog_size_reached = 0
         self.baseline_jobs_dropped = 0
         self.baseline_jobs_rejected_queue_full = 0
 
@@ -63,6 +65,7 @@ class MetricsTracker:
         self.episode_jobs_completed = 0
         self.episode_total_job_wait_time = 0
         self.episode_max_queue_size_reached = 0
+        self.episode_max_backlog_size_reached = 0
         self.episode_jobs_dropped = 0
         self.episode_jobs_rejected_queue_full = 0
 
@@ -71,6 +74,7 @@ class MetricsTracker:
         self.episode_baseline_jobs_completed = 0
         self.episode_baseline_total_job_wait_time = 0
         self.episode_baseline_max_queue_size_reached = 0
+        self.episode_baseline_max_backlog_size_reached = 0
         self.episode_baseline_jobs_dropped = 0
         self.episode_baseline_jobs_rejected_queue_full = 0
 
@@ -148,12 +152,14 @@ class MetricsTracker:
             'avg_wait_time': float(avg_wait_time),
             'completion_rate': float(completion_rate),
             'max_queue_size': self.episode_max_queue_size_reached,
+            'max_backlog_size': self.episode_max_backlog_size_reached,
             # Baseline job metrics
             'baseline_jobs_submitted': self.episode_baseline_jobs_submitted,
             'baseline_jobs_completed': self.episode_baseline_jobs_completed,
             'baseline_avg_wait_time': float(baseline_avg_wait_time),
             'baseline_completion_rate': float(baseline_completion_rate),
             'baseline_max_queue_size': self.episode_baseline_max_queue_size_reached,
+            'baseline_max_backlog_size': self.episode_baseline_max_backlog_size_reached,
             # Drop metrics
             "jobs_dropped": self.episode_jobs_dropped,
             "drop_rate": float(drop_rate),

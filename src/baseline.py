@@ -64,12 +64,18 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     num_idle_nodes = num_on_nodes - num_used_nodes
     num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
 
-    # Track baseline max queue size
-    combined_queue_size = num_unprocessed_jobs + len(baseline_backlog_queue)
-    if combined_queue_size > metrics.baseline_max_queue_size_reached:
-        metrics.baseline_max_queue_size_reached = combined_queue_size
-    if combined_queue_size > metrics.episode_baseline_max_queue_size_reached:
-        metrics.episode_baseline_max_queue_size_reached = combined_queue_size
+    # Track baseline max queue size (queue only, without backlog)
+    if num_unprocessed_jobs > metrics.baseline_max_queue_size_reached:
+        metrics.baseline_max_queue_size_reached = num_unprocessed_jobs
+    if num_unprocessed_jobs > metrics.episode_baseline_max_queue_size_reached:
+        metrics.episode_baseline_max_queue_size_reached = num_unprocessed_jobs
+
+    # Track baseline max backlog size
+    backlog_size = len(baseline_backlog_queue)
+    if backlog_size > metrics.baseline_max_backlog_size_reached:
+        metrics.baseline_max_backlog_size_reached = backlog_size
+    if backlog_size > metrics.episode_baseline_max_backlog_size_reached:
+        metrics.episode_baseline_max_backlog_size_reached = backlog_size
 
     baseline_state['job_queue'] = job_queue_2d.flatten()
 
