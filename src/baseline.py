@@ -54,10 +54,20 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
     metrics.baseline_jobs_submitted += new_jobs_count
     metrics.episode_baseline_jobs_submitted += new_jobs_count
 
-    _, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
+    num_launched, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
         baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
     )
+
+    # Greedy loop: keep refilling from backlog and assigning until no more progress
+    while len(baseline_backlog_queue) > 0 and num_launched > 0:
+        baseline_next_empty_slot, moved = fill_queue_from_backlog(job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot)
+        if moved == 0:
+            break
+        num_launched, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
+            job_queue_2d, baseline_state['nodes'], baseline_cores_available,
+            baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
+        )
 
     num_used_nodes = np.sum(baseline_state['nodes'] > 0)
     num_on_nodes = np.sum(baseline_state['nodes'] > -1)

@@ -194,12 +194,13 @@ Statistical sampler that builds hour-of-day distributions (24 distributions, one
 
 - Uses stable-baselines3 PPO with custom ComputeClusterEnv
 - Environment simulates 2-week episodes (336 hours) with hourly decisions
-- State space includes node counts, job queue, electricity prices, and time
-- Action space controls the number of nodes to bring online/offline
+- State space includes node counts, job queue, electricity prices, pending job statistics (count, core-hours, avg duration, max nodes), and backlog size
+- Action space: `[action_type, magnitude, do_refill]` - controls nodes online/offline and whether to refill the job queue from the backlog
 - Rewards balance efficiency, cost savings, and resource utilization
 - Cluster configuration: 335 nodes max, 96 cores per node, up to 16 nodes per job
-- Job queue: max 1000 jobs, max 1500 new jobs per hour, max 170h runtime
+- Job queue: max 1000 jobs, max 1500 new jobs per hour, max 170h runtime; overflow goes to backlog
 - Power consumption: 150W idle, 450W used per node
+- Baseline comparison: greedy scheduler that keeps all nodes on and processes jobs FIFO
 
 ## Evaluation Metrics
 

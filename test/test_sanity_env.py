@@ -346,7 +346,7 @@ def main():
 # -------------------------------------
 
     seed = 123
-    action = np.array([1, 0], dtype=np.int64)  # "maintain, magnitude 1" effectively
+    action = np.array([1, 0, 1], dtype=np.int64)  # "maintain, magnitude 1, refill" effectively
 
     env = make_env_with_carry(False, env_cls=DeterministicPriceEnv)
 
