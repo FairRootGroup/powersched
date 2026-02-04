@@ -141,16 +141,12 @@ class ComputeClusterEnv(gym.Env):
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
         #   action_magnitude: 0-MAX_CHANGE (+1ed in the action)
-        self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE])
+        #   do_refill:        0: don't refill from backlog, 1: refill from backlog
+        self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE, 2])
 
         self.observation_space = spaces.Dict({
             # nodes: [-1: off, 0: idle, >0: booked for n hours]
-            'nodes': spaces.Box(
-                low=-1,
-                high=MAX_JOB_DURATION,
-                shape=(MAX_NODES,),
-                dtype=np.int32
-            ),
+            'nodes': spaces.Box(low=-1, high=MAX_JOB_DURATION, shape=(MAX_NODES,), dtype=np.int32),
             # job queue: [job duration, job age, job nodes, job cores per node, ...]
             'job_queue': spaces.Box(
                 low=0,
@@ -159,12 +155,13 @@ class ComputeClusterEnv(gym.Env):
                 dtype=np.int32
             ),
             # predicted prices for the next 24h
-            'predicted_prices': spaces.Box(
-                low=-1000,
-                high=1000,
-                shape=(24,),
-                dtype=np.float32
-            ),
+            'predicted_prices': spaces.Box(low=-1000, high=1000, shape=(24,), dtype=np.float32),
+            # Summary statistics for all outstanding jobs (queue + backlog)
+            'pending_job_count': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
+            'pending_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(1,), dtype=np.float32),
+            'pending_avg_duration': spaces.Box(low=0, high=MAX_JOB_DURATION, shape=(1,), dtype=np.float32),
+            'pending_max_nodes': spaces.Box(low=0, high=MAX_NODES_PER_JOB, shape=(1,), dtype=np.int32),
+            'backlog_size': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
         })
 
     def _reset_timeline_state(self, start_index):
@@ -177,6 +174,12 @@ class ComputeClusterEnv(gym.Env):
             'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
             # Initialize predicted prices array
             'predicted_prices': self.prices.predicted_prices.copy(),
+            # Summary statistics for all outstanding jobs (queue + backlog)
+            'pending_job_count': np.array([0], dtype=np.int32),
+            'pending_core_hours': np.array([0.0], dtype=np.float32),
+            'pending_avg_duration': np.array([0.0], dtype=np.float32),
+            'pending_max_nodes': np.array([0], dtype=np.int32),
+            'backlog_size': np.array([0], dtype=np.int32),
         }
 
         self.baseline_state = {
@@ -199,6 +202,50 @@ class ComputeClusterEnv(gym.Env):
         # Track next empty slot in job queue for O(1) insertion
         self.next_empty_slot = 0
         self.baseline_next_empty_slot = 0
+
+    def _update_pending_job_stats(self, job_queue_2d):
+        """Update summary statistics for all outstanding jobs (queue + backlog)."""
+        # Collect stats from the main queue
+        active_jobs_mask = job_queue_2d[:, 0] > 0
+        queue_durations = job_queue_2d[active_jobs_mask, 0]
+        queue_nodes = job_queue_2d[active_jobs_mask, 2]
+        queue_cores = job_queue_2d[active_jobs_mask, 3]
+        queue_count = len(queue_durations)
+
+        # Collect stats from the backlog
+        backlog_count = len(self.backlog_queue)
+        if backlog_count > 0:
+            backlog_arr = np.array(list(self.backlog_queue))
+            backlog_durations = backlog_arr[:, 0]
+            backlog_nodes = backlog_arr[:, 2]
+            backlog_cores = backlog_arr[:, 3]
+        else:
+            backlog_durations = np.array([], dtype=np.int32)
+            backlog_nodes = np.array([], dtype=np.int32)
+            backlog_cores = np.array([], dtype=np.int32)
+
+        # Combine stats
+        total_count = queue_count + backlog_count
+        if total_count > 0:
+            all_durations = np.concatenate([queue_durations, backlog_durations])
+            all_nodes = np.concatenate([queue_nodes, backlog_nodes])
+            all_cores = np.concatenate([queue_cores, backlog_cores])
+
+            # Core-hours = sum of (duration * nodes * cores_per_node)
+            total_core_hours = np.sum(all_durations * all_nodes * all_cores)
+            avg_duration = np.mean(all_durations)
+            max_nodes = np.max(all_nodes)
+        else:
+            total_core_hours = 0.0
+            avg_duration = 0.0
+            max_nodes = 0
+
+        # Update state
+        self.state['pending_job_count'][0] = total_count
+        self.state['pending_core_hours'][0] = total_core_hours
+        self.state['pending_avg_duration'][0] = avg_duration
+        self.state['pending_max_nodes'][0] = max_nodes
+        self.state['backlog_size'][0] = backlog_count
 
     def reset(self, seed=None, options=None):
         if options is None:
@@ -294,10 +341,10 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f">>> adding {len(new_jobs)} new jobs to the queue: {' '.join(['[{}h {} {}x{}]'.format(d, a, n, c) for d, a, n, c in new_jobs])}")
         self.env_print("job_queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
 
-        action_type, action_magnitude = action
+        action_type, action_magnitude, do_refill = action
         action_magnitude += 1
 
-        self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}...")
+        self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}, refill={do_refill}...")
         num_node_changes = adjust_nodes(action_type, action_magnitude, self.state['nodes'], self.cores_available, self.env_print)
 
         # Assign jobs to available nodes
@@ -309,6 +356,24 @@ class ComputeClusterEnv(gym.Env):
         )
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
+
+        # Refill queue from backlog if agent chose to do so
+        if do_refill == 1 and len(self.backlog_queue) > 0:
+            self.next_empty_slot, moved = fill_queue_from_backlog(job_queue_2d, self.backlog_queue, self.next_empty_slot)
+            if moved > 0:
+                self.env_print(f"   {moved} jobs moved from backlog to queue")
+                # Try to assign the newly queued jobs
+                extra_launched, self.next_empty_slot, extra_dropped, self.next_job_id = assign_jobs_to_available_nodes(
+                    job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
+                    self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
+                )
+                num_launched_jobs += extra_launched
+                num_dropped_this_step += extra_dropped
+                if extra_launched > 0:
+                    self.env_print(f"   {extra_launched} additional jobs launched from backlog")
+
+        # Update summary statistics for all outstanding jobs (queue + backlog)
+        self._update_pending_job_stats(job_queue_2d)
 
         # Calculate node utilization stats
         num_used_nodes = np.sum(self.state['nodes'] > 0)
