@@ -2,7 +2,7 @@
 
 import numpy as np
 from src.config import (
-    MAX_NODES, CORES_PER_NODE
+    MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE
 )
 
 
@@ -125,16 +125,21 @@ def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_node
         new_jobs_nodes: List of nodes required per job
         new_jobs_cores: List of cores per node required per job
         next_empty_slot: Index of next empty slot in queue
+        backlog_queue: Optional deque for overflow jobs
 
     Returns:
-        Tuple of (list of added jobs (real queue + backlog queue), updated next_empty_slot)
+        Tuple of (list of added jobs, updated next_empty_slot, num_dropped)
     """
     new_jobs = []
+    num_dropped = 0
     for i in range(new_jobs_count):
         # Check if we have space in the queue
         if next_empty_slot >= len(job_queue_2d):
             if backlog_queue is None:
                 break  # Queue is full
+            if len(backlog_queue) >= MAX_BACKLOG_SIZE:
+                num_dropped += 1
+                continue  # Backlog full, drop incoming job
             job_entry = [
                 new_jobs_durations[i],
                 0,  # Age starts at 0
@@ -159,7 +164,7 @@ def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_node
         while next_empty_slot < len(job_queue_2d) and job_queue_2d[next_empty_slot][0] != 0:
             next_empty_slot += 1
 
-    return new_jobs, next_empty_slot
+    return new_jobs, next_empty_slot, num_dropped
 
 
 def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running_jobs,
