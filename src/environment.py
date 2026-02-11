@@ -328,10 +328,13 @@ class ComputeClusterEnv(gym.Env):
 
         # Add new jobs to queue (overflow goes to helper)
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
-        new_jobs, self.next_empty_slot = add_new_jobs(
+        new_jobs, self.next_empty_slot, backlog_dropped = add_new_jobs(
             job_queue_2d, new_jobs_count, new_jobs_durations,
             new_jobs_nodes, new_jobs_cores, self.next_empty_slot, self.backlog_queue
         )
+        if backlog_dropped > 0:
+            self.metrics.jobs_dropped += backlog_dropped
+            self.metrics.episode_jobs_dropped += backlog_dropped
         self.metrics.jobs_submitted += new_jobs_count
         self.metrics.episode_jobs_submitted += new_jobs_count
 
@@ -350,10 +353,12 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        num_launched_jobs, self.next_empty_slot, num_dropped_this_step, self.next_job_id = assign_jobs_to_available_nodes(
+        num_dropped_this_step = backlog_dropped
+        num_launched_jobs, self.next_empty_slot, queue_dropped, self.next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
             self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
         )
+        num_dropped_this_step += queue_dropped
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
 

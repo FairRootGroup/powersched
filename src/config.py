@@ -4,6 +4,7 @@ WEEK_HOURS = 168
 
 MAX_NODES = 335  # Maximum number of nodes
 MAX_QUEUE_SIZE = 2500  # Maximum number of jobs in the queue
+MAX_BACKLOG_SIZE = 50000  # Maximum number of jobs in the backlog (overflow) queue
 MAX_CHANGE = MAX_NODES
 MAX_JOB_DURATION = 170  # maximum job runtime in hours
 # Use a very high cap; age-based dropping is temporarily disabled in code.

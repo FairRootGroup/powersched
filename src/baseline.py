@@ -47,12 +47,15 @@ def baseline_step(baseline_state, baseline_cores_available, baseline_running_job
         job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot
     )
 
-    _new_baseline_jobs, baseline_next_empty_slot = add_new_jobs(
+    _new_baseline_jobs, baseline_next_empty_slot, baseline_backlog_dropped = add_new_jobs(
         job_queue_2d, new_jobs_count, new_jobs_durations,
         new_jobs_nodes, new_jobs_cores, baseline_next_empty_slot, baseline_backlog_queue
     )
     metrics.baseline_jobs_submitted += new_jobs_count
     metrics.episode_baseline_jobs_submitted += new_jobs_count
+    if baseline_backlog_dropped > 0:
+        metrics.baseline_jobs_dropped += baseline_backlog_dropped
+        metrics.episode_baseline_jobs_dropped += baseline_backlog_dropped
 
     num_launched, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
