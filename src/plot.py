@@ -91,7 +91,7 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines + lines2, labels + labels2, loc='upper left')
 
-    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_d{env.weights.job_age_weight}"
+    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_a{env.weights.job_age_weight}_d{env.weights.drop_weight}"
 
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
