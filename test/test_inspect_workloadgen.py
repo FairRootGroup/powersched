@@ -72,9 +72,9 @@ def main():
     if args.uniform_ranges4 is not None:
         (uniform_min_jobs, max_jobs_hour), (min_duration, max_duration), (min_nodes, max_nodes), (min_cores, max_cores) = args.uniform_ranges4
 
-    default_duration_mid = int(round((min_duration + max_duration) / 2.0))
-    default_nodes_mid = int(round((min_nodes + max_nodes) / 2.0))
-    default_cores_mid = int(round((min_cores + max_cores) / 2.0))
+    default_duration_mid = (min_duration + max_duration) // 2
+    default_nodes_mid = (min_nodes + max_nodes) // 2
+    default_cores_mid = (min_cores + max_cores) // 2
 
     if args.poisson_lambdas4 is not None:
         poisson_lambda_arrivals, poisson_lambda_duration, poisson_lambda_nodes, poisson_lambda_cores = args.poisson_lambdas4

@@ -253,7 +253,7 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
     workload_gen = None
     if args.workload_gen:
         uniform_min_jobs = 0
-        max_jobs_hour = int(args.wg_max_jobs_hour)
+        max_jobs_hour = args.wg_max_jobs_hour
         min_duration, max_duration = 1, MAX_JOB_DURATION
         min_nodes, max_nodes = MIN_NODES_PER_JOB, MAX_NODES_PER_JOB
         min_cores, max_cores = MIN_CORES_PER_JOB, CORES_PER_NODE
@@ -266,14 +266,14 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
                 (min_cores, max_cores),
             ) = args.wg_uniform_ranges4
 
-        duration_mid = int(round((min_duration + max_duration) / 2.0))
-        nodes_mid = int(round((min_nodes + max_nodes) / 2.0))
-        cores_mid = int(round((min_cores + max_cores) / 2.0))
+        duration_mid = (min_duration + max_duration) // 2
+        nodes_mid = (min_nodes + max_nodes) // 2
+        cores_mid = (min_cores + max_cores) // 2
 
         if args.wg_poisson_lambdas4 is not None:
             poisson_lambda_arrivals, poisson_lambda_duration, poisson_lambda_nodes, poisson_lambda_cores = args.wg_poisson_lambdas4
         else:
-            poisson_lambda_arrivals = float(args.wg_poisson_lambda)
+            poisson_lambda_arrivals = args.wg_poisson_lambda
             poisson_lambda_duration = float(duration_mid)
             poisson_lambda_nodes = float(nodes_mid)
             poisson_lambda_cores = float(cores_mid)
@@ -310,8 +310,8 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
             flat_duration_jitter=flat_duration_jitter,
             flat_nodes_jitter=flat_nodes_jitter,
             flat_cores_jitter=flat_cores_jitter,
-            burst_small_prob=float(args.wg_burst_small_prob),
-            burst_heavy_prob=float(args.wg_burst_heavy_prob),
+            burst_small_prob=args.wg_burst_small_prob,
+            burst_heavy_prob=args.wg_burst_heavy_prob,
             min_duration=min_duration,
             max_duration=max_duration,
             min_nodes=min_nodes,
