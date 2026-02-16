@@ -228,12 +228,7 @@ def parse_args():
     p.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
     p.add_argument("--wg-flat-targets4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
     p.add_argument("--wg-flat-jitters4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    p.add_argument(
-        "--wg-uniform-ranges4",
-        type=_parse_quad_ranges,
-        default=None,
-        help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max",
-    )
+    p.add_argument("--wg-uniform-ranges4", type=_parse_quad_ranges, default=None, help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max")
     p.add_argument("--wg-burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
     p.add_argument("--wg-burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
     p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
@@ -479,7 +474,7 @@ def main():
     if args.check_determinism:
         determinism_test(lambda: make_env_with_carry(False), seed=args.seed, n_steps=min(args.steps, 500))
         print("[OK] determinism test passed")
-    
+
     # 4) Carry-over continuity (optional)
     if args.carry_over_state:
         carry_over_test(lambda: make_env_with_carry(True), seed=args.seed, n_steps=min(args.steps, 10))
