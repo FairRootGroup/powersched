@@ -15,7 +15,15 @@ def generate_weight_combinations(step=0.1, fixed_weights=None):
         variable_weights = [w for w in weight_names if w not in fixed_weights]
         fixed_sum = sum(fixed_weights.values())
 
-        if len(variable_weights) == 1:
+        if len(variable_weights) == 0:
+            # If all weights are fixed, return that single combination
+            if abs(fixed_sum - 1.0) < 1e-9:  # Allow for floating point rounding
+                combo = [0, 0, 0, 0, 0]
+                for weight_name, value in fixed_weights.items():
+                    combo[weight_names.index(weight_name)] = value
+                combinations.append(tuple(combo))
+
+        elif len(variable_weights) == 1:
             # If all but one weight is fixed, there's only one possible value
             remaining = round(1 - fixed_sum, 2)
             if 0 <= remaining <= 1:
