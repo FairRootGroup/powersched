@@ -1,6 +1,6 @@
 """
 Run with:
-python -m test.test_inspect_workloadgen --arrivals poisson --poisson-lambdas4 200,80,6,24 --max-jobs-hour 1500 --hours 336 --plot
+python -m test.test_inspect_workloadgen --arrivals poisson --poisson-lambdas4 200,10,6,24 --max-jobs-hour 1500 --hours 336 --plot --burst-small-prob 0.2 --burst-heavy-prob 0.02
 """
 
 # inspect_workloadgen.py
@@ -13,52 +13,7 @@ from datetime import datetime
 import os
 
 from src.workloadgen import WorkloadGenConfig, WorkloadGenerator
-
-
-def parse_quad_floats(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated floats: arrivals,duration,nodes,cores"
-        )
-    try:
-        return tuple(float(p) for p in parts)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Invalid float in '{raw}'") from exc
-
-
-def parse_quad_ints(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated ints: arrivals,duration,nodes,cores"
-        )
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Invalid int in '{raw}'") from exc
-
-
-def parse_quad_ranges(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated ranges: a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max"
-        )
-    ranges = []
-    for part in parts:
-        bounds = [b.strip() for b in part.split(":")]
-        if len(bounds) != 2:
-            raise argparse.ArgumentTypeError(f"Invalid range '{part}', expected min:max")
-        try:
-            low = int(bounds[0])
-            high = int(bounds[1])
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(f"Invalid int in range '{part}'") from exc
-        if low > high:
-            raise argparse.ArgumentTypeError(f"Range min > max in '{part}'")
-        ranges.append((low, high))
-    return tuple(ranges)
+from train import _parse_quad_floats, _parse_quad_ints, _parse_quad_ranges
 
 
 def digest_jobs_triplets(triplets):
@@ -90,20 +45,22 @@ def main():
     ap.add_argument("--hours", type=int, default=24 * 14)
     ap.add_argument("--arrivals", choices=["flat", "poisson", "uniform"], default="poisson")
     ap.add_argument("--poisson-lambda", type=float, default=200.0, help="Legacy: arrivals-only poisson lambda.")
-    ap.add_argument("--poisson-lambdas4", type=parse_quad_floats, default=None, help="arrivals,duration,nodes,cores")
+    ap.add_argument("--poisson-lambdas4", type=_parse_quad_floats, default=None, help="arrivals,duration,nodes,cores")
     ap.add_argument("--max-jobs-hour", type=int, default=1500)
     ap.add_argument("--plot", action="store_true")
     # Flat params (true flat with optional jitter)
     ap.add_argument("--flat-jobs-hour", type=int, default=200, help="Legacy: arrivals-only flat target.")
     ap.add_argument("--flat-jitter", type=int, default=0, help="Legacy: arrivals-only flat jitter.")
-    ap.add_argument("--flat-targets4", type=parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    ap.add_argument("--flat-jitters4", type=parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
+    ap.add_argument("--flat-targets4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
+    ap.add_argument("--flat-jitters4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
     ap.add_argument(
         "--uniform-ranges4",
-        type=parse_quad_ranges,
+        type=_parse_quad_ranges,
         default=None,
         help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max",
     )
+    ap.add_argument("--burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
+    ap.add_argument("--burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
     args = ap.parse_args()
 
     # Default ranges (used for uniform and for clipping in all modes).
@@ -159,6 +116,8 @@ def main():
         flat_duration_jitter=flat_duration_jitter,
         flat_nodes_jitter=flat_nodes_jitter,
         flat_cores_jitter=flat_cores_jitter,
+        burst_small_prob=float(args.burst_small_prob),
+        burst_heavy_prob=float(args.burst_heavy_prob),
         min_duration=min_duration,
         max_duration=max_duration,
         min_nodes=min_nodes,
@@ -274,7 +233,7 @@ def main():
         axs[3, 1].set_xlabel("hour of day")
         axs[3, 1].set_ylabel("jobs")
 
-        plt.show()
+        #plt.show()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = f"{args.arrivals}_lambda{poisson_lambda_arrivals}" if args.arrivals == "poisson" else args.arrivals
         fname = f"{prefix}_{timestamp}.png" if prefix else f"Workload-Gen_{timestamp}.png"

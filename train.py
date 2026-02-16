@@ -117,6 +117,8 @@ def main():
         default=None,
         help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max",
     )
+    parser.add_argument("--wg-burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
+    parser.add_argument("--wg-burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
     parser.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
@@ -231,6 +233,8 @@ def main():
             flat_duration_jitter=flat_duration_jitter,
             flat_nodes_jitter=flat_nodes_jitter,
             flat_cores_jitter=flat_cores_jitter,
+            burst_small_prob=float(args.wg_burst_small_prob),
+            burst_heavy_prob=float(args.wg_burst_heavy_prob),
             min_duration=min_duration,
             max_duration=max_duration,
             min_nodes=min_nodes,

@@ -50,6 +50,29 @@ class WorkloadGenConfig:
     flat_nodes_jitter: int = 0
     flat_cores_jitter: int = 0
 
+    # Optional burst injectors (additive on top of base arrivals)
+    # Burst 1: many small-ish jobs at once
+    burst_small_prob: float = 0.0
+    burst_small_jobs_min: int = 50
+    burst_small_jobs_max: int = 750
+    burst_small_duration_min: int = 1
+    burst_small_duration_max: int = 8
+    burst_small_nodes_min: int = 1
+    burst_small_nodes_max: int = 2
+    burst_small_cores_min: int = 1
+    burst_small_cores_max: int = 16
+
+    # Burst 2: heavy jobs (high duration + high resource demand)
+    burst_heavy_prob: float = 0.0
+    burst_heavy_jobs_min: int = 1
+    burst_heavy_jobs_max: int = 12
+    burst_heavy_duration_min: int = 72
+    burst_heavy_duration_max: int = 170
+    burst_heavy_nodes_min: int = 4
+    burst_heavy_nodes_max: int = 16
+    burst_heavy_cores_min: int = 32
+    burst_heavy_cores_max: int = 96
+
 
     # resource ranges (v1: just uniform ranges; later we add mixtures/correlations)
     min_duration: int = 1
@@ -81,6 +104,31 @@ class WorkloadGenerator:
             raise ValueError("min_cores must be <= max_cores")
         if int(cfg.uniform_min_new_jobs_per_hour) > int(cfg.max_new_jobs_per_hour):
             raise ValueError("uniform_min_new_jobs_per_hour must be <= max_new_jobs_per_hour")
+        if not (0.0 <= float(cfg.burst_small_prob) <= 1.0):
+            raise ValueError("burst_small_prob must be in [0, 1]")
+        if not (0.0 <= float(cfg.burst_heavy_prob) <= 1.0):
+            raise ValueError("burst_heavy_prob must be in [0, 1]")
+        if int(cfg.burst_small_jobs_min) > int(cfg.burst_small_jobs_max):
+            raise ValueError("burst_small_jobs_min must be <= burst_small_jobs_max")
+        if int(cfg.burst_heavy_jobs_min) > int(cfg.burst_heavy_jobs_max):
+            raise ValueError("burst_heavy_jobs_min must be <= burst_heavy_jobs_max")
+
+        def _bound(value: int, low: int, high: int) -> int:
+            return int(min(max(int(value), low), high))
+
+        burst_small_duration_min = _bound(cfg.burst_small_duration_min, int(cfg.min_duration), int(cfg.max_duration))
+        burst_small_duration_max = _bound(cfg.burst_small_duration_max, int(cfg.min_duration), int(cfg.max_duration))
+        burst_small_nodes_min = _bound(cfg.burst_small_nodes_min, int(cfg.min_nodes), int(cfg.max_nodes))
+        burst_small_nodes_max = _bound(cfg.burst_small_nodes_max, int(cfg.min_nodes), int(cfg.max_nodes))
+        burst_small_cores_min = _bound(cfg.burst_small_cores_min, int(cfg.min_cores), int(cfg.max_cores))
+        burst_small_cores_max = _bound(cfg.burst_small_cores_max, int(cfg.min_cores), int(cfg.max_cores))
+
+        burst_heavy_duration_min = _bound(cfg.burst_heavy_duration_min, int(cfg.min_duration), int(cfg.max_duration))
+        burst_heavy_duration_max = _bound(cfg.burst_heavy_duration_max, int(cfg.min_duration), int(cfg.max_duration))
+        burst_heavy_nodes_min = _bound(cfg.burst_heavy_nodes_min, int(cfg.min_nodes), int(cfg.max_nodes))
+        burst_heavy_nodes_max = _bound(cfg.burst_heavy_nodes_max, int(cfg.min_nodes), int(cfg.max_nodes))
+        burst_heavy_cores_min = _bound(cfg.burst_heavy_cores_min, int(cfg.min_cores), int(cfg.max_cores))
+        burst_heavy_cores_max = _bound(cfg.burst_heavy_cores_max, int(cfg.min_cores), int(cfg.max_cores))
 
         self.cfg = replace(
             cfg,
@@ -115,6 +163,18 @@ class WorkloadGenerator:
                 if cfg.flat_cores_target is not None
                 else int(cores_mid)
             ),
+            burst_small_duration_min=min(burst_small_duration_min, burst_small_duration_max),
+            burst_small_duration_max=max(burst_small_duration_min, burst_small_duration_max),
+            burst_small_nodes_min=min(burst_small_nodes_min, burst_small_nodes_max),
+            burst_small_nodes_max=max(burst_small_nodes_min, burst_small_nodes_max),
+            burst_small_cores_min=min(burst_small_cores_min, burst_small_cores_max),
+            burst_small_cores_max=max(burst_small_cores_min, burst_small_cores_max),
+            burst_heavy_duration_min=min(burst_heavy_duration_min, burst_heavy_duration_max),
+            burst_heavy_duration_max=max(burst_heavy_duration_min, burst_heavy_duration_max),
+            burst_heavy_nodes_min=min(burst_heavy_nodes_min, burst_heavy_nodes_max),
+            burst_heavy_nodes_max=max(burst_heavy_nodes_min, burst_heavy_nodes_max),
+            burst_heavy_cores_min=min(burst_heavy_cores_min, burst_heavy_cores_max),
+            burst_heavy_cores_max=max(burst_heavy_cores_min, burst_heavy_cores_max),
         )
 
     def _sample_attr_array(
@@ -191,41 +251,134 @@ class WorkloadGenerator:
 
     def sample(self, hour_idx: int, rng: np.random.Generator) -> List[JobSpec]:
         # hour_idx currently unused, but we keep it to enable daily patterns later.
-        n = self._sample_job_count(rng)
+        base_n = self._sample_job_count(rng)
+        mode = self.cfg.arrivals
+        if base_n > 0:
+            durations = self._sample_attr_array(
+                rng=rng,
+                size=base_n,
+                mode=mode,
+                min_value=int(self.cfg.min_duration),
+                max_value=int(self.cfg.max_duration),
+                poisson_lambda=float(self.cfg.poisson_lambda_duration),
+                flat_target=int(self.cfg.flat_duration_target),
+                flat_jitter=int(self.cfg.flat_duration_jitter),
+            )
+            nodes = self._sample_attr_array(
+                rng=rng,
+                size=base_n,
+                mode=mode,
+                min_value=int(self.cfg.min_nodes),
+                max_value=int(self.cfg.max_nodes),
+                poisson_lambda=float(self.cfg.poisson_lambda_nodes),
+                flat_target=int(self.cfg.flat_nodes_target),
+                flat_jitter=int(self.cfg.flat_nodes_jitter),
+            )
+            cores = self._sample_attr_array(
+                rng=rng,
+                size=base_n,
+                mode=mode,
+                min_value=int(self.cfg.min_cores),
+                max_value=int(self.cfg.max_cores),
+                poisson_lambda=float(self.cfg.poisson_lambda_cores),
+                flat_target=int(self.cfg.flat_cores_target),
+                flat_jitter=int(self.cfg.flat_cores_jitter),
+            )
+        else:
+            durations = np.array([], dtype=np.int32)
+            nodes = np.array([], dtype=np.int32)
+            cores = np.array([], dtype=np.int32)
 
-        if n == 0:
+        def _sample_burst_count(prob: float, min_jobs: int, max_jobs: int) -> int:
+            if prob <= 0.0 or max_jobs <= 0:
+                return 0
+            if rng.random() >= prob:
+                return 0
+            return int(rng.integers(int(min_jobs), int(max_jobs) + 1))
+
+        small_n = _sample_burst_count(
+            float(self.cfg.burst_small_prob),
+            int(self.cfg.burst_small_jobs_min),
+            int(self.cfg.burst_small_jobs_max),
+        )
+        if small_n > 0:
+            durations = np.concatenate(
+                [
+                    durations,
+                    rng.integers(
+                        int(self.cfg.burst_small_duration_min),
+                        int(self.cfg.burst_small_duration_max) + 1,
+                        size=small_n,
+                    ).astype(np.int32),
+                ]
+            )
+            nodes = np.concatenate(
+                [
+                    nodes,
+                    rng.integers(
+                        int(self.cfg.burst_small_nodes_min),
+                        int(self.cfg.burst_small_nodes_max) + 1,
+                        size=small_n,
+                    ).astype(np.int32),
+                ]
+            )
+            cores = np.concatenate(
+                [
+                    cores,
+                    rng.integers(
+                        int(self.cfg.burst_small_cores_min),
+                        int(self.cfg.burst_small_cores_max) + 1,
+                        size=small_n,
+                    ).astype(np.int32),
+                ]
+            )
+
+        heavy_n = _sample_burst_count(
+            float(self.cfg.burst_heavy_prob),
+            int(self.cfg.burst_heavy_jobs_min),
+            int(self.cfg.burst_heavy_jobs_max),
+        )
+        if heavy_n > 0:
+            durations = np.concatenate(
+                [
+                    durations,
+                    rng.integers(
+                        int(self.cfg.burst_heavy_duration_min),
+                        int(self.cfg.burst_heavy_duration_max) + 1,
+                        size=heavy_n,
+                    ).astype(np.int32),
+                ]
+            )
+            nodes = np.concatenate(
+                [
+                    nodes,
+                    rng.integers(
+                        int(self.cfg.burst_heavy_nodes_min),
+                        int(self.cfg.burst_heavy_nodes_max) + 1,
+                        size=heavy_n,
+                    ).astype(np.int32),
+                ]
+            )
+            cores = np.concatenate(
+                [
+                    cores,
+                    rng.integers(
+                        int(self.cfg.burst_heavy_cores_min),
+                        int(self.cfg.burst_heavy_cores_max) + 1,
+                        size=heavy_n,
+                    ).astype(np.int32),
+                ]
+            )
+
+        total_n = len(durations)
+        if self.cfg.hard_cap_jobs is not None and total_n > int(self.cfg.hard_cap_jobs):
+            hard_cap = int(self.cfg.hard_cap_jobs)
+            durations = durations[:hard_cap]
+            nodes = nodes[:hard_cap]
+            cores = cores[:hard_cap]
+            total_n = hard_cap
+
+        if total_n == 0:
             return []
 
-        mode = self.cfg.arrivals
-        durations = self._sample_attr_array(
-            rng=rng,
-            size=n,
-            mode=mode,
-            min_value=int(self.cfg.min_duration),
-            max_value=int(self.cfg.max_duration),
-            poisson_lambda=float(self.cfg.poisson_lambda_duration),
-            flat_target=int(self.cfg.flat_duration_target),
-            flat_jitter=int(self.cfg.flat_duration_jitter),
-        )
-        nodes = self._sample_attr_array(
-            rng=rng,
-            size=n,
-            mode=mode,
-            min_value=int(self.cfg.min_nodes),
-            max_value=int(self.cfg.max_nodes),
-            poisson_lambda=float(self.cfg.poisson_lambda_nodes),
-            flat_target=int(self.cfg.flat_nodes_target),
-            flat_jitter=int(self.cfg.flat_nodes_jitter),
-        )
-        cores = self._sample_attr_array(
-            rng=rng,
-            size=n,
-            mode=mode,
-            min_value=int(self.cfg.min_cores),
-            max_value=int(self.cfg.max_cores),
-            poisson_lambda=float(self.cfg.poisson_lambda_cores),
-            flat_target=int(self.cfg.flat_cores_target),
-            flat_jitter=int(self.cfg.flat_cores_jitter),
-        )
-
-        return [JobSpec(int(durations[i]), int(nodes[i]), int(cores[i])) for i in range(n)]
+        return [JobSpec(int(durations[i]), int(nodes[i]), int(cores[i])) for i in range(total_n)]
