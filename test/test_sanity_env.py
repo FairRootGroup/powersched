@@ -19,6 +19,7 @@ from src.environment import ComputeClusterEnv, Weights
 from src.plot_config import PlotConfig
 import pandas as pd
 from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
+from train import _parse_quad_floats, _parse_quad_ints, _parse_quad_ranges
 
 # Import environment variables:
 from src.config import (
@@ -36,52 +37,6 @@ def load_prices(prices_file_path: str | None):
     prices = df["Price"].astype(float).tolist()
     print(f"Loaded {len(prices)} prices from CSV: {prices_file_path}")
     return prices
-
-
-def _parse_quad_floats(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated floats: arrivals,duration,nodes,cores"
-        )
-    try:
-        return tuple(float(p) for p in parts)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Invalid float in '{raw}'") from exc
-
-
-def _parse_quad_ints(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated ints: arrivals,duration,nodes,cores"
-        )
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"Invalid int in '{raw}'") from exc
-
-
-def _parse_quad_ranges(raw: str):
-    parts = [p.strip() for p in str(raw).split(",")]
-    if len(parts) != 4:
-        raise argparse.ArgumentTypeError(
-            "Expected 4 comma-separated ranges: a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max"
-        )
-    ranges = []
-    for part in parts:
-        bounds = [b.strip() for b in part.split(":")]
-        if len(bounds) != 2:
-            raise argparse.ArgumentTypeError(f"Invalid range '{part}', expected min:max")
-        try:
-            low = int(bounds[0])
-            high = int(bounds[1])
-        except ValueError as exc:
-            raise argparse.ArgumentTypeError(f"Invalid int in range '{part}'") from exc
-        if low > high:
-            raise argparse.ArgumentTypeError(f"Range min > max in '{part}'")
-        ranges.append((low, high))
-    return tuple(ranges)
 
 # -----------------------------
 # Invariants / sanity checks
@@ -279,6 +234,8 @@ def parse_args():
         default=None,
         help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max",
     )
+    p.add_argument("--wg-burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
+    p.add_argument("--wg-burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
     p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
     p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue", help="Where to sample the job from.")
     p.add_argument("--print-job-index", type=int, default=-1, help="Queue index to print (>=0), or -1 to print first active job.")
@@ -358,6 +315,8 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
             flat_duration_jitter=flat_duration_jitter,
             flat_nodes_jitter=flat_nodes_jitter,
             flat_cores_jitter=flat_cores_jitter,
+            burst_small_prob=float(args.wg_burst_small_prob),
+            burst_heavy_prob=float(args.wg_burst_heavy_prob),
             min_duration=min_duration,
             max_duration=max_duration,
             min_nodes=min_nodes,
