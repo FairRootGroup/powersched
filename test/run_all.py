@@ -21,7 +21,7 @@ TESTS = [
     ["python", "-m", "test.test_sampler_hourly_aggregated", "--file-path", "data/allusers-gpu-30.log"],
     ["python", "-m", "test.test_sampler_jobs", "--file-path", "data/allusers-gpu-30.log"],
     ["python", "-m", "test.test_sampler_jobs_aggregated", "--file-path", "data/allusers-gpu-30.log"],
-    ["python", "-m", "test.test_inspect_workloadgen", "--arrivals", "poisson", "--poisson-lambdas4", "200,10,6,24", "--max-jobs-hour", "1500", "--hours", "336", "--plot", "--burst-small-prob", "0.2", "--burst-heavy-prob", "0.02"],
+    ["python", "-m", "test.test_inspect_workloadgen", "--workload-gen", "poisson", "--wg-poisson-lambdas4", "200,10,6,24", "--wg-max-jobs-hour", "1500", "--hours", "336", "--plot", "--wg-burst-small-prob", "0.2", "--wg-burst-heavy-prob", "0.02"],
 ]
 
 def main():
