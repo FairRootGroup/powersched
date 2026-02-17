@@ -18,14 +18,12 @@ from gymnasium.utils.env_checker import check_env
 from src.environment import ComputeClusterEnv, Weights
 from src.plot_config import PlotConfig
 import pandas as pd
-from src.workloadgen import WorkloadGenerator, WorkloadGenConfig
-from train import _parse_quad_floats, _parse_quad_ints, _parse_quad_ranges
+from src.workloadgen import WorkloadGenerator
+from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 
 # Import environment variables:
 from src.config import (
     MAX_JOB_DURATION,
-    MIN_NODES_PER_JOB, MAX_NODES_PER_JOB,
-    MIN_CORES_PER_JOB,
     CORES_PER_NODE, EPISODE_HOURS
 )
 
@@ -222,15 +220,7 @@ def parse_args():
     p.add_argument("--idle-weight", type=float, default=0.1)
     p.add_argument("--job-age-weight", type=float, default=0.1)
     p.add_argument("--drop-weight", type=float, default=0.1)
-    p.add_argument("--workload-gen",type=str,default="",choices=["", "flat", "poisson", "uniform"],help="Enable workload generator (default: disabled).",)
-    p.add_argument("--wg-poisson-lambda", type=float, default=200.0, help="Legacy: arrivals-only poisson lambda.")
-    p.add_argument("--wg-poisson-lambdas4", type=_parse_quad_floats, default=None, help="arrivals,duration,nodes,cores")
-    p.add_argument("--wg-max-jobs-hour", type=int, default=1500, help="Cap jobs/hour for generator.")
-    p.add_argument("--wg-flat-targets4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    p.add_argument("--wg-flat-jitters4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    p.add_argument("--wg-uniform-ranges4", type=_parse_quad_ranges, default=None, help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max")
-    p.add_argument("--wg-burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
-    p.add_argument("--wg-burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
+    add_workloadgen_args(p)
     p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
     p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue", help="Where to sample the job from.")
     p.add_argument("--print-job-index", type=int, default=-1, help="Queue index to print (>=0), or -1 to print first active job.")
@@ -250,76 +240,8 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         drop_weight=args.drop_weight
     )
 
-    workload_gen = None
-    if args.workload_gen:
-        uniform_min_jobs = 0
-        max_jobs_hour = args.wg_max_jobs_hour
-        min_duration, max_duration = 1, MAX_JOB_DURATION
-        min_nodes, max_nodes = MIN_NODES_PER_JOB, MAX_NODES_PER_JOB
-        min_cores, max_cores = MIN_CORES_PER_JOB, CORES_PER_NODE
-
-        if args.wg_uniform_ranges4 is not None:
-            (
-                (uniform_min_jobs, max_jobs_hour),
-                (min_duration, max_duration),
-                (min_nodes, max_nodes),
-                (min_cores, max_cores),
-            ) = args.wg_uniform_ranges4
-
-        duration_mid = (min_duration + max_duration) // 2
-        nodes_mid = (min_nodes + max_nodes) // 2
-        cores_mid = (min_cores + max_cores) // 2
-
-        if args.wg_poisson_lambdas4 is not None:
-            poisson_lambda_arrivals, poisson_lambda_duration, poisson_lambda_nodes, poisson_lambda_cores = args.wg_poisson_lambdas4
-        else:
-            poisson_lambda_arrivals = args.wg_poisson_lambda
-            poisson_lambda_duration = float(duration_mid)
-            poisson_lambda_nodes = float(nodes_mid)
-            poisson_lambda_cores = float(cores_mid)
-
-        if args.wg_flat_targets4 is not None:
-            flat_jobs_per_hour, flat_duration_target, flat_nodes_target, flat_cores_target = args.wg_flat_targets4
-        else:
-            flat_jobs_per_hour = 200
-            flat_duration_target = duration_mid
-            flat_nodes_target = nodes_mid
-            flat_cores_target = cores_mid
-
-        if args.wg_flat_jitters4 is not None:
-            flat_jitter_arrivals, flat_duration_jitter, flat_nodes_jitter, flat_cores_jitter = args.wg_flat_jitters4
-        else:
-            flat_jitter_arrivals = 0
-            flat_duration_jitter = 0
-            flat_nodes_jitter = 0
-            flat_cores_jitter = 0
-
-        cfg = WorkloadGenConfig(
-            arrivals=args.workload_gen,
-            uniform_min_new_jobs_per_hour=uniform_min_jobs,
-            max_new_jobs_per_hour=max_jobs_hour,
-            poisson_lambda=poisson_lambda_arrivals,
-            poisson_lambda_duration=poisson_lambda_duration,
-            poisson_lambda_nodes=poisson_lambda_nodes,
-            poisson_lambda_cores=poisson_lambda_cores,
-            flat_jobs_per_hour=flat_jobs_per_hour,
-            flat_jitter=flat_jitter_arrivals,
-            flat_duration_target=flat_duration_target,
-            flat_nodes_target=flat_nodes_target,
-            flat_cores_target=flat_cores_target,
-            flat_duration_jitter=flat_duration_jitter,
-            flat_nodes_jitter=flat_nodes_jitter,
-            flat_cores_jitter=flat_cores_jitter,
-            burst_small_prob=args.wg_burst_small_prob,
-            burst_heavy_prob=args.wg_burst_heavy_prob,
-            min_duration=min_duration,
-            max_duration=max_duration,
-            min_nodes=min_nodes,
-            max_nodes=max_nodes,
-            min_cores=min_cores,
-            max_cores=max_cores,
-        )
-        workload_gen = WorkloadGenerator(cfg)
+    wg_cfg = build_workloadgen_config(args)
+    workload_gen = WorkloadGenerator(wg_cfg) if wg_cfg is not None else None
 
 
      # Train.py passes strings; the env treats "" as falsy in some places and truthy in others.

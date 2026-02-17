@@ -1,6 +1,6 @@
 """
 Run with:
-python -m test.test_inspect_workloadgen --arrivals poisson --poisson-lambdas4 200,10,6,24 --max-jobs-hour 1500 --hours 336 --plot --burst-small-prob 0.2 --burst-heavy-prob 0.02
+python -m test.test_inspect_workloadgen --workload-gen poisson --wg-poisson-lambdas4 200,10,6,24 --wg-max-jobs-hour 1500 --hours 336 --plot --wg-burst-small-prob 0.2 --wg-burst-heavy-prob 0.02
 """
 
 # inspect_workloadgen.py
@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import os
 
-from src.workloadgen import WorkloadGenConfig, WorkloadGenerator
-from train import _parse_quad_floats, _parse_quad_ints, _parse_quad_ranges
+from src.workloadgen import WorkloadGenerator
+from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 
 
 def digest_jobs_triplets(triplets):
@@ -43,88 +43,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=123)
     ap.add_argument("--hours", type=int, default=24 * 14)
-    ap.add_argument("--arrivals", choices=["flat", "poisson", "uniform"], default="poisson")
-    ap.add_argument("--poisson-lambda", type=float, default=200.0, help="Legacy: arrivals-only poisson lambda.")
-    ap.add_argument("--poisson-lambdas4", type=_parse_quad_floats, default=None, help="arrivals,duration,nodes,cores")
-    ap.add_argument("--max-jobs-hour", type=int, default=1500)
+    add_workloadgen_args(ap)
     ap.add_argument("--plot", action="store_true")
-    # Flat params (true flat with optional jitter)
-    ap.add_argument("--flat-jobs-hour", type=int, default=200, help="Legacy: arrivals-only flat target.")
-    ap.add_argument("--flat-jitter", type=int, default=0, help="Legacy: arrivals-only flat jitter.")
-    ap.add_argument("--flat-targets4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    ap.add_argument("--flat-jitters4", type=_parse_quad_ints, default=None, help="arrivals,duration,nodes,cores")
-    ap.add_argument(
-        "--uniform-ranges4",
-        type=_parse_quad_ranges,
-        default=None,
-        help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max",
-    )
-    ap.add_argument("--burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
-    ap.add_argument("--burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
     args = ap.parse_args()
 
-    # Default ranges (used for uniform and for clipping in all modes).
-    uniform_min_jobs = 0
-    max_jobs_hour = int(args.max_jobs_hour)
-    min_duration, max_duration = 1, 170
-    min_nodes, max_nodes = 1, 16
-    min_cores, max_cores = 1, 96
-    if args.uniform_ranges4 is not None:
-        (uniform_min_jobs, max_jobs_hour), (min_duration, max_duration), (min_nodes, max_nodes), (min_cores, max_cores) = args.uniform_ranges4
-
-    default_duration_mid = (min_duration + max_duration) // 2
-    default_nodes_mid = (min_nodes + max_nodes) // 2
-    default_cores_mid = (min_cores + max_cores) // 2
-
-    if args.poisson_lambdas4 is not None:
-        poisson_lambda_arrivals, poisson_lambda_duration, poisson_lambda_nodes, poisson_lambda_cores = args.poisson_lambdas4
-    else:
-        poisson_lambda_arrivals = float(args.poisson_lambda)
-        poisson_lambda_duration = float(default_duration_mid)
-        poisson_lambda_nodes = float(default_nodes_mid)
-        poisson_lambda_cores = float(default_cores_mid)
-
-    if args.flat_targets4 is not None:
-        flat_jobs_per_hour, flat_duration_target, flat_nodes_target, flat_cores_target = args.flat_targets4
-    else:
-        flat_jobs_per_hour = int(args.flat_jobs_hour)
-        flat_duration_target = default_duration_mid
-        flat_nodes_target = default_nodes_mid
-        flat_cores_target = default_cores_mid
-
-    if args.flat_jitters4 is not None:
-        flat_jitter_arrivals, flat_duration_jitter, flat_nodes_jitter, flat_cores_jitter = args.flat_jitters4
-    else:
-        flat_jitter_arrivals = int(args.flat_jitter)
-        flat_duration_jitter = 0
-        flat_nodes_jitter = 0
-        flat_cores_jitter = 0
-
-    cfg = WorkloadGenConfig(
-        arrivals=args.arrivals,
-        uniform_min_new_jobs_per_hour=uniform_min_jobs,
-        max_new_jobs_per_hour=max_jobs_hour,
-        poisson_lambda=poisson_lambda_arrivals,
-        poisson_lambda_duration=poisson_lambda_duration,
-        poisson_lambda_nodes=poisson_lambda_nodes,
-        poisson_lambda_cores=poisson_lambda_cores,
-        flat_jobs_per_hour=flat_jobs_per_hour,
-        flat_jitter=flat_jitter_arrivals,
-        flat_duration_target=flat_duration_target,
-        flat_nodes_target=flat_nodes_target,
-        flat_cores_target=flat_cores_target,
-        flat_duration_jitter=flat_duration_jitter,
-        flat_nodes_jitter=flat_nodes_jitter,
-        flat_cores_jitter=flat_cores_jitter,
-        burst_small_prob=float(args.burst_small_prob),
-        burst_heavy_prob=float(args.burst_heavy_prob),
-        min_duration=min_duration,
-        max_duration=max_duration,
-        min_nodes=min_nodes,
-        max_nodes=max_nodes,
-        min_cores=min_cores,
-        max_cores=max_cores,
-    )
+    cfg = build_workloadgen_config(args)
+    if cfg is None:
+        ap.error("--workload-gen is required (e.g. --workload-gen poisson)")
     gen = WorkloadGenerator(cfg)
 
     rng = np.random.default_rng(args.seed)
@@ -235,7 +160,7 @@ def main():
 
         #plt.show()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        prefix = f"{args.arrivals}_lambda{poisson_lambda_arrivals}" if args.arrivals == "poisson" else args.arrivals
+        prefix = f"{cfg.arrivals}_lambda{cfg.poisson_lambda}" if cfg.arrivals == "poisson" else cfg.arrivals
         fname = f"{prefix}_{timestamp}.png" if prefix else f"Workload-Gen_{timestamp}.png"
         save_path = os.path.join("", fname)
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
