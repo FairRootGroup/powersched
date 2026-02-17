@@ -220,6 +220,15 @@ def summarize_file(
             "cores_std": float("nan"),
             "corr_duration_nodes": float("nan"),
             "corr_duration_cores": float("nan"),
+            "hours_observed": 0,
+            "small_baseline_jobs_per_hour": float("nan"),
+            "heavy_baseline_jobs_per_hour": float("nan"),
+            "small_event_prob": float("nan"),
+            "heavy_event_prob": float("nan"),
+            "small_volume_prob": float("nan"),
+            "heavy_volume_prob": float("nan"),
+            "suggested_wg_burst_small_prob": float("nan"),
+            "suggested_wg_burst_heavy_prob": float("nan"),
         }
 
     # Determine column mapping from the first row, then process all rows (including first).
