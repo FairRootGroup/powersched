@@ -162,7 +162,9 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = f"{cfg.arrivals}_lambda{cfg.poisson_lambda}" if cfg.arrivals == "poisson" else cfg.arrivals
         fname = f"{prefix}_{timestamp}.png" if prefix else f"Workload-Gen_{timestamp}.png"
-        save_path = os.path.join("", fname)
+        out_dir = os.path.join(os.path.dirname(__file__), "test_output")
+        os.makedirs(out_dir, exist_ok=True)
+        save_path = os.path.join(out_dir, fname)
         plt.savefig(save_path, dpi=250, bbox_inches="tight")
 
 
