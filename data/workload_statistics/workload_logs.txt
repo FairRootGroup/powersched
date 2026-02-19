@@ -4,11 +4,14 @@ hours_observed=788
 arrivals_per_hour: mean=4.2119 std=77.5734
 duration_hours: mean=7.4852 std=29.6084
 nodes: mean=1.0054 std=0.1202
-cores: mean=14.9328 std=30.1301
-corr(duration, nodes)=0.007262 corr(duration, cores)=0.628780
+cores: mean=14.8503 std=30.0671
+corr(duration, nodes)=0.007262 corr(duration, cores)=0.629600
 burst_baseline_jobs_per_hour: small=0.0000 heavy=0.0000
 burst_prob_estimates: small_event=0.0025 small_volume=0.0243 heavy_event=0.0000 heavy_volume=0.0000
-suggested_flags: --wg-burst-small-prob 0.0025 --wg-burst-heavy-prob 0.0000
+burst_hours_detected: small=11 heavy=0
+suggested_small_ranges: jobs=3:767 duration=1:2 nodes=1:1 cores=2:6
+suggested_heavy_ranges: jobs=nan:nan duration=nan:nan nodes=nan:nan cores=nan:nan
+suggested_flags: --wg-burst-small-prob 0.0025 --wg-burst-heavy-prob 0.0000 --wg-burst-small-jobs-min 3 --wg-burst-small-jobs-max 767 --wg-burst-small-duration-min 1 --wg-burst-small-duration-max 2 --wg-burst-small-nodes-min 1 --wg-burst-small-nodes-max 1 --wg-burst-small-cores-min 2 --wg-burst-small-cores-max 6 --wg-burst-heavy-jobs-min nan --wg-burst-heavy-jobs-max nan --wg-burst-heavy-duration-min nan --wg-burst-heavy-duration-max nan --wg-burst-heavy-nodes-min nan --wg-burst-heavy-nodes-max nan --wg-burst-heavy-cores-min nan --wg-burst-heavy-cores-max nan
 
 === allusers-grid-30.log ===
 jobs=40639 skipped_rows=1
@@ -20,7 +23,10 @@ cores: mean=7.9984 std=0.1122
 corr(duration, nodes)=nan corr(duration, cores)=0.026772
 burst_baseline_jobs_per_hour: small=0.0000 heavy=0.0000
 burst_prob_estimates: small_event=0.0423 small_volume=0.0752 heavy_event=0.0000 heavy_volume=0.0000
-suggested_flags: --wg-burst-small-prob 0.0423 --wg-burst-heavy-prob 0.0000
+burst_hours_detected: small=79 heavy=0
+suggested_small_ranges: jobs=15:303 duration=1:7 nodes=1:1 cores=8:8
+suggested_heavy_ranges: jobs=nan:nan duration=nan:nan nodes=nan:nan cores=nan:nan
+suggested_flags: --wg-burst-small-prob 0.0423 --wg-burst-heavy-prob 0.0000 --wg-burst-small-jobs-min 15 --wg-burst-small-jobs-max 303 --wg-burst-small-duration-min 1 --wg-burst-small-duration-max 7 --wg-burst-small-nodes-min 1 --wg-burst-small-nodes-max 1 --wg-burst-small-cores-min 8 --wg-burst-small-cores-max 8 --wg-burst-heavy-jobs-min nan --wg-burst-heavy-jobs-max nan --wg-burst-heavy-duration-min nan --wg-burst-heavy-duration-max nan --wg-burst-heavy-nodes-min nan --wg-burst-heavy-nodes-max nan --wg-burst-heavy-cores-min nan --wg-burst-heavy-cores-max nan
 
 === allusers-high_mem-30.log ===
 jobs=237373 skipped_rows=1
@@ -28,11 +34,14 @@ hours_observed=1385
 arrivals_per_hour: mean=171.3884 std=611.6586
 duration_hours: mean=0.2537 std=1.8726
 nodes: mean=1.0010 std=0.1191
-cores: mean=13.6286 std=47.3460
-corr(duration, nodes)=0.405630 corr(duration, cores)=0.113031
+cores: mean=13.5372 std=45.6885
+corr(duration, nodes)=0.405630 corr(duration, cores)=0.041992
 burst_baseline_jobs_per_hour: small=129.0000 heavy=0.0000
 burst_prob_estimates: small_event=0.1329 small_volume=0.9510 heavy_event=0.0043 heavy_volume=0.0011
-suggested_flags: --wg-burst-small-prob 0.1329 --wg-burst-heavy-prob 0.0043
+burst_hours_detected: small=47 heavy=2
+suggested_small_ranges: jobs=1407:4689 duration=1:1 nodes=1:1 cores=4:4
+suggested_heavy_ranges: jobs=2:4 duration=168:169 nodes=10:16 cores=64:64
+suggested_flags: --wg-burst-small-prob 0.1329 --wg-burst-heavy-prob 0.0043 --wg-burst-small-jobs-min 1407 --wg-burst-small-jobs-max 4689 --wg-burst-small-duration-min 1 --wg-burst-small-duration-max 1 --wg-burst-small-nodes-min 1 --wg-burst-small-nodes-max 1 --wg-burst-small-cores-min 4 --wg-burst-small-cores-max 4 --wg-burst-heavy-jobs-min 2 --wg-burst-heavy-jobs-max 4 --wg-burst-heavy-duration-min 168 --wg-burst-heavy-duration-max 169 --wg-burst-heavy-nodes-min 10 --wg-burst-heavy-nodes-max 16 --wg-burst-heavy-cores-min 64 --wg-burst-heavy-cores-max 64
 
 === allusers-long-30.log ===
 jobs=706918 skipped_rows=1
@@ -40,11 +49,14 @@ hours_observed=1381
 arrivals_per_hour: mean=511.8885 std=1308.5007
 duration_hours: mean=3.2965 std=13.0609
 nodes: mean=1.0137 std=0.6736
-cores: mean=7.5031 std=54.1584
-corr(duration, nodes)=0.030925 corr(duration, cores)=0.020810
+cores: mean=6.4411 std=10.4744
+corr(duration, nodes)=0.030925 corr(duration, cores)=-0.065966
 burst_baseline_jobs_per_hour: small=319.0000 heavy=0.0000
 burst_prob_estimates: small_event=0.2274 small_volume=1.0000 heavy_event=0.0210 heavy_volume=0.0072
-suggested_flags: --wg-burst-small-prob 0.2274 --wg-burst-heavy-prob 0.0210
+burst_hours_detected: small=84 heavy=15
+suggested_small_ranges: jobs=1685:6569 duration=1:3 nodes=1:1 cores=2:8
+suggested_heavy_ranges: jobs=2:6 duration=132:169 nodes=5:16 cores=64:96
+suggested_flags: --wg-burst-small-prob 0.2274 --wg-burst-heavy-prob 0.0210 --wg-burst-small-jobs-min 1685 --wg-burst-small-jobs-max 6569 --wg-burst-small-duration-min 1 --wg-burst-small-duration-max 3 --wg-burst-small-nodes-min 1 --wg-burst-small-nodes-max 1 --wg-burst-small-cores-min 2 --wg-burst-small-cores-max 8 --wg-burst-heavy-jobs-min 2 --wg-burst-heavy-jobs-max 6 --wg-burst-heavy-duration-min 132 --wg-burst-heavy-duration-max 169 --wg-burst-heavy-nodes-min 5 --wg-burst-heavy-nodes-max 16 --wg-burst-heavy-cores-min 64 --wg-burst-heavy-cores-max 96
 
 === allusers-main-30.log ===
 jobs=1448404 skipped_rows=1
@@ -52,11 +64,11 @@ hours_observed=752
 arrivals_per_hour: mean=1926.0691 std=3618.8276
 duration_hours: mean=0.3007 std=0.8709
 nodes: mean=1.0007 std=0.1308
-cores: mean=2.9509 std=3.6442
-corr(duration, nodes)=0.008865 corr(duration, cores)=-0.027545
+cores: mean=2.9427 std=3.2604
+corr(duration, nodes)=0.008865 corr(duration, cores)=-0.032620
 burst_baseline_jobs_per_hour: small=907.0000 heavy=0.0000
 burst_prob_estimates: small_event=0.3697 small_volume=1.0000 heavy_event=0.0000 heavy_volume=0.0000
-suggested_flags: --wg-burst-small-prob 0.3697 --wg-burst-heavy-prob 0.0000
-
-
-NOTE: skipped_rows when duration = 0 rows appear. Not used in calculation.
+burst_hours_detected: small=71 heavy=0
+suggested_small_ranges: jobs=6084:13961 duration=1:1 nodes=1:1 cores=2:4
+suggested_heavy_ranges: jobs=nan:nan duration=nan:nan nodes=nan:nan cores=nan:nan
+suggested_flags: --wg-burst-small-prob 0.3697 --wg-burst-heavy-prob 0.0000 --wg-burst-small-jobs-min 6084 --wg-burst-small-jobs-max 13961 --wg-burst-small-duration-min 1 --wg-burst-small-duration-max 1 --wg-burst-small-nodes-min 1 --wg-burst-small-nodes-max 1 --wg-burst-small-cores-min 2 --wg-burst-small-cores-max 4 --wg-burst-heavy-jobs-min nan --wg-burst-heavy-jobs-max nan --wg-burst-heavy-duration-min nan --wg-burst-heavy-duration-max nan --wg-burst-heavy-nodes-min nan --wg-burst-heavy-nodes-max nan --wg-burst-heavy-cores-min nan --wg-burst-heavy-cores-max nan
