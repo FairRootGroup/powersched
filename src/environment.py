@@ -433,6 +433,7 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_running_jobs_counts.append(num_running_jobs)
         self.metrics.episode_on_nodes.append(num_on_nodes)
         self.metrics.episode_used_nodes.append(num_used_nodes)
+        self.metrics.episode_used_cores.append(num_used_cores)
         self.metrics.episode_job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.episode_price_stats.append(current_price)
 
@@ -453,7 +454,7 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"[5] Calculating reward...")
 
         # Baseline step
-        baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id = baseline_step(
+        baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id, baseline_num_used_nodes, baseline_num_used_cores = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
             self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print,
@@ -464,6 +465,9 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.baseline_cost_off += baseline_cost_off
         self.metrics.episode_baseline_cost += baseline_cost
         self.metrics.episode_baseline_cost_off += baseline_cost_off
+
+        self.metrics.episode_baseline_used_nodes.append(baseline_num_used_nodes)
+        self.metrics.episode_baseline_used_cores.append(baseline_num_used_cores)
 
         step_reward, step_cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,

@@ -13,6 +13,7 @@ from src.job_management import (
 )
 from src.metrics_tracker import MetricsTracker
 from src.reward_calculation import power_cost
+from src.config import CORES_PER_NODE
 
 
 def baseline_step(
@@ -113,4 +114,5 @@ def baseline_step(
     baseline_cost_off = power_cost(num_used_nodes, 0, current_price)
     env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
 
-    return baseline_cost, baseline_cost_off, baseline_next_empty_slot, next_job_id
+    num_used_cores = np.sum((baseline_state['nodes'] > 0) * CORES_PER_NODE)
+    return baseline_cost, baseline_cost_off, baseline_next_empty_slot, next_job_id, num_used_nodes, num_used_cores

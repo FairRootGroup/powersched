@@ -13,6 +13,7 @@ import argparse
 import pandas as pd
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
+from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
 import time
 
 
@@ -223,7 +224,9 @@ def main():
                 f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
                 f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
-                f"MaxQueue={env.metrics.max_queue_size_reached}")
+                f"MaxQueue={env.metrics.max_queue_size_reached}, "
+                f"Agent Occupancy (Cores)={env.metrics.episode_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES)if env.metrics.episode_used_cores else 0 :.2f}%, Baseline Occupancy (Cores)={env.metrics.episode_baseline_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_baseline_used_cores else 0 :.2f}% "
+                f"Agent Occupancy (Nodes)={env.metrics.episode_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_used_nodes else 0 :.2f}%, Baseline Occupancy (Nodes)={env.metrics.episode_baseline_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_baseline_used_nodes else 0 :.2f}% " )
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
