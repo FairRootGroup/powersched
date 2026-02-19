@@ -3,7 +3,7 @@ Run with:
 python -m test.test_inspect_workloadgen --workload-gen poisson --wg-poisson-lambdas4 200,10,6,24 --wg-max-jobs-hour 1500 --hours 336 --plot --wg-burst-small-prob 0.2 --wg-burst-heavy-prob 0.02
 """
 
-# inspect_workloadgen.py
+# test_inspect_workloadgen.py
 import argparse
 import hashlib
 
@@ -133,6 +133,8 @@ def main():
         cpn = [t[3] for t in all_jobs_triplets] if all_jobs_triplets else []
 
         axs[2, 0].hist(durations, bins=50)
+        if args.wg_burst_heavy_prob > 0.0:
+            axs[2, 0].set_yscale("log")
         axs[2, 0].set_title("Durations (hours)")
         axs[2, 0].set_xlabel("duration [h]")
         axs[2, 0].set_ylabel("count")
@@ -143,6 +145,8 @@ def main():
         axs[2, 1].set_ylabel("count")
 
         axs[3, 0].hist(cpn, bins=32)
+        if args.wg_burst_heavy_prob > 0.0:
+            axs[3, 0].set_yscale("log")
         axs[3, 0].set_title("Cores per node (Jobs shape/Volume)")
         axs[3, 0].set_xlabel("cores/node")
         axs[3, 0].set_ylabel("count")

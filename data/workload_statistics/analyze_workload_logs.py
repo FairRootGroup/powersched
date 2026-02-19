@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize workload logs per file and estimate burst probabilities.
+"""Summarize workload logs per file and estimate burst parameters.
 
 For each input file, compute:
 - arrivals per hour: mean, stddev
@@ -12,6 +12,11 @@ For each input file, compute:
 - burst probability suggestions for:
   - wg-burst-small-prob
   - wg-burst-heavy-prob
+- burst boundary suggestions for:
+  - wg-burst-*-jobs-min/max
+  - wg-burst-*-duration-min/max
+  - wg-burst-*-nodes-min/max
+  - wg-burst-*-cores-min/max
 
 The script supports:
 - whitespace-delimited Slurm-like logs (as in data-internal/allusers-*.log)
@@ -23,7 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import fmean, stdev
@@ -34,6 +39,7 @@ SUBMIT_CANDIDATES = ("Submit", "submit", "SUBMIT", "submission_time", "timestamp
 DURATION_CANDIDATES = ("ElapsedRaw", "elapsed_raw", "ELAPSEDRAW", "duration_seconds", "duration")
 NODES_CANDIDATES = ("NNodes", "nnodes", "NNODES", "nodes")
 CORES_CANDIDATES = ("NCPUS", "ncpus", "NCPUs", "cores", "cores_per_node")
+TOTAL_CORES_COLUMNS = {"NCPUS", "ncpus", "NCPUs"}
 
 
 def pick_column(columns: Sequence[str], candidates: Sequence[str]) -> str:
@@ -129,6 +135,39 @@ def parse_min_max(raw: str) -> Tuple[int, int]:
     return lo, hi
 
 
+def parse_quantile_range(raw: str) -> Tuple[float, float]:
+    parts = [p.strip() for p in str(raw).split(":")]
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError("Expected q_low:q_high in [0,1]")
+    try:
+        q_low = float(parts[0])
+        q_high = float(parts[1])
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"Invalid quantile pair '{raw}'") from exc
+    if not (0.0 <= q_low <= 1.0 and 0.0 <= q_high <= 1.0):
+        raise argparse.ArgumentTypeError("Quantiles must be in [0,1]")
+    if q_low > q_high:
+        raise argparse.ArgumentTypeError("Expected q_low <= q_high")
+    return q_low, q_high
+
+
+def suggest_int_range(values: Sequence[float], q_low: float, q_high: float, minimum: int = 1) -> Tuple[float, float]:
+    finite_values = [float(v) for v in values if math.isfinite(float(v))]
+    if not finite_values:
+        return float("nan"), float("nan")
+    lo = int(math.floor(quantile(finite_values, q_low)))
+    hi = int(math.ceil(quantile(finite_values, q_high)))
+    lo = max(lo, minimum)
+    hi = max(hi, lo)
+    return float(lo), float(hi)
+
+
+def fmt_suggested_int(value: float) -> str:
+    if not math.isfinite(value):
+        return "nan"
+    return str(int(round(value)))
+
+
 def hourly_axis(arrivals_by_hour: Counter, include_zero_hours: bool) -> List[datetime]:
     if not arrivals_by_hour:
         return []
@@ -193,10 +232,17 @@ def summarize_file(
     assumed_heavy_jobs_min: int,
     assumed_heavy_jobs_max: int,
     baseline_quantile: float,
+    burst_event_quantile: float,
+    burst_range_quantile_low: float,
+    burst_range_quantile_high: float,
 ) -> Dict[str, float]:
     arrivals_by_hour: Counter = Counter()
     small_jobs_by_hour: Counter = Counter()
     heavy_jobs_by_hour: Counter = Counter()
+    small_job_attrs_by_hour = defaultdict(list)
+    heavy_job_attrs_by_hour = defaultdict(list)
+    small_job_attrs_all: List[Tuple[float, float, float]] = []
+    heavy_job_attrs_all: List[Tuple[float, float, float]] = []
     durations_h: List[float] = []
     nodes: List[float] = []
     cores: List[float] = []
@@ -229,6 +275,24 @@ def summarize_file(
             "heavy_volume_prob": float("nan"),
             "suggested_wg_burst_small_prob": float("nan"),
             "suggested_wg_burst_heavy_prob": float("nan"),
+            "suggested_wg_burst_small_jobs_min": float("nan"),
+            "suggested_wg_burst_small_jobs_max": float("nan"),
+            "suggested_wg_burst_small_duration_min": float("nan"),
+            "suggested_wg_burst_small_duration_max": float("nan"),
+            "suggested_wg_burst_small_nodes_min": float("nan"),
+            "suggested_wg_burst_small_nodes_max": float("nan"),
+            "suggested_wg_burst_small_cores_min": float("nan"),
+            "suggested_wg_burst_small_cores_max": float("nan"),
+            "suggested_wg_burst_heavy_jobs_min": float("nan"),
+            "suggested_wg_burst_heavy_jobs_max": float("nan"),
+            "suggested_wg_burst_heavy_duration_min": float("nan"),
+            "suggested_wg_burst_heavy_duration_max": float("nan"),
+            "suggested_wg_burst_heavy_nodes_min": float("nan"),
+            "suggested_wg_burst_heavy_nodes_max": float("nan"),
+            "suggested_wg_burst_heavy_cores_min": float("nan"),
+            "suggested_wg_burst_heavy_cores_max": float("nan"),
+            "small_burst_hours_detected": float("nan"),
+            "heavy_burst_hours_detected": float("nan"),
         }
 
     # Determine column mapping from the first row, then process all rows (including first).
@@ -237,6 +301,7 @@ def summarize_file(
     duration_col = pick_column(keys, DURATION_CANDIDATES)
     nodes_col = pick_column(keys, NODES_CANDIDATES)
     cores_col = pick_column(keys, CORES_CANDIDATES)
+    cores_is_total = cores_col in TOTAL_CORES_COLUMNS
 
     def consume(row: Dict[str, str]) -> None:
         nonlocal skipped
@@ -244,15 +309,27 @@ def summarize_file(
             hour = parse_submit_hour(row[submit_col])
             duration = parse_duration_hours(row[duration_col])
             node_count = float(row[nodes_col])
-            core_count = float(row[cores_col])
+            core_raw = float(row[cores_col])
+            if cores_is_total and node_count > 0.0:
+                core_count = core_raw / node_count
+            else:
+                core_count = core_raw
         except Exception:
             skipped += 1
             return
         arrivals_by_hour[hour] += 1
-        if duration <= small_duration_max and node_count <= small_nodes_max and core_count <= small_cores_max:
+        is_small = duration <= small_duration_max and node_count <= small_nodes_max and core_count <= small_cores_max
+        is_heavy = duration >= heavy_duration_min and node_count >= heavy_nodes_min and core_count >= heavy_cores_min
+        if is_small:
             small_jobs_by_hour[hour] += 1
-        if duration >= heavy_duration_min and node_count >= heavy_nodes_min and core_count >= heavy_cores_min:
+            attrs = (duration, node_count, core_count)
+            small_job_attrs_by_hour[hour].append(attrs)
+            small_job_attrs_all.append(attrs)
+        if is_heavy:
             heavy_jobs_by_hour[hour] += 1
+            attrs = (duration, node_count, core_count)
+            heavy_job_attrs_by_hour[hour].append(attrs)
+            heavy_job_attrs_all.append(attrs)
         durations_h.append(duration)
         nodes.append(node_count)
         cores.append(core_count)
@@ -298,8 +375,10 @@ def summarize_file(
     small_expected_jobs_per_burst = (float(assumed_small_jobs_min) + float(assumed_small_jobs_max)) / 2.0
     heavy_expected_jobs_per_burst = (float(assumed_heavy_jobs_min) + float(assumed_heavy_jobs_max)) / 2.0
 
-    small_excess = sum(max(v - small_baseline, 0.0) for v in small_series)
-    heavy_excess = sum(max(v - heavy_baseline, 0.0) for v in heavy_series)
+    small_excess_series = [max(v - small_baseline, 0.0) for v in small_series]
+    heavy_excess_series = [max(v - heavy_baseline, 0.0) for v in heavy_series]
+    small_excess = sum(small_excess_series)
+    heavy_excess = sum(heavy_excess_series)
 
     if n_hours > 0 and small_expected_jobs_per_burst > 0.0:
         small_volume_prob = min(max(small_excess / (n_hours * small_expected_jobs_per_burst), 0.0), 1.0)
@@ -326,6 +405,109 @@ def summarize_file(
     else:
         suggested_heavy_prob = float("nan")
 
+    positive_small_excess = [v for v in small_excess_series if v > 0.0]
+    positive_heavy_excess = [v for v in heavy_excess_series if v > 0.0]
+
+    if positive_small_excess:
+        small_burst_threshold = quantile(positive_small_excess, burst_event_quantile)
+        small_burst_hours = {
+            hour
+            for hour, excess in zip(axis, small_excess_series)
+            if excess >= small_burst_threshold and excess > 0.0
+        }
+        small_burst_jobs = [
+            excess
+            for hour, excess in zip(axis, small_excess_series)
+            if hour in small_burst_hours
+        ]
+    else:
+        small_burst_hours = set()
+        small_burst_jobs = []
+
+    if positive_heavy_excess:
+        heavy_burst_threshold = quantile(positive_heavy_excess, burst_event_quantile)
+        heavy_burst_hours = {
+            hour
+            for hour, excess in zip(axis, heavy_excess_series)
+            if excess >= heavy_burst_threshold and excess > 0.0
+        }
+        heavy_burst_jobs = [
+            excess
+            for hour, excess in zip(axis, heavy_excess_series)
+            if hour in heavy_burst_hours
+        ]
+    else:
+        heavy_burst_hours = set()
+        heavy_burst_jobs = []
+
+    small_burst_attrs = [
+        attrs
+        for hour in small_burst_hours
+        for attrs in small_job_attrs_by_hour.get(hour, [])
+    ]
+    heavy_burst_attrs = [
+        attrs
+        for hour in heavy_burst_hours
+        for attrs in heavy_job_attrs_by_hour.get(hour, [])
+    ]
+
+    # Fallback to all matching jobs when no burst hours were isolated.
+    if not small_burst_attrs:
+        small_burst_attrs = small_job_attrs_all
+    if not heavy_burst_attrs:
+        heavy_burst_attrs = heavy_job_attrs_all
+
+    small_jobs_min_s, small_jobs_max_s = suggest_int_range(
+        small_burst_jobs,
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+    heavy_jobs_min_s, heavy_jobs_max_s = suggest_int_range(
+        heavy_burst_jobs,
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+
+    small_duration_min_s, small_duration_max_s = suggest_int_range(
+        [a[0] for a in small_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+    small_nodes_min_s, small_nodes_max_s = suggest_int_range(
+        [a[1] for a in small_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+    small_cores_min_s, small_cores_max_s = suggest_int_range(
+        [a[2] for a in small_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+
+    heavy_duration_min_s, heavy_duration_max_s = suggest_int_range(
+        [a[0] for a in heavy_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+    heavy_nodes_min_s, heavy_nodes_max_s = suggest_int_range(
+        [a[1] for a in heavy_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+    heavy_cores_min_s, heavy_cores_max_s = suggest_int_range(
+        [a[2] for a in heavy_burst_attrs],
+        burst_range_quantile_low,
+        burst_range_quantile_high,
+        minimum=1,
+    )
+
     return {
         "jobs": len(durations_h),
         "skipped_rows": skipped,
@@ -348,6 +530,24 @@ def summarize_file(
         "heavy_volume_prob": heavy_volume_prob,
         "suggested_wg_burst_small_prob": suggested_small_prob,
         "suggested_wg_burst_heavy_prob": suggested_heavy_prob,
+        "suggested_wg_burst_small_jobs_min": small_jobs_min_s,
+        "suggested_wg_burst_small_jobs_max": small_jobs_max_s,
+        "suggested_wg_burst_small_duration_min": small_duration_min_s,
+        "suggested_wg_burst_small_duration_max": small_duration_max_s,
+        "suggested_wg_burst_small_nodes_min": small_nodes_min_s,
+        "suggested_wg_burst_small_nodes_max": small_nodes_max_s,
+        "suggested_wg_burst_small_cores_min": small_cores_min_s,
+        "suggested_wg_burst_small_cores_max": small_cores_max_s,
+        "suggested_wg_burst_heavy_jobs_min": heavy_jobs_min_s,
+        "suggested_wg_burst_heavy_jobs_max": heavy_jobs_max_s,
+        "suggested_wg_burst_heavy_duration_min": heavy_duration_min_s,
+        "suggested_wg_burst_heavy_duration_max": heavy_duration_max_s,
+        "suggested_wg_burst_heavy_nodes_min": heavy_nodes_min_s,
+        "suggested_wg_burst_heavy_nodes_max": heavy_nodes_max_s,
+        "suggested_wg_burst_heavy_cores_min": heavy_cores_min_s,
+        "suggested_wg_burst_heavy_cores_max": heavy_cores_max_s,
+        "small_burst_hours_detected": float(len(small_burst_hours)),
+        "heavy_burst_hours_detected": float(len(heavy_burst_hours)),
     }
 
 
@@ -388,6 +588,18 @@ def main() -> None:
         default=0.5,
         help="Quantile used as non-burst baseline for hourly small/heavy counts (default: 0.5).",
     )
+    parser.add_argument(
+        "--burst-event-quantile",
+        type=float,
+        default=0.75,
+        help="Quantile of positive baseline-adjusted hourly counts used to isolate burst hours (default: 0.75).",
+    )
+    parser.add_argument(
+        "--burst-range-quantiles",
+        type=parse_quantile_range,
+        default=(0.1, 0.9),
+        help="Quantile range q_low:q_high for suggested burst min/max boundaries (default: 0.1:0.9).",
+    )
     args = parser.parse_args()
 
     if args.files:
@@ -413,6 +625,9 @@ def main() -> None:
             assumed_heavy_jobs_min=int(args.assumed_burst_heavy_jobs[0]),
             assumed_heavy_jobs_max=int(args.assumed_burst_heavy_jobs[1]),
             baseline_quantile=float(args.baseline_quantile),
+            burst_event_quantile=float(args.burst_event_quantile),
+            burst_range_quantile_low=float(args.burst_range_quantiles[0]),
+            burst_range_quantile_high=float(args.burst_range_quantiles[1]),
         )
         print(f"\n=== {path.name} ===")
         print(f"jobs={stats['jobs']} skipped_rows={stats['skipped_rows']}")
@@ -446,9 +661,44 @@ def main() -> None:
             f"heavy_volume={stats['heavy_volume_prob']:.4f}"
         )
         print(
+            "burst_hours_detected: "
+            f"small={fmt_suggested_int(stats['small_burst_hours_detected'])} "
+            f"heavy={fmt_suggested_int(stats['heavy_burst_hours_detected'])}"
+        )
+        print(
+            "suggested_small_ranges: "
+            f"jobs={fmt_suggested_int(stats['suggested_wg_burst_small_jobs_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_small_jobs_max'])} "
+            f"duration={fmt_suggested_int(stats['suggested_wg_burst_small_duration_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_small_duration_max'])} "
+            f"nodes={fmt_suggested_int(stats['suggested_wg_burst_small_nodes_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_small_nodes_max'])} "
+            f"cores={fmt_suggested_int(stats['suggested_wg_burst_small_cores_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_small_cores_max'])}"
+        )
+        print(
+            "suggested_heavy_ranges: "
+            f"jobs={fmt_suggested_int(stats['suggested_wg_burst_heavy_jobs_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_heavy_jobs_max'])} "
+            f"duration={fmt_suggested_int(stats['suggested_wg_burst_heavy_duration_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_heavy_duration_max'])} "
+            f"nodes={fmt_suggested_int(stats['suggested_wg_burst_heavy_nodes_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_heavy_nodes_max'])} "
+            f"cores={fmt_suggested_int(stats['suggested_wg_burst_heavy_cores_min'])}:{fmt_suggested_int(stats['suggested_wg_burst_heavy_cores_max'])}"
+        )
+        print(
             "suggested_flags: "
             f"--wg-burst-small-prob {stats['suggested_wg_burst_small_prob']:.4f} "
-            f"--wg-burst-heavy-prob {stats['suggested_wg_burst_heavy_prob']:.4f}"
+            f"--wg-burst-heavy-prob {stats['suggested_wg_burst_heavy_prob']:.4f} "
+            f"--wg-burst-small-jobs-min {fmt_suggested_int(stats['suggested_wg_burst_small_jobs_min'])} "
+            f"--wg-burst-small-jobs-max {fmt_suggested_int(stats['suggested_wg_burst_small_jobs_max'])} "
+            f"--wg-burst-small-duration-min {fmt_suggested_int(stats['suggested_wg_burst_small_duration_min'])} "
+            f"--wg-burst-small-duration-max {fmt_suggested_int(stats['suggested_wg_burst_small_duration_max'])} "
+            f"--wg-burst-small-nodes-min {fmt_suggested_int(stats['suggested_wg_burst_small_nodes_min'])} "
+            f"--wg-burst-small-nodes-max {fmt_suggested_int(stats['suggested_wg_burst_small_nodes_max'])} "
+            f"--wg-burst-small-cores-min {fmt_suggested_int(stats['suggested_wg_burst_small_cores_min'])} "
+            f"--wg-burst-small-cores-max {fmt_suggested_int(stats['suggested_wg_burst_small_cores_max'])} "
+            f"--wg-burst-heavy-jobs-min {fmt_suggested_int(stats['suggested_wg_burst_heavy_jobs_min'])} "
+            f"--wg-burst-heavy-jobs-max {fmt_suggested_int(stats['suggested_wg_burst_heavy_jobs_max'])} "
+            f"--wg-burst-heavy-duration-min {fmt_suggested_int(stats['suggested_wg_burst_heavy_duration_min'])} "
+            f"--wg-burst-heavy-duration-max {fmt_suggested_int(stats['suggested_wg_burst_heavy_duration_max'])} "
+            f"--wg-burst-heavy-nodes-min {fmt_suggested_int(stats['suggested_wg_burst_heavy_nodes_min'])} "
+            f"--wg-burst-heavy-nodes-max {fmt_suggested_int(stats['suggested_wg_burst_heavy_nodes_max'])} "
+            f"--wg-burst-heavy-cores-min {fmt_suggested_int(stats['suggested_wg_burst_heavy_cores_min'])} "
+            f"--wg-burst-heavy-cores-max {fmt_suggested_int(stats['suggested_wg_burst_heavy_cores_max'])}"
         )
 
 
