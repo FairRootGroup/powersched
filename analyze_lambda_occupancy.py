@@ -1,0 +1,725 @@
+#!/usr/bin/env python3
+"""
+Sweep workload Poisson lambda values and analyze:
+1) lambda -> agent occupancy (nodes)
+2) occupancy -> savings
+3) occupancy -> savings_off
+4) lambda -> completion rate
+5) occupancy -> effective savings
+6) occupancy -> effective savings_off
+
+For each lambda, this script runs train.py in evaluation mode for one year
+(12 months = 24 episodes), parses per-episode metrics from stdout, computes
+mean/std, and fits 3rd-order polynomial trend lines.
+
+FAST DEBUG MODE: python analyze_lambda_occupancy.py --eval-months 1 --lambdas 1200,2000,3500 --no-plot-dashboard
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Callable
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+EPISODE_RE = re.compile(
+    r"Episode\s+(?P<episode>\d+):.*?"
+    r"Savings=€(?P<savings>-?[\d,]+(?:\.\d+)?)\/€(?P<savings_off>-?[\d,]+(?:\.\d+)?),.*?"
+    r"Jobs=[\d,]+\/[\d,]+\s+\((?P<completion_rate>-?[\d.]+)%\),\s*"
+    r"AvgWait=(?P<avg_wait>-?[\d.]+)h,.*?"
+    r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%",
+    re.MULTILINE,
+)
+
+WAIT_SUMMARY_RE = re.compile(
+    r"=== JOB PROCESSING METRICS ===.*?"
+    r"Agent:.*?Average Wait Time:\s*(?P<agent_wait>-?[\d.]+)\s*hours.*?"
+    r"Baseline:.*?Average Wait Time:\s*(?P<baseline_wait>-?[\d.]+)\s*hours",
+    re.DOTALL,
+)
+
+
+@dataclass
+class LambdaRunStats:
+    lambda_value: int
+    episodes: int
+    occupancy_mean: float
+    occupancy_std: float
+    savings_mean: float
+    savings_std: float
+    savings_off_mean: float
+    savings_off_std: float
+    completion_rate_mean: float
+    completion_rate_std: float
+    agent_avg_wait_hours: float
+    baseline_avg_wait_hours: float
+    wait_delta_hours: float
+    effective_savings_mean: float
+    effective_savings_std: float
+    effective_savings_off_mean: float
+    effective_savings_off_std: float
+    annual_total_savings: float
+    annual_total_savings_off: float
+    command: list[str]
+    command_str: str
+    occupancy_samples: list[float] = field(default_factory=list)
+    savings_samples: list[float] = field(default_factory=list)
+    savings_off_samples: list[float] = field(default_factory=list)
+    completion_rate_samples: list[float] = field(default_factory=list)
+    effective_savings_samples: list[float] = field(default_factory=list)
+    effective_savings_off_samples: list[float] = field(default_factory=list)
+
+
+def _to_float(raw: str) -> float:
+    return float(raw.replace(",", ""))
+
+
+def _diff_cumulative(values: list[float]) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+    return np.diff(np.concatenate(([0.0], arr)))
+
+
+def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    occupancy = []
+    cumulative_savings = []
+    cumulative_savings_off = []
+    completion_rate = []
+    avg_wait = []
+
+    for match in EPISODE_RE.finditer(stdout):
+        occupancy.append(_to_float(match.group("occupancy")))
+        cumulative_savings.append(_to_float(match.group("savings")))
+        cumulative_savings_off.append(_to_float(match.group("savings_off")))
+        completion_rate.append(_to_float(match.group("completion_rate")))
+        avg_wait.append(_to_float(match.group("avg_wait")))
+
+    if not occupancy:
+        raise RuntimeError(
+            "Could not parse episode metrics from train.py output. "
+            "Expected lines like 'Episode X: ... Savings=€.../€..., Agent Occupancy (Nodes)=...%'."
+        )
+
+    episode_savings = _diff_cumulative(cumulative_savings)
+    episode_savings_off = _diff_cumulative(cumulative_savings_off)
+    return (
+        np.asarray(occupancy, dtype=float),
+        episode_savings,
+        episode_savings_off,
+        np.asarray(completion_rate, dtype=float),
+        np.asarray(avg_wait, dtype=float),
+    )
+
+
+def parse_wait_summary(stdout: str) -> tuple[float | None, float | None]:
+    match = WAIT_SUMMARY_RE.search(stdout)
+    if not match:
+        return None, None
+    return _to_float(match.group("agent_wait")), _to_float(match.group("baseline_wait"))
+
+
+def safe_divide(numer: np.ndarray, denom: float) -> np.ndarray:
+    if abs(denom) < 1e-12:
+        return np.full_like(numer, np.nan, dtype=float)
+    return numer / denom
+
+
+def finite_mean_std(values: np.ndarray) -> tuple[float, float]:
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return float("nan"), float("nan")
+    vals = values[finite]
+    return float(np.mean(vals)), float(np.std(vals))
+
+
+def make_run_stats(
+    lambda_value: int,
+    command: list[str],
+    occupancy: np.ndarray,
+    savings: np.ndarray,
+    savings_off: np.ndarray,
+    completion_rate: np.ndarray,
+    agent_avg_wait_hours: float,
+    baseline_avg_wait_hours: float,
+) -> LambdaRunStats:
+    wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
+    effective_savings = safe_divide(savings * completion_rate, wait_delta_hours)
+    effective_savings_off = safe_divide(savings_off * completion_rate, wait_delta_hours)
+    effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
+    effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
+    return LambdaRunStats(
+        lambda_value=lambda_value,
+        episodes=int(occupancy.size),
+        occupancy_mean=float(np.mean(occupancy)),
+        occupancy_std=float(np.std(occupancy)),
+        savings_mean=float(np.mean(savings)),
+        savings_std=float(np.std(savings)),
+        savings_off_mean=float(np.mean(savings_off)),
+        savings_off_std=float(np.std(savings_off)),
+        completion_rate_mean=float(np.mean(completion_rate)),
+        completion_rate_std=float(np.std(completion_rate)),
+        agent_avg_wait_hours=float(agent_avg_wait_hours),
+        baseline_avg_wait_hours=float(baseline_avg_wait_hours),
+        wait_delta_hours=float(wait_delta_hours),
+        effective_savings_mean=effective_savings_mean,
+        effective_savings_std=effective_savings_std,
+        effective_savings_off_mean=effective_savings_off_mean,
+        effective_savings_off_std=effective_savings_off_std,
+        annual_total_savings=float(np.sum(savings)),
+        annual_total_savings_off=float(np.sum(savings_off)),
+        command=command,
+        command_str=shlex.join(command),
+        occupancy_samples=occupancy.tolist(),
+        savings_samples=savings.tolist(),
+        savings_off_samples=savings_off.tolist(),
+        completion_rate_samples=completion_rate.tolist(),
+        effective_savings_samples=effective_savings.tolist(),
+        effective_savings_off_samples=effective_savings_off.tolist(),
+    )
+
+
+def polyfit_curve(x: np.ndarray, y: np.ndarray, max_degree: int = 3) -> tuple[np.ndarray | None, int]:
+    finite = np.isfinite(x) & np.isfinite(y)
+    xf = x[finite]
+    yf = y[finite]
+    if xf.size < 2:
+        return None, 0
+    degree = min(max_degree, xf.size - 1)
+    coeffs = np.polyfit(xf, yf, degree)
+    return coeffs, degree
+
+
+def unique_ints_sorted(values: list[int]) -> list[int]:
+    return sorted({int(v) for v in values})
+
+
+def geometric_int_space(low: int, high: int, n: int) -> list[int]:
+    if n <= 1 or low == high:
+        return [int(low)]
+    vals = np.geomspace(low, high, n)
+    return unique_ints_sorted([int(round(v)) for v in vals])
+
+
+def clamp_int(value: int, low: int, high: int) -> int:
+    return max(low, min(high, int(value)))
+
+
+def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str]:
+    cmd = [
+        sys.executable,
+        "./train.py",
+        "--prices",
+        args.prices,
+        "--session",
+        args.session,
+        "--efficiency-weight",
+        str(args.efficiency_weight),
+        "--price-weight",
+        str(args.price_weight),
+        "--idle-weight",
+        str(args.idle_weight),
+        "--job-age-weight",
+        str(args.job_age_weight),
+        "--drop-weight",
+        str(args.drop_weight),
+        "--evaluate-savings",
+        "--eval-months",
+        str(args.eval_months),
+        "--model",
+        str(args.model),
+        "--workload-gen",
+        "poisson",
+        "--wg-poisson-lambdas4",
+        f"{lambda_value},{args.wg_duration_lambda},{args.wg_nodes_lambda},{args.wg_cores_lambda}",
+        "--wg-max-jobs-hour",
+        str(args.wg_max_jobs_hour),
+        "--wg-burst-small-prob",
+        str(args.wg_burst_small_prob),
+        "--wg-burst-heavy-prob",
+        str(args.wg_burst_heavy_prob),
+    ]
+    if args.carry_over_state:
+        cmd.append("--carry-over-state")
+    if args.plot_dashboard:
+        cmd.append("--plot-dashboard")
+    if args.dashboard_hours is not None:
+        cmd.extend(["--dashboard-hours", str(args.dashboard_hours)])
+    return cmd
+
+
+def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: int) -> tuple[LambdaRunStats, str]:
+    command = build_train_command(args, lambda_value)
+    print(f"[run] lambda={lambda_value}: {shlex.join(command)}")
+    completed = subprocess.run(
+        command,
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    combined_output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
+    if args.echo_train_output:
+        print(combined_output)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"train.py failed for lambda={lambda_value} with code {completed.returncode}.\n"
+            f"Last output lines:\n{os_tail(combined_output, lines=40)}"
+        )
+
+    occupancy, savings, savings_off, completion_rate, avg_wait = parse_episode_metrics(combined_output)
+    agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
+    if agent_wait_summary is None or baseline_wait_summary is None:
+        print(f"[warn] lambda={lambda_value}: could not parse run-level wait summary; effective savings may be NaN.")
+        agent_avg_wait_hours = float(np.mean(avg_wait))
+        baseline_avg_wait_hours = float(np.mean(avg_wait))
+    else:
+        agent_avg_wait_hours = float(agent_wait_summary)
+        baseline_avg_wait_hours = float(baseline_wait_summary)
+    stats = make_run_stats(
+        lambda_value,
+        command,
+        occupancy,
+        savings,
+        savings_off,
+        completion_rate,
+        agent_avg_wait_hours,
+        baseline_avg_wait_hours,
+    )
+    print(
+        f"[ok ] lambda={lambda_value}: "
+        f"occupancy={stats.occupancy_mean:.2f}%±{stats.occupancy_std:.2f}, "
+        f"completion={stats.completion_rate_mean:.2f}%±{stats.completion_rate_std:.2f}, "
+        f"savings={stats.savings_mean:.0f}±{stats.savings_std:.0f}, "
+        f"savings_off={stats.savings_off_mean:.0f}±{stats.savings_off_std:.0f}, "
+        f"wait_delta={stats.wait_delta_hours:.3f}h"
+    )
+    return stats, combined_output
+
+
+def os_tail(text: str, lines: int = 20) -> str:
+    parts = text.rstrip().splitlines()
+    if not parts:
+        return ""
+    return "\n".join(parts[-lines:])
+
+
+def select_lambda_schedule(
+    args: argparse.Namespace,
+    evaluate: Callable[[int], LambdaRunStats],
+) -> list[int]:
+    if args.lambdas:
+        explicit = unique_ints_sorted(
+            [clamp_int(v, args.min_lambda, args.max_lambda) for v in parse_int_list(args.lambdas)]
+        )
+        for lam in explicit:
+            evaluate(lam)
+        return explicit
+
+    ref = clamp_int(args.reference_lambda, args.min_lambda, args.max_lambda)
+    evaluate(ref)
+
+    # Probe low side.
+    low = ref
+    for _ in range(args.bracket_steps):
+        occ = evaluate(low).occupancy_mean
+        if occ <= args.target_occupancy_min + args.occupancy_tolerance:
+            break
+        nxt = clamp_int(int(round(low / args.bracket_factor)), args.min_lambda, args.max_lambda)
+        if nxt == low:
+            break
+        low = nxt
+        evaluate(low)
+
+    # Probe high side.
+    high = ref
+    for _ in range(args.bracket_steps):
+        occ = evaluate(high).occupancy_mean
+        if occ >= args.target_occupancy_max - args.occupancy_tolerance:
+            break
+        nxt = clamp_int(int(round(high * args.bracket_factor)), args.min_lambda, args.max_lambda)
+        if nxt == high:
+            break
+        high = nxt
+        evaluate(high)
+
+    # Fill remaining points log-spaced across discovered range.
+    discovered = unique_ints_sorted(list(evaluate.cache_keys()))
+    low_bound = min(discovered)
+    high_bound = max(discovered)
+    target_points = max(args.num_points, len(discovered))
+
+    for lam in geometric_int_space(low_bound, high_bound, target_points):
+        evaluate(lam)
+
+    # If geometric spacing collapsed to fewer unique integers, fill largest gaps.
+    while len(evaluate.cache_keys()) < target_points:
+        ordered = unique_ints_sorted(list(evaluate.cache_keys()))
+        if len(ordered) < 2:
+            break
+        gaps = sorted(
+            ((ordered[i + 1] - ordered[i], ordered[i], ordered[i + 1]) for i in range(len(ordered) - 1)),
+            reverse=True,
+        )
+        inserted = False
+        for _, a, b in gaps:
+            cand = int(round(math.sqrt(a * b)))
+            if cand in (a, b):
+                cand = (a + b) // 2
+            cand = clamp_int(cand, args.min_lambda, args.max_lambda)
+            if cand not in evaluate.cache_keys():
+                evaluate(cand)
+                inserted = True
+                break
+        if not inserted:
+            break
+
+    return unique_ints_sorted(list(evaluate.cache_keys()))
+
+
+def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None:
+    fieldnames = [
+        "lambda",
+        "episodes",
+        "occupancy_mean_pct",
+        "occupancy_std_pct",
+        "completion_rate_mean_pct",
+        "completion_rate_std_pct",
+        "agent_avg_wait_hours",
+        "baseline_avg_wait_hours",
+        "wait_delta_hours",
+        "savings_mean_eur",
+        "savings_std_eur",
+        "savings_off_mean_eur",
+        "savings_off_std_eur",
+        "effective_savings_mean",
+        "effective_savings_std",
+        "effective_savings_off_mean",
+        "effective_savings_off_std",
+        "annual_total_savings_eur",
+        "annual_total_savings_off_eur",
+    ]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for s in sorted(stats_by_lambda, key=lambda x: x.lambda_value):
+            writer.writerow(
+                {
+                    "lambda": s.lambda_value,
+                    "episodes": s.episodes,
+                    "occupancy_mean_pct": f"{s.occupancy_mean:.6f}",
+                    "occupancy_std_pct": f"{s.occupancy_std:.6f}",
+                    "completion_rate_mean_pct": f"{s.completion_rate_mean:.6f}",
+                    "completion_rate_std_pct": f"{s.completion_rate_std:.6f}",
+                    "agent_avg_wait_hours": f"{s.agent_avg_wait_hours:.6f}",
+                    "baseline_avg_wait_hours": f"{s.baseline_avg_wait_hours:.6f}",
+                    "wait_delta_hours": f"{s.wait_delta_hours:.6f}",
+                    "savings_mean_eur": f"{s.savings_mean:.6f}",
+                    "savings_std_eur": f"{s.savings_std:.6f}",
+                    "savings_off_mean_eur": f"{s.savings_off_mean:.6f}",
+                    "savings_off_std_eur": f"{s.savings_off_std:.6f}",
+                    "effective_savings_mean": f"{s.effective_savings_mean:.6f}",
+                    "effective_savings_std": f"{s.effective_savings_std:.6f}",
+                    "effective_savings_off_mean": f"{s.effective_savings_off_mean:.6f}",
+                    "effective_savings_off_std": f"{s.effective_savings_off_std:.6f}",
+                    "annual_total_savings_eur": f"{s.annual_total_savings:.6f}",
+                    "annual_total_savings_off_eur": f"{s.annual_total_savings_off:.6f}",
+                }
+            )
+
+
+def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None:
+    ordered = sorted(stats_by_lambda, key=lambda x: x.lambda_value)
+
+    lambdas = np.array([s.lambda_value for s in ordered], dtype=float)
+    occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
+    occ_std = np.array([s.occupancy_std for s in ordered], dtype=float)
+    sav_mean = np.array([s.savings_mean for s in ordered], dtype=float)
+    sav_std = np.array([s.savings_std for s in ordered], dtype=float)
+    sav_off_mean = np.array([s.savings_off_mean for s in ordered], dtype=float)
+    sav_off_std = np.array([s.savings_off_std for s in ordered], dtype=float)
+    completion_mean = np.array([s.completion_rate_mean for s in ordered], dtype=float)
+    completion_std = np.array([s.completion_rate_std for s in ordered], dtype=float)
+    eff_sav_mean = np.array([s.effective_savings_mean for s in ordered], dtype=float)
+    eff_sav_std = np.array([s.effective_savings_std for s in ordered], dtype=float)
+    eff_sav_off_mean = np.array([s.effective_savings_off_mean for s in ordered], dtype=float)
+    eff_sav_off_std = np.array([s.effective_savings_off_std for s in ordered], dtype=float)
+
+    fig, axes = plt.subplots(2, 3, figsize=(20, 12), constrained_layout=True)
+    ax00, ax01, ax02 = axes[0]
+    ax10, ax11, ax12 = axes[1]
+
+    # Panel 1: lambda vs occupancy.
+    ax00.errorbar(
+        lambdas,
+        occ_mean,
+        yerr=occ_std,
+        fmt="o",
+        capsize=3,
+        color="tab:blue",
+        ecolor="tab:blue",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(lambdas, occ_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(lambdas)), float(np.max(lambdas)), 250)
+        ax00.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:orange", lw=2, label=f"poly deg {deg}")
+    ax00.set_title("Lambda vs Occupancy/Episode")
+    ax00.set_xlabel("Poisson lambda (arrivals)")
+    ax00.set_ylabel("Agent Occupancy (Nodes, %) / Episode")
+    ax00.grid(alpha=0.3)
+    ax00.legend()
+
+    # Panel 2: occupancy vs savings.
+    ax01.errorbar(
+        occ_mean,
+        sav_mean,
+        xerr=occ_std,
+        yerr=sav_std,
+        fmt="o",
+        capsize=3,
+        color="tab:green",
+        ecolor="tab:green",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(occ_mean, sav_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(occ_mean)), float(np.max(occ_mean)), 250)
+        ax01.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:red", lw=2, label=f"poly deg {deg}")
+    ax01.set_title("Occupancy/Episode vs Savings/Episode")
+    ax01.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax01.set_ylabel("Savings vs Baseline (EUR / Episode)")
+    ax01.grid(alpha=0.3)
+    ax01.legend()
+
+    # Panel 3: occupancy vs savings_off.
+    ax02.errorbar(
+        occ_mean,
+        sav_off_mean,
+        xerr=occ_std,
+        yerr=sav_off_std,
+        fmt="o",
+        capsize=3,
+        color="tab:purple",
+        ecolor="tab:purple",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(occ_mean, sav_off_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(occ_mean)), float(np.max(occ_mean)), 250)
+        ax02.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:brown", lw=2, label=f"poly deg {deg}")
+    ax02.set_title("Occupancy vs Savings_off/Episode")
+    ax02.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax02.set_ylabel("Savings vs Baseline_off (EUR / Episode)")
+    ax02.grid(alpha=0.3)
+    ax02.legend()
+
+    # Panel 4: lambda vs completion rate.
+    ax10.errorbar(
+        lambdas,
+        completion_mean,
+        yerr=completion_std,
+        fmt="o",
+        capsize=3,
+        color="tab:cyan",
+        ecolor="tab:cyan",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(lambdas, completion_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(lambdas)), float(np.max(lambdas)), 250)
+        ax10.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:gray", lw=2, label=f"poly deg {deg}")
+    ax10.set_title("Lambda vs Agent Completion Rate")
+    ax10.set_xlabel("Poisson lambda (arrivals)")
+    ax10.set_ylabel("Completion Rate (%)")
+    ax10.grid(alpha=0.3)
+    ax10.legend()
+
+    # Panel 5: occupancy vs effective savings.
+    ax11.errorbar(
+        occ_mean,
+        eff_sav_mean,
+        xerr=occ_std,
+        yerr=eff_sav_std,
+        fmt="o",
+        capsize=3,
+        color="tab:olive",
+        ecolor="tab:olive",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(occ_mean, eff_sav_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax11.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:red", lw=2, label=f"poly deg {deg}")
+    ax11.set_title("Occupancy vs Effective Savings")
+    ax11.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax11.set_ylabel("effective_savings")
+    ax11.grid(alpha=0.3)
+    ax11.legend()
+
+    # Panel 6: occupancy vs effective savings_off.
+    ax12.errorbar(
+        occ_mean,
+        eff_sav_off_mean,
+        xerr=occ_std,
+        yerr=eff_sav_off_std,
+        fmt="o",
+        capsize=3,
+        color="tab:pink",
+        ecolor="tab:pink",
+        label="mean +/- std",
+    )
+    coeffs, deg = polyfit_curve(occ_mean, eff_sav_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax12.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:brown", lw=2, label=f"poly deg {deg}")
+    ax12.set_title("Occupancy vs Effective Savings_off")
+    ax12.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax12.set_ylabel("effective_savings_off")
+    ax12.grid(alpha=0.3)
+    ax12.legend()
+
+    fig.savefig(path, dpi=220)
+    plt.close(fig)
+
+
+def parse_int_list(raw: str) -> list[int]:
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Sweep Poisson lambdas and fit occupancy/savings trend lines."
+    )
+
+    # Core train.py params (default values mirror the command from the request).
+    parser.add_argument("--prices", default="./data/prices_2023.csv")
+    parser.add_argument("--session", default="20260216_fix")
+    parser.add_argument("--efficiency-weight", type=float, default=0.6)
+    parser.add_argument("--price-weight", type=float, default=0.1)
+    parser.add_argument("--idle-weight", type=float, default=0.1)
+    parser.add_argument("--job-age-weight", type=float, default=0.2)
+    parser.add_argument("--drop-weight", type=float, default=0.0)
+    parser.add_argument("--eval-months", type=int, default=12)
+    parser.add_argument("--model", type=int, default=1000000)
+
+    parser.add_argument("--carry-over-state", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dashboard-hours", type=int, default=None)
+
+    parser.add_argument("--wg-duration-lambda", type=float, default=0.3)
+    parser.add_argument("--wg-nodes-lambda", type=float, default=1.0)
+    parser.add_argument("--wg-cores-lambda", type=float, default=3.0)
+    parser.add_argument("--wg-max-jobs-hour", type=int, default=70000)
+    parser.add_argument("--wg-burst-small-prob", type=float, default=0.1329)
+    parser.add_argument("--wg-burst-heavy-prob", type=float, default=0.0043)
+
+    # Lambda sweep controls.
+    parser.add_argument("--lambdas", type=str, default="", help="Explicit comma-separated lambda list. If set, adaptive selection is disabled.")
+    parser.add_argument("--reference-lambda", type=int, default=2000)
+    parser.add_argument("--min-lambda", type=int, default=100)
+    parser.add_argument("--max-lambda", type=int, default=12000)
+    parser.add_argument("--num-points", type=int, default=7, help="Target number of lambda points for adaptive sweep.")
+    parser.add_argument("--bracket-steps", type=int, default=2, help="Low/high probing steps from reference lambda.")
+    parser.add_argument("--bracket-factor", type=float, default=2.0, help="Factor for high/low probing.")
+    parser.add_argument("--target-occupancy-min", type=float, default=20.0)
+    parser.add_argument("--target-occupancy-max", type=float, default=100.0)
+    parser.add_argument("--occupancy-tolerance", type=float, default=2.0)
+
+    parser.add_argument("--out-dir", type=str, default="")
+    parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.num_points < 2:
+        parser.error("--num-points must be >= 2")
+    if args.min_lambda <= 0:
+        parser.error("--min-lambda must be > 0")
+    if args.max_lambda < args.min_lambda:
+        parser.error("--max-lambda must be >= --min-lambda")
+    if args.bracket_factor <= 1.0:
+        parser.error("--bracket-factor must be > 1")
+
+    project_root = Path(__file__).resolve().parent
+    train_py = project_root / "train.py"
+    if not train_py.exists():
+        raise FileNotFoundError(f"Could not find train.py at: {train_py}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.out_dir:
+        out_dir = Path(args.out_dir).expanduser().resolve()
+    else:
+        out_dir = project_root / "analysis" / f"lambda_occupancy_sweep_{timestamp}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir = out_dir / "logs"
+    if args.save_logs:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+    cache: dict[int, LambdaRunStats] = {}
+
+    def evaluate(lam: int) -> LambdaRunStats:
+        lam = clamp_int(lam, args.min_lambda, args.max_lambda)
+        if lam in cache:
+            return cache[lam]
+        stats, raw_output = run_lambda_eval(args, project_root, lam)
+        cache[lam] = stats
+        if args.save_logs:
+            log_path = logs_dir / f"lambda_{lam}.log"
+            log_path.write_text(raw_output)
+        return stats
+
+    # Attach cache reader for select_lambda_schedule().
+    evaluate.cache_keys = cache.keys  # type: ignore[attr-defined]
+
+    selected_lambdas = select_lambda_schedule(args, evaluate)
+    stats_ordered = [cache[l] for l in sorted(selected_lambdas)]
+
+    csv_path = out_dir / "summary.csv"
+    json_path = out_dir / "summary.json"
+    plot_path = out_dir / "trendlines.png"
+
+    write_summary_csv(csv_path, stats_ordered)
+    with json_path.open("w") as f:
+        json.dump(
+            {
+                "created_at": datetime.now().isoformat(),
+                "selected_lambdas": selected_lambdas,
+                "args": vars(args),
+                "results": [asdict(s) for s in stats_ordered],
+            },
+            f,
+            indent=2,
+        )
+    make_plot(plot_path, stats_ordered)
+
+    print("\nSweep complete.")
+    print(f"  Lambdas: {selected_lambdas}")
+    print(f"  CSV: {csv_path}")
+    print(f"  JSON: {json_path}")
+    print(f"  Plot: {plot_path}")
+
+
+if __name__ == "__main__":
+    main()
