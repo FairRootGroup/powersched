@@ -79,13 +79,13 @@ class MetricsTracker:
         self.episode_baseline_jobs_rejected_queue_full: int = 0
 
         # Time series data for plotting (episode)
-        self.episode_on_nodes = []
-        self.episode_used_nodes = []
-        self.episode_used_cores = []
-        self.episode_baseline_used_nodes = []
-        self.episode_baseline_used_cores = []
-        self.episode_job_queue_sizes = []
-        self.episode_price_stats = []
+        self.episode_on_nodes: list[int] = []
+        self.episode_used_nodes: list[int] = []
+        self.episode_used_cores: list[int] = []
+        self.episode_baseline_used_nodes: list[int] = []
+        self.episode_baseline_used_cores: list[int] = []
+        self.episode_job_queue_sizes: list[int] = []
+        self.episode_price_stats: list[float] = []
 
         self.episode_eff_rewards: list[float] = []
         self.episode_price_rewards: list[float] = []
