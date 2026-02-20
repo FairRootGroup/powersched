@@ -158,8 +158,8 @@ def make_run_stats(
     baseline_avg_wait_hours: float,
 ) -> LambdaRunStats:
     wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
-    effective_savings = safe_divide(savings * completion_rate, wait_delta_hours)
-    effective_savings_off = safe_divide(savings_off * completion_rate, wait_delta_hours)
+    effective_savings = safe_divide(savings * (completion_rate/100)**2, wait_delta_hours+1)
+    effective_savings_off = safe_divide(savings_off * (completion_rate/100)**2, wait_delta_hours+1)
     effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
     effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
     return LambdaRunStats(
@@ -323,6 +323,18 @@ def select_lambda_schedule(
     args: argparse.Namespace,
     evaluate: Callable[[int], LambdaRunStats],
 ) -> list[int]:
+    """
+    Adaptive lambda selection when --lambdas is not provided:
+    1) Start at reference lambda (clamped to min/max).
+    2) Probe downward (divide by bracket_factor) until occupancy reaches
+       target_occupancy_min (+ tolerance) or bracket_steps is exhausted.
+    3) Probe upward (multiply by bracket_factor) until occupancy reaches
+       target_occupancy_max (- tolerance) or bracket_steps is exhausted.
+    4) Fill remaining points with log spacing between discovered low/high.
+    5) If log spacing collapses due to integer rounding, insert candidates
+       into the largest gaps until num_points is reached or no new values
+       can be inserted.
+    """
     if args.lambdas:
         explicit = unique_ints_sorted(
             [clamp_int(v, args.min_lambda, args.max_lambda) for v in parse_int_list(args.lambdas)]
@@ -443,8 +455,10 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
             )
 
 
-def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None:
+def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats], fit: bool = False) -> None:
     ordered = sorted(stats_by_lambda, key=lambda x: x.lambda_value)
+    if not ordered:
+        return
 
     lambdas = np.array([s.lambda_value for s in ordered], dtype=float)
     occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
@@ -460,141 +474,146 @@ def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None:
     eff_sav_off_mean = np.array([s.effective_savings_off_mean for s in ordered], dtype=float)
     eff_sav_off_std = np.array([s.effective_savings_off_std for s in ordered], dtype=float)
 
+    lam_min = float(np.min(lambdas))
+    lam_max = float(np.max(lambdas))
+    if lam_max <= lam_min:
+        lam_max = lam_min + 1.0
+    norm = matplotlib.colors.Normalize(vmin=lam_min, vmax=lam_max)
+    cmap = plt.get_cmap("turbo")
+    point_colors = cmap(norm(lambdas))
+
+    def _error_at(arr: np.ndarray | None, idx: int) -> float | None:
+        if arr is None:
+            return None
+        v = float(arr[idx])
+        return v if np.isfinite(v) else None
+
+    def plot_colored_points(
+        ax: plt.Axes,
+        x: np.ndarray,
+        y: np.ndarray,
+        xerr: np.ndarray | None = None,
+        yerr: np.ndarray | None = None,
+    ) -> None:
+        for i, (xi, yi, c) in enumerate(zip(x, y, point_colors)):
+            if not (np.isfinite(xi) and np.isfinite(yi)):
+                continue
+            ax.errorbar(
+                float(xi),
+                float(yi),
+                xerr=_error_at(xerr, i),
+                yerr=_error_at(yerr, i),
+                fmt="o",
+                markersize=6,
+                capsize=3,
+                color=c,
+                ecolor=c,
+                elinewidth=1.2,
+                alpha=0.95,
+            )
+
     fig, axes = plt.subplots(2, 3, figsize=(20, 12), constrained_layout=True)
     ax00, ax01, ax02 = axes[0]
     ax10, ax11, ax12 = axes[1]
 
     # Panel 1: lambda vs occupancy.
-    ax00.errorbar(
-        lambdas,
-        occ_mean,
-        yerr=occ_std,
-        fmt="o",
-        capsize=3,
-        color="tab:blue",
-        ecolor="tab:blue",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(lambdas, occ_mean, max_degree=3)
+    plot_colored_points(ax00, lambdas, occ_mean, yerr=occ_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(lambdas, occ_mean, max_degree=3)
     if coeffs is not None:
         x_fit = np.linspace(float(np.min(lambdas)), float(np.max(lambdas)), 250)
-        ax00.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:orange", lw=2, label=f"poly deg {deg}")
+        ax00.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax00.set_title("Lambda vs Occupancy/Episode")
     ax00.set_xlabel("Poisson lambda (arrivals)")
     ax00.set_ylabel("Agent Occupancy (Nodes, %) / Episode")
     ax00.grid(alpha=0.3)
-    ax00.legend()
+    if coeffs is not None:
+        ax00.legend()
 
     # Panel 2: occupancy vs savings.
-    ax01.errorbar(
-        occ_mean,
-        sav_mean,
-        xerr=occ_std,
-        yerr=sav_std,
-        fmt="o",
-        capsize=3,
-        color="tab:green",
-        ecolor="tab:green",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(occ_mean, sav_mean, max_degree=3)
+    plot_colored_points(ax01, occ_mean, sav_mean, xerr=occ_std, yerr=sav_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, sav_mean, max_degree=3)
     if coeffs is not None:
-        x_fit = np.linspace(float(np.min(occ_mean)), float(np.max(occ_mean)), 250)
-        ax01.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:red", lw=2, label=f"poly deg {deg}")
+        finite = np.isfinite(occ_mean) & np.isfinite(sav_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax01.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax01.set_title("Occupancy/Episode vs Savings/Episode")
     ax01.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
     ax01.set_ylabel("Savings vs Baseline (EUR / Episode)")
     ax01.grid(alpha=0.3)
-    ax01.legend()
+    if coeffs is not None:
+        ax01.legend()
 
     # Panel 3: occupancy vs savings_off.
-    ax02.errorbar(
-        occ_mean,
-        sav_off_mean,
-        xerr=occ_std,
-        yerr=sav_off_std,
-        fmt="o",
-        capsize=3,
-        color="tab:purple",
-        ecolor="tab:purple",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(occ_mean, sav_off_mean, max_degree=3)
+    plot_colored_points(ax02, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, sav_off_mean, max_degree=3)
     if coeffs is not None:
-        x_fit = np.linspace(float(np.min(occ_mean)), float(np.max(occ_mean)), 250)
-        ax02.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:brown", lw=2, label=f"poly deg {deg}")
+        finite = np.isfinite(occ_mean) & np.isfinite(sav_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax02.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax02.set_title("Occupancy vs Savings_off/Episode")
     ax02.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
     ax02.set_ylabel("Savings vs Baseline_off (EUR / Episode)")
     ax02.grid(alpha=0.3)
-    ax02.legend()
+    if coeffs is not None:
+        ax02.legend()
 
     # Panel 4: lambda vs completion rate.
-    ax10.errorbar(
-        lambdas,
-        completion_mean,
-        yerr=completion_std,
-        fmt="o",
-        capsize=3,
-        color="tab:cyan",
-        ecolor="tab:cyan",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(lambdas, completion_mean, max_degree=3)
+    plot_colored_points(ax10, lambdas, completion_mean, yerr=completion_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(lambdas, completion_mean, max_degree=3)
     if coeffs is not None:
         x_fit = np.linspace(float(np.min(lambdas)), float(np.max(lambdas)), 250)
-        ax10.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:gray", lw=2, label=f"poly deg {deg}")
+        ax10.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax10.set_title("Lambda vs Agent Completion Rate")
     ax10.set_xlabel("Poisson lambda (arrivals)")
     ax10.set_ylabel("Completion Rate (%)")
     ax10.grid(alpha=0.3)
-    ax10.legend()
+    if coeffs is not None:
+        ax10.legend()
 
     # Panel 5: occupancy vs effective savings.
-    ax11.errorbar(
-        occ_mean,
-        eff_sav_mean,
-        xerr=occ_std,
-        yerr=eff_sav_std,
-        fmt="o",
-        capsize=3,
-        color="tab:olive",
-        ecolor="tab:olive",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(occ_mean, eff_sav_mean, max_degree=3)
+    plot_colored_points(ax11, occ_mean, eff_sav_mean, xerr=occ_std, yerr=eff_sav_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, eff_sav_mean, max_degree=3)
     if coeffs is not None:
         finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_mean)
         x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax11.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:red", lw=2, label=f"poly deg {deg}")
+        ax11.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax11.set_title("Occupancy vs Effective Savings")
     ax11.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
     ax11.set_ylabel("effective_savings")
     ax11.grid(alpha=0.3)
-    ax11.legend()
+    if coeffs is not None:
+        ax11.legend()
 
     # Panel 6: occupancy vs effective savings_off.
-    ax12.errorbar(
-        occ_mean,
-        eff_sav_off_mean,
-        xerr=occ_std,
-        yerr=eff_sav_off_std,
-        fmt="o",
-        capsize=3,
-        color="tab:pink",
-        ecolor="tab:pink",
-        label="mean +/- std",
-    )
-    coeffs, deg = polyfit_curve(occ_mean, eff_sav_off_mean, max_degree=3)
+    plot_colored_points(ax12, occ_mean, eff_sav_off_mean, xerr=occ_std, yerr=eff_sav_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, eff_sav_off_mean, max_degree=3)
     if coeffs is not None:
         finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_off_mean)
         x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax12.plot(x_fit, np.polyval(coeffs, x_fit), color="tab:brown", lw=2, label=f"poly deg {deg}")
+        ax12.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
     ax12.set_title("Occupancy vs Effective Savings_off")
     ax12.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
     ax12.set_ylabel("effective_savings_off")
     ax12.grid(alpha=0.3)
-    ax12.legend()
+    if coeffs is not None:
+        ax12.legend()
+
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), pad=0.02)
+    cbar.set_label("Poisson lambda (point color)")
 
     fig.savefig(path, dpi=220)
     plt.close(fig)
@@ -646,6 +665,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-dir", type=str, default="")
     parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
     return parser
 
 
@@ -712,7 +732,7 @@ def main() -> None:
             f,
             indent=2,
         )
-    make_plot(plot_path, stats_ordered)
+    make_plot(plot_path, stats_ordered, fit=args.fit)
 
     print("\nSweep complete.")
     print(f"  Lambdas: {selected_lambdas}")
