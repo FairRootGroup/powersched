@@ -6,3 +6,4 @@ colorama
 numpy
 pandas
 torchinfo
+setuptools<70  # tensorboard requires pkg_resources, removed in setuptools 70+

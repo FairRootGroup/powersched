@@ -4,6 +4,7 @@ import itertools
 import argparse
 import os
 import sys
+import time
 
 def generate_weight_combinations(step=0.1, fixed_weights=None):
     weights = np.linspace(0, 1, num=int(1/step) + 1, endpoint=True)
@@ -89,7 +90,7 @@ def generate_weight_combinations(step=0.1, fixed_weights=None):
 
     return combinations
 
-def run(
+def build_command(
     efficiency_weight,
     price_weight,
     idle_weight,
@@ -127,13 +128,48 @@ def run(
         command += ["--carry-over-state"]
     if seed is not None:
         command += ["--seed", str(seed)]
+    return command
 
-    print(f"executing: {command}")
+
+def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
+                     job_durations, jobs, hourly_jobs, plot_dashboard, dashboard_hours,
+                     carry_over_state, seed):
+    active = []  # list of (proc, label)
     current_env = os.environ.copy()
-    result = subprocess.run(command, text=True, env=current_env)
-    if result.returncode != 0:
-        print("Error occurred: train.py returned a non-zero exit code.")
-    return result.stdout
+
+    for combo in combinations:
+        efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
+        label = f"efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}"
+
+        # Wait until a slot is free
+        while len(active) >= max_parallel:
+            still_running = []
+            for proc, lbl in active:
+                if proc.poll() is None:
+                    still_running.append((proc, lbl))
+                else:
+                    rc = proc.returncode
+                    status = "done" if rc == 0 else f"error (rc={rc})"
+                    print(f"[run] {status}: {lbl}")
+            active = still_running
+            if len(active) >= max_parallel:
+                time.sleep(1)
+
+        command = build_command(
+            efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
+            iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
+            plot_dashboard, dashboard_hours, carry_over_state, seed,
+        )
+        print(f"[run] starting: {label}")
+        proc = subprocess.Popen(command, env=current_env)
+        active.append((proc, label))
+
+    # Wait for all remaining processes
+    for proc, label in active:
+        proc.wait()
+        rc = proc.returncode
+        status = "done" if rc == 0 else f"error (rc={rc})"
+        print(f"[run] {status}: {label}")
 
 def parse_fixed_weights(fix_weights_str, fix_values_str):
     if not fix_weights_str or not fix_values_str:
@@ -167,6 +203,7 @@ def main():
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Forward to train.py.")
     parser.add_argument("--carry-over-state", action="store_true", help="Forward to train.py to carry state across episodes.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (forwarded to train.py)")
+    parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
 
     parser.add_argument("--session", help="Session ID")
 
@@ -188,26 +225,21 @@ def main():
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
         print(f"    efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
 
-    for combo in combinations:
-        efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
-        print(f"Running with weights: efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
-        run(
-            efficiency_weight,
-            price_weight,
-            idle_weight,
-            job_age_weight,
-            drop_weight,
-            args.iter_limit_per_step,
-            args.session,
-            args.prices,
-            args.job_durations,
-            args.jobs,
-            args.hourly_jobs,
-            plot_dashboard=args.plot_dashboard,
-            dashboard_hours=args.dashboard_hours,
-            carry_over_state=args.carry_over_state,
-            seed=args.seed,
-        )
+    print(f"Running {len(combinations)} combinations with up to {args.parallel} parallel processes")
+    run_all_parallel(
+        combinations,
+        max_parallel=args.parallel,
+        iter_limit_per_step=args.iter_limit_per_step,
+        session=args.session,
+        prices=args.prices,
+        job_durations=args.job_durations,
+        jobs=args.jobs,
+        hourly_jobs=args.hourly_jobs,
+        plot_dashboard=args.plot_dashboard,
+        dashboard_hours=args.dashboard_hours,
+        carry_over_state=args.carry_over_state,
+        seed=args.seed,
+    )
 
 if __name__ == "__main__":
     main()
