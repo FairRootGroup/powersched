@@ -17,11 +17,13 @@ powersched/
 │   ├── node_management.py  # Node control logic
 │   ├── reward_calculation.py # Reward computation
 │   ├── metrics_tracker.py  # Performance metrics
-│   ├── workload_generator.py # Job generation
+│   ├── workload_generator.py # Job generation (legacy)
+│   ├── workloadgen.py      # Synthetic workload generator (no historical logs)
+│   ├── workloadgen_cli.py  # Shared CLI helpers for workload generator
 │   ├── baseline.py         # Baseline comparisons
 │   ├── prices.py           # Price modeling
 │   ├── prices_deterministic.py # Deterministic pricing
-│   ├── sampler_*.py        # Job samplers
+│   ├── sampler_*.py        # Job samplers (historical log replay)
 │   ├── callbacks.py        # Training callbacks
 │   ├── weights.py          # Reward weights
 │   ├── plot_config.py      # Plot configuration
@@ -31,13 +33,17 @@ powersched/
 │   ├── test_checkenv.py    # Environment validation
 │   ├── test_env.py         # Quick environment test
 │   ├── test_sanity_env.py  # Environment sanity checks (invariants, determinism)
+│   ├── test_sanity_workloadgen.py   # Workload generator sanity/property tests
+│   ├── test_inspect_workloadgen.py  # Distribution inspection and plotting tool
 │   ├── test_sampler_*.py   # Sampler tests
+│   ├── test_output/        # Output files from test runs (plots, etc.)
 │   └── test_*.py           # Other unit tests
 ├── .github/workflows/      # CI/CD
 │   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
 ├── data/                   # Sample data
+│   └── workload_statistics/ # Workload log analysis scripts and aggregate stats
 ├── data-internal/          # Full Slurm logs
 └── sessions/               # Training outputs
 ```
@@ -48,6 +54,7 @@ powersched/
 - **Training** (`train.py`): Main training script using stable-baselines3 PPO with tensorboard logging and model checkpointing
 - **Pricing** (`src/prices.py`, `src/prices_deterministic.py`): Electricity price modeling and data handling
 - **Samplers**: Job duration (`src/sampler_duration.py`), job characteristics (`src/sampler_jobs.py`), and hourly statistical sampler (`src/sampler_hourly.py`) sampling from real data
+- **Workload Generator** (`src/workloadgen.py`, `src/workloadgen_cli.py`): Synthetic job generator that produces configurable, deterministic job streams without relying on historical logs. Supports flat/poisson/uniform arrival modes with optional burst injectors.
 - **Plotting** (`src/plot.py`): Visualization of training progress, rewards, and cluster state
 - **Callbacks** (`src/callbacks.py`): Custom callbacks for training monitoring and logging
 - **Weights** (`src/weights.py`): Reward weight configuration and management
@@ -121,6 +128,10 @@ python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/
 python -m test.test_sanity_workloadgen
 python -m test.test_determinism_workloadgen
 
+# Workload generator inspection (distribution plots, determinism self-check)
+python -m test.test_inspect_workloadgen --workload-gen poisson --wg-poisson-lambdas4 200,10,6,24 --hours 336 --plot
+python -m test.test_inspect_workloadgen --workload-gen poisson --wg-poisson-lambdas4 200,10,6,24 --hours 336 --plot --wg-burst-small-prob 0.2 --wg-burst-heavy-prob 0.02
+
 # Price tests
 python -m test.test_price_history
 python -m test.test_prices_cycling
@@ -144,6 +155,19 @@ The system uses weighted reward components:
 - `--idle-weight` (default 0.1): Penalty weight for idle nodes
 - `--job-age-weight` (default 0.0): Penalty weight for job waiting time
 
+**Workload generator options** (pass `--workload-gen` to enable; replaces historical log samplers):
+- `--workload-gen`: Arrival mode — `flat`, `poisson`, or `uniform` (default: disabled)
+- `--wg-poisson-lambda` (default 200.0): Poisson lambda for job arrivals
+- `--wg-poisson-lambdas4`: Four-value override: `arrivals,duration,nodes,cores`
+- `--wg-max-jobs-hour` (default 1500): Hard cap on jobs per hour
+- `--wg-flat-jobs-hour` (default 200): Target jobs/hour for flat mode
+- `--wg-flat-jitter` (default 0): +/- jitter for flat arrivals
+- `--wg-flat-targets4`: Four-value flat targets: `arrivals,duration,nodes,cores`
+- `--wg-flat-jitters4`: Four-value flat jitters: `arrivals,duration,nodes,cores`
+- `--wg-uniform-ranges4`: Four-value uniform ranges: `a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max`
+- `--wg-burst-small-prob` (default 0.0): Per-hour probability of a small-job burst (additive on top of base arrivals)
+- `--wg-burst-heavy-prob` (default 0.0): Per-hour probability of a heavy-job burst (additive on top of base arrivals)
+
 Additional training options:
 - `--ent-coef` (default 0.0): Entropy coefficient for PPO loss calculation
 - `--iter-limit`: Maximum number of training iterations (1 iteration = 100K steps)
@@ -157,8 +181,10 @@ Additional training options:
 ## Data Files
 
 - `data/`: Contains job duration samples and price data
+- `data/workload_statistics/`: Aggregate workload statistics and analysis scripts (`analyze_workload_logs.py`, `workload_logs.txt`) used to calibrate workload generator parameters
 - `data-internal/`: Contains complete Slurm logs with job characteristics (nodes, cores, duration)
 - `sessions/`: Training session outputs (logs, models, plots)
+- `test/test_output/`: Output files from test runs (e.g., distribution plots from `test_inspect_workloadgen.py`)
 - Models are saved as `.zip` files every 100K steps during training
 
 ## Samplers
@@ -189,6 +215,31 @@ Statistical sampler that builds hour-of-day distributions (24 distributions, one
 - Hourly+ jobs are kept individually with rounded duration
 - `sample_aggregated()`: Samples from templates with proportional scaling based on sampled job count
 - Preserves resource profiles while reducing the number of discrete job objects
+
+## Workload Generator (`src/workloadgen.py`)
+
+A synthetic, deterministic job generator that produces configurable job streams without relying on historical Slurm logs. Key design goals:
+
+- **Deterministic**: same `seed` + same `WorkloadGenConfig` → identical job stream
+- **Controllable**: dial job rate, duration mix, node/cores mix, and stress modes
+- **No log dependency**: works independently of `data/` files
+
+### Arrival Modes
+- `flat`: constant arrivals at `flat_jobs_per_hour` ± `flat_jitter`
+- `poisson`: Poisson(λ) arrivals; each attribute (duration, nodes, cores) also sampled from Poisson with its own λ
+- `uniform`: discrete-uniform in `[uniform_min_new_jobs_per_hour, max_new_jobs_per_hour]`
+
+Job attributes (duration, nodes, cores) are sampled with the same mode as arrivals, using per-attribute lambdas/targets/jitters.
+
+### Burst Injectors (additive on top of base arrivals)
+- **Small burst** (`burst_small_prob`): each hour, with the given probability, inject many short low-resource jobs
+- **Heavy burst** (`burst_heavy_prob`): each hour, with the given probability, inject a few long high-resource jobs
+
+### CLI Integration (`src/workloadgen_cli.py`)
+Provides `add_workloadgen_args()` and `build_workloadgen_config()` — shared by `train.py`, `test_sanity_env.py`, and `test_inspect_workloadgen.py` to avoid config duplication.
+
+### Inspection Tool (`test/test_inspect_workloadgen.py`)
+Interactive script that runs the generator for a configurable number of hours, prints distribution statistics, runs a determinism self-check, and optionally saves distribution plots to `test/test_output/`.
 
 ## Architecture Notes
 
