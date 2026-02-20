@@ -136,6 +136,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
                      carry_over_state, seed):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
+    failure_count = 0
 
     for combo in combinations:
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
@@ -149,6 +150,8 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
                     still_running.append((proc, lbl))
                 else:
                     rc = proc.returncode
+                    if rc != 0:
+                        failure_count += 1
                     status = "done" if rc == 0 else f"error (rc={rc})"
                     print(f"[run] {status}: {lbl}")
             active = still_running
@@ -168,8 +171,12 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
     for proc, label in active:
         proc.wait()
         rc = proc.returncode
+        if rc != 0:
+            failure_count += 1
         status = "done" if rc == 0 else f"error (rc={rc})"
         print(f"[run] {status}: {label}")
+
+    return failure_count
 
 def parse_fixed_weights(fix_weights_str, fix_values_str):
     if not fix_weights_str or not fix_values_str:
@@ -229,7 +236,7 @@ def main():
         print(f"    efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
 
     print(f"Running {len(combinations)} combinations with up to {args.parallel} parallel processes")
-    run_all_parallel(
+    failures = run_all_parallel(
         combinations,
         max_parallel=args.parallel,
         iter_limit_per_step=args.iter_limit_per_step,
@@ -243,6 +250,9 @@ def main():
         carry_over_state=args.carry_over_state,
         seed=args.seed,
     )
+    if failures:
+        print(f"{failures} run(s) failed")
+        sys.exit(failures)
 
 if __name__ == "__main__":
     main()
