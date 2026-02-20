@@ -209,6 +209,9 @@ def main():
 
     args = parser.parse_args()
 
+    if args.parallel < 1:
+        parser.error("--parallel must be at least 1")
+
     try:
         fixed_weights = parse_fixed_weights(args.fix_weights, args.fix_values)
     except ValueError as e:

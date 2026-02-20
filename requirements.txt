@@ -6,4 +6,4 @@ colorama
 numpy
 pandas
 torchinfo
-setuptools<70  # tensorboard requires pkg_resources, removed in setuptools 70+
+setuptools>=78.1.1,<82  # tensorboard requires pkg_resources, removed in setuptools 82+; >=78.1.1 covers GHSA-cx63-2mw6-8hw5 and GHSA-5rjg-fvgr-3xxf
