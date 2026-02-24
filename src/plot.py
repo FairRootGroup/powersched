@@ -1,9 +1,17 @@
-import matplotlib.pyplot as plt
-from datetime import datetime
-import numpy as np
-import os
+from __future__ import annotations
 
-def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
+import os
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+if TYPE_CHECKING:
+    from src.environment import ComputeClusterEnv
+
+
+def plot(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: bool = True, show: bool = True, suffix: int = 0) -> None:
     hours = np.arange(num_hours)
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
@@ -102,7 +110,8 @@ def plot(env, num_hours, max_nodes, save=True, show=True, suffix=""):
 
     plt.close(fig)
 
-def plot_reward(env, num_used_nodes, num_idle_nodes, current_price, num_off_nodes, average_future_price, num_processed_jobs, num_node_changes, job_queue_2d, max_nodes):
+
+def plot_reward(env: ComputeClusterEnv, num_used_nodes: int, num_idle_nodes: int, current_price: float, num_off_nodes: int, average_future_price: float, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray, max_nodes: int) -> None:
     used_nodes, idle_nodes, rewards = [], [], []
     noop_print = lambda *args: None
 
@@ -145,7 +154,8 @@ def plot_reward(env, num_used_nodes, num_idle_nodes, current_price, num_off_node
     plt.tight_layout()
     plt.show()
 
-def plot_cumulative_savings(env, episode_costs, session_dir, months=12, save=True, show=True):
+
+def plot_cumulative_savings(env: ComputeClusterEnv, episode_costs: list[dict[str, float | int]], session_dir: str, months: int = 12, save: bool = True, show: bool = True) -> dict[str, float] | None:
     """
     Plot cumulative cost savings over time from multiple episodes.
 

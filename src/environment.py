@@ -1,5 +1,6 @@
 import time
 from collections import deque
+from typing import Any
 
 from gymnasium import spaces
 import gymnasium as gym
@@ -13,6 +14,7 @@ from src.plot import plot, plot_reward
 from src.sampler_duration import durations_sampler
 from src.sampler_jobs import DurationSampler
 from src.sampler_hourly import hourly_sampler
+from src.workloadgen import WorkloadGenerator
 
 # Import refactored modules
 from src.config import (
@@ -44,33 +46,33 @@ class ComputeClusterEnv(gym.Env):
 
     metadata = {'render.modes': ['human', 'none']}
 
-    def render(self, mode='human'):
+    def render(self, mode: str = 'human') -> None:
         self.render_mode = mode
 
-    def set_progress(self, iterations):
+    def set_progress(self, iterations: int) -> None:
         self.current_step = iterations * self.steps_per_iteration
         self.current_episode = self.current_step // EPISODE_HOURS
         print(f"Resuming training... step: {self.current_step}, episode: {self.current_episode}, hour: {self.metrics.current_hour}")
         self.next_plot_save = iterations * self.steps_per_iteration + EPISODE_HOURS
 
-    def env_print(self, *args):
+    def env_print(self, *args: Any) -> None:
         """Prints only if the render mode is 'human'."""
         if self.render_mode == 'human':
             print(*args)
 
     def __init__(self,
                  weights: Weights,
-                 session,
-                 render_mode,
-                 external_prices,
-                 external_durations,
-                 external_jobs,
-                 external_hourly_jobs,
+                 session: str,
+                 render_mode: str,
+                 external_prices: str | None,
+                 external_durations: str | None,
+                 external_jobs: str | None,
+                 external_hourly_jobs: str | None,
                  plot_config: PlotConfig,
-                 steps_per_iteration,
-                 evaluation_mode=False,
-                 workload_gen=None,
-                 carry_over_state=False):
+                 steps_per_iteration: int,
+                 evaluation_mode: bool = False,
+                 workload_gen: WorkloadGenerator | None = None,
+                 carry_over_state: bool = False) -> None:
         super().__init__()
 
         self.weights = weights
@@ -164,7 +166,7 @@ class ComputeClusterEnv(gym.Env):
             'backlog_size': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
         })
 
-    def _reset_timeline_state(self, start_index):
+    def _reset_timeline_state(self, start_index: int) -> None:
         self.prices.reset(start_index=start_index)
 
         self.state = {
@@ -207,11 +209,11 @@ class ComputeClusterEnv(gym.Env):
         self._queue_backlog_version = 0
         self._cached_queue_backlog_version = -1
 
-    def _mark_queue_backlog_mutation(self):
+    def _mark_queue_backlog_mutation(self) -> None:
         """Invalidate pending-job stats cache after queue/backlog content changes."""
         self._queue_backlog_version += 1
 
-    def _update_pending_job_stats(self, job_queue_2d):
+    def _update_pending_job_stats(self, job_queue_2d: np.ndarray) -> None:
         """Update summary statistics for all outstanding jobs (queue + backlog)."""
         # Fast path: skip recalculation if queue/backlog version is unchanged.
         if self._cached_queue_backlog_version == self._queue_backlog_version:
@@ -263,7 +265,7 @@ class ComputeClusterEnv(gym.Env):
         # Cache the queue/backlog version for next step.
         self._cached_queue_backlog_version = self._queue_backlog_version
 
-    def reset(self, seed=None, options=None):
+    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[dict[str, np.ndarray], dict]:
         if options is None:
             options = {}
 
@@ -306,7 +308,7 @@ class ComputeClusterEnv(gym.Env):
 
         return self.state, {}
 
-    def step(self, action):
+    def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         self.current_step += 1
         self.metrics.current_hour += 1
         self.metrics.total_time_hours += 1

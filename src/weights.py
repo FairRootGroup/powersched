@@ -9,8 +9,8 @@ class Weights:
     job_age_weight: float
     drop_weight: float
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Weights: efficiency={self.efficiency_weight}, price={self.price_weight}, idle={self.idle_weight}, job_age={self.job_age_weight}, drop={self.drop_weight}. sum={self.sum():.2f}"
 
-    def sum(self):
+    def sum(self) -> float:
         return round(np.sum([self.efficiency_weight, self.price_weight, self.idle_weight, self.job_age_weight, self.drop_weight]), 2)

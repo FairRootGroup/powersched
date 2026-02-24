@@ -1,11 +1,18 @@
+from __future__ import annotations
+
+import os
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from datetime import datetime
 import numpy as np
-import os
+
+if TYPE_CHECKING:
+    from src.environment import ComputeClusterEnv
 
 
-def _as_series(x, n):
+def _as_series(x: np.ndarray | list[float] | None, n: int) -> np.ndarray | None:
     if x is None:
         return None
     a = np.asarray(x, dtype=float).reshape(-1)
@@ -16,7 +23,7 @@ def _as_series(x, n):
     return out
 
 
-def _compute_cumulative_savings(episode_costs):
+def _compute_cumulative_savings(episode_costs: list[dict[str, float | int]]) -> dict[str, np.ndarray] | None:
     """
     episode_costs: list of dicts with keys:
       agent_cost, baseline_cost, baseline_cost_off
@@ -78,7 +85,7 @@ def _compute_cumulative_savings(episode_costs):
     }
 
 
-def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, show=True, suffix=""):
+def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, episode_costs: list[dict[str, float | int]] | None = None, save: bool = True, show: bool = True, suffix: int | str = "") -> None:
     """
     Per-hour dashboard: price, nodes, queue, reward components, etc.
     NOTE: episode_costs is accepted for backwards compatibility but NOT used here anymore.
@@ -126,7 +133,7 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     # ----- collect per-hour panels (one / panel, optional overlay) -----
     panels = []
 
-    def add_panel(title, series, ylabel, ylim=None, overlay=None):
+    def add_panel(title: str, series: np.ndarray | list[float] | None, ylabel: str, ylim: tuple[float, float] | None = None, overlay: tuple[str, np.ndarray | list[float] | None] | None = None) -> None:
         """
         overlay: optional (label, series2)
         """
@@ -234,7 +241,7 @@ def plot_dashboard(env, num_hours, max_nodes, episode_costs=None, save=True, sho
     plt.close(fig)
 
 
-def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, show=True, suffix=""):
+def plot_cumulative_savings(env: ComputeClusterEnv, episode_costs: list[dict[str, float | int]], session_dir: str | None = None, save: bool = True, show: bool = True, suffix: int | str = "") -> dict[str, float] | None:
     """
     Separate canvas for long-term cumulative savings & monthly % savings.
     """
@@ -328,7 +335,7 @@ def plot_cumulative_savings(env, episode_costs, session_dir=None, save=True, sho
     }
 
 
-def plot_episode_summary(env, episode_costs, session_dir=None, save=True, show=True, suffix=""):
+def plot_episode_summary(env: ComputeClusterEnv, episode_costs: list[dict[str, float | int]], session_dir: str | None = None, save: bool = True, show: bool = True, suffix: int | str = "") -> dict[str, float] | None:
     """
     Per-episode summary: costs, avg wait time, completion rate.
     """

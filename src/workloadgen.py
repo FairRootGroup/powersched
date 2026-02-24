@@ -20,7 +20,6 @@ Soft (nice to have):
 
 
 from dataclasses import dataclass, replace
-from typing import List, Optional
 import numpy as np
 
 
@@ -38,14 +37,14 @@ class WorkloadGenConfig:
     uniform_min_new_jobs_per_hour: int = 0
     max_new_jobs_per_hour: int = 1500
     poisson_lambda: float = 200.0
-    poisson_lambda_duration: Optional[float] = None
-    poisson_lambda_nodes: Optional[float] = None
-    poisson_lambda_cores: Optional[float] = None
+    poisson_lambda_duration: float | None = None
+    poisson_lambda_nodes: float | None = None
+    poisson_lambda_cores: float | None = None
     flat_jobs_per_hour: int = 200   # target arrivals for flat mode
     flat_jitter: int = 0           # +/- jitter; 0 => perfectly flat
-    flat_duration_target: Optional[int] = None
-    flat_nodes_target: Optional[int] = None
-    flat_cores_target: Optional[int] = None
+    flat_duration_target: int | None = None
+    flat_nodes_target: int | None = None
+    flat_cores_target: int | None = None
     flat_duration_jitter: int = 0
     flat_nodes_jitter: int = 0
     flat_cores_jitter: int = 0
@@ -83,11 +82,11 @@ class WorkloadGenConfig:
     max_cores: int = 96
 
     # optional hard cap safety (useful if someone sets poisson_lambda insane)
-    hard_cap_jobs: Optional[int] = None
+    hard_cap_jobs: int | None = None
 
 
 class WorkloadGenerator:
-    def __init__(self, cfg: WorkloadGenConfig):
+    def __init__(self, cfg: WorkloadGenConfig) -> None:
         arrivals = cfg.arrivals.lower().strip()
         if arrivals not in ("flat", "poisson", "uniform"):
             raise ValueError(f"arrivals must be 'flat', 'uniform' or 'poisson', got: {cfg.arrivals}")
@@ -249,7 +248,7 @@ class WorkloadGenerator:
             k = 0
         return k
 
-    def sample(self, hour_idx: int, rng: np.random.Generator) -> List[JobSpec]:
+    def sample(self, hour_idx: int, rng: np.random.Generator) -> list[JobSpec]:
         # hour_idx currently unused, but we keep it to enable daily patterns later.
         base_n = self._sample_job_count(rng)
         mode = self.cfg.arrivals

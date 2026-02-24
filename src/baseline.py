@@ -1,5 +1,8 @@
 """Baseline comparison simulation logic for the PowerSched environment."""
 
+from collections import deque
+from typing import Any, Callable
+
 import numpy as np
 from src.job_management import (
     process_ongoing_jobs,
@@ -8,13 +11,25 @@ from src.job_management import (
     fill_queue_from_backlog,
     age_backlog_queue,
 )
+from src.metrics_tracker import MetricsTracker
 from src.reward_calculation import power_cost
 
 
-def baseline_step(baseline_state, baseline_cores_available, baseline_running_jobs,
-                 current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes,
-                 new_jobs_cores, baseline_next_empty_slot, next_job_id, metrics, env_print,
-                 baseline_backlog_queue):
+def baseline_step(
+        baseline_state: dict[str, np.ndarray],
+        baseline_cores_available: np.ndarray,
+        baseline_running_jobs: dict[int, dict[str, Any]],
+        current_price: float,
+        new_jobs_count: int,
+        new_jobs_durations: list[int],
+        new_jobs_nodes: list[int],
+        new_jobs_cores: list[int],
+        baseline_next_empty_slot: int,
+        next_job_id: int,
+        metrics: MetricsTracker,
+        env_print: Callable[..., None],
+        baseline_backlog_queue: deque,
+) -> tuple[float, float, int, int]:
     """
     Run one step of the baseline simulation for comparison.
 

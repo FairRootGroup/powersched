@@ -1,13 +1,18 @@
 """Reward calculation and normalization logic for the PowerSched environment."""
 
+from collections.abc import Callable
+
 import numpy as np
+
 from src.config import (
     COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE,
-    PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, MAX_QUEUE_SIZE, WEEK_HOURS
+    PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, WEEK_HOURS
 )
+from src.prices_deterministic import Prices
+from src.weights import Weights
 
 
-def power_cost(num_used_nodes, num_idle_nodes, current_price):
+def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -> float:
     """
     Calculate power cost based on node usage and current electricity price.
 
@@ -28,7 +33,7 @@ def power_cost(num_used_nodes, num_idle_nodes, current_price):
 class RewardCalculator:
     """Calculates rewards with pre-computed normalization bounds."""
 
-    def __init__(self, prices):
+    def __init__(self, prices: Prices) -> None:
         """
         Initialize reward calculator with normalization bounds.
 
@@ -38,7 +43,7 @@ class RewardCalculator:
         self.prices = prices
         self._compute_bounds()
 
-    def _compute_bounds(self):
+    def _compute_bounds(self) -> None:
         """Compute min/max bounds for reward normalization."""
         # Efficiency bounds
         cost_for_min_efficiency = power_cost(0, MAX_NODES, self.prices.MAX_PRICE)
@@ -60,18 +65,18 @@ class RewardCalculator:
         self._max_job_age_penalty = 1.0
 
     @staticmethod
-    def _normalize(current, minimum, maximum):
+    def _normalize(current: float, minimum: float, maximum: float) -> float:
         """Normalize a value to [0, 1] range."""
         if maximum == minimum:
             return 0.5  # Avoid division by zero
         return (current - minimum) / (maximum - minimum)
 
     @staticmethod
-    def _reward_efficiency(num_used_nodes, total_cost):
+    def _reward_efficiency(num_used_nodes: int, total_cost: float) -> float:
         """Calculate efficiency reward: work done per unit cost."""
         return num_used_nodes / (total_cost + 1e-6)
 
-    def _reward_efficiency_normalized(self, num_used_nodes, num_idle_nodes, num_unprocessed_jobs, total_cost):
+    def _reward_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int, total_cost: float) -> float:
         """Calculate normalized efficiency reward [0, 1]."""
         if num_used_nodes + num_idle_nodes == 0:
             if num_unprocessed_jobs == 0:
@@ -82,7 +87,7 @@ class RewardCalculator:
             current_reward = self._reward_efficiency(num_used_nodes, total_cost)
             return self._normalize(current_reward, self._min_efficiency_reward, self._max_efficiency_reward)
 
-    def _reward_price(self, current_price, average_future_price, num_processed_jobs):
+    def _reward_price(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
         """Calculate price-based reward for scheduling jobs at favorable prices."""
         history_avg, future_avg = self.prices.get_price_context()
 
@@ -96,7 +101,7 @@ class RewardCalculator:
 
         return price_diff * num_processed_jobs
 
-    def _reward_price_normalized(self, current_price, average_future_price, num_processed_jobs):
+    def _reward_price_normalized(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
         """Calculate normalized price reward [0, 1]."""
         if num_processed_jobs == 0:
             return 0
@@ -104,18 +109,18 @@ class RewardCalculator:
         return self._normalize(current_reward, self._min_price_reward, self._max_price_reward)
 
     @staticmethod
-    def _penalty_idle(num_idle_nodes):
+    def _penalty_idle(num_idle_nodes: int) -> float:
         """Calculate penalty for idle nodes."""
         return PENALTY_IDLE_NODE * num_idle_nodes
 
-    def _penalty_idle_normalized(self, num_idle_nodes):
+    def _penalty_idle_normalized(self, num_idle_nodes: int) -> float:
         """Calculate normalized idle penalty [-1, 0]."""
         current_penalty = self._penalty_idle(num_idle_nodes)
         normalized_penalty = -self._normalize(current_penalty, self._min_idle_penalty, self._max_idle_penalty)
         return np.clip(normalized_penalty, -1, 0)
 
     @staticmethod
-    def _penalty_job_age(num_off_nodes, job_queue_2d):
+    def _penalty_job_age(num_off_nodes: int, job_queue_2d: np.ndarray) -> float:
         """Calculate saturated penalty for jobs waiting in queue when nodes are off."""
         job_age_penalty = 0.0
         if num_off_nodes > 0:
@@ -132,7 +137,7 @@ class RewardCalculator:
                 job_age_penalty = factor
         return job_age_penalty
 
-    def _penalty_job_age_normalized(self, num_off_nodes, job_queue_2d):
+    def _penalty_job_age_normalized(self, num_off_nodes: int, job_queue_2d: np.ndarray) -> float:
         """Calculate normalized job age penalty [-1, 0]."""
         current_penalty = self._penalty_job_age(num_off_nodes, job_queue_2d)
         # _penalty_job_age already returns [0, 1]; negate to get [-1, 0]
@@ -142,19 +147,14 @@ class RewardCalculator:
 
     def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:
         '''Redefine meaning of "efficiency". Use purely as "energy efficiency", aka: How much of the energy (in MW) which is currently needed, gets used for work.
-        NOTE: Original efficiency function was doing 3 things at once. 1. Handled Blackout logic, with (2.) penalty-ish reward delay for unprocessed jobs, while blackout. 
-        But this log1p function would start to become "harsh" only for a very high number of unprocessed. This rewarded shutting everything off. 
-        3. rewarded used/cost, but cost was defined in units of price. Price reward should handle this solely, otherwise double counting. 
+        NOTE: Original efficiency function was doing 3 things at once. 1. Handled Blackout logic, with (2.) penalty-ish reward delay for unprocessed jobs, while blackout.
+        But this log1p function would start to become "harsh" only for a very high number of unprocessed. This rewarded shutting everything off.
+        3. rewarded used/cost, but cost was defined in units of price. Price reward should handle this solely, otherwise double counting.
         Hence, here new efficiency definition.'''
-        used = float(num_used_nodes)
-        idle = float(num_idle_nodes)
-        p_used = float(COST_USED_MW)
-        p_idle = float(COST_IDLE_MW)
-
-        total_work = used * p_used + idle * p_idle
+        total_work = num_used_nodes * COST_USED_MW + num_idle_nodes * COST_IDLE_MW
         if total_work <= 0.0:
             return 0.0  # nothing on => no "efficiency" signal
-        return float(np.clip((used * p_used) / total_work, 0.0, 1.0))
+        return float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))
 
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
@@ -163,22 +163,22 @@ class RewardCalculator:
         """
         BLACKOUT_QUEUE_THRESHOLD = 10  # jobs waiting until penalty saturates to -1
         SATURATION_FACTOR = 2
-        on_nodes = int(num_used_nodes) + int(num_idle_nodes)
-        queue_waiting = int(num_unprocessed_jobs)
+        on_nodes = num_used_nodes + num_idle_nodes
 
         if on_nodes != 0:
             return 0.0  # only care about full blackout
 
-        if queue_waiting <= 0:
+        if num_unprocessed_jobs <= 0:
             return 1.0  # correct blackout
 
-        ratio = queue_waiting / float(max(BLACKOUT_QUEUE_THRESHOLD, 1))
+        ratio = num_unprocessed_jobs / max(BLACKOUT_QUEUE_THRESHOLD, 1)
         penalty = np.exp(-ratio * SATURATION_FACTOR) - 1.0
         return float(np.clip(penalty, -1.0, 0.0))
 
-    def calculate(self, num_used_nodes, num_idle_nodes, current_price, average_future_price,
-                  num_off_nodes, num_processed_jobs, num_node_changes, job_queue_2d,
-                  num_unprocessed_jobs, weights, num_dropped_this_step, env_print):
+    def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
+                  num_off_nodes: int, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,
+                  num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
+                  env_print: Callable[[str], None]) -> tuple[float, float, float, float, float, float]:
         """
         Calculate total reward by aggregating weighted components.
 
