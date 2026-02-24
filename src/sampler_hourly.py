@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 import re
 import math
 from collections import defaultdict
+from typing import Any
+
 import numpy as np
 
-class HourlySampler:
-    def __init__(self):
-        self.hour_distributions = {}
-        self.hourly_templates = {}  # Precalculated aggregated hourly job templates
-        self.initialized = False
-        self.aggregation_initialized = False
 
-    def parse_jobs(self, filepath):
+class HourlySampler:
+    def __init__(self) -> None:
+        self.hour_distributions: dict[int, dict[str, np.ndarray]] = {}
+        self.hourly_templates: dict[int, dict[str, Any]] = {}  # Precalculated aggregated hourly job templates
+        self.initialized: bool = False
+        self.aggregation_initialized: bool = False
+
+    def parse_jobs(self, filepath: str) -> None:
         """Parse Slurm log file and build hourly distributions."""
         if not filepath:
             print("No jobs file path provided.")
@@ -24,15 +29,15 @@ class HourlySampler:
         job_lines = [line for line in lines[2:] if line.strip() and not line.strip().startswith('-')]
 
         # Collect jobs by hour of day (0-23)
-        hourly_jobs = defaultdict(list)
-        hourly_job_counts = defaultdict(list)
+        hourly_jobs: defaultdict[int, list[dict[str, int]]] = defaultdict(list)
+        hourly_job_counts: defaultdict[int, list[int]] = defaultdict(list)
 
         # Track which hours have data (to calculate zero-job hours properly)
-        hours_with_data = defaultdict(set)
+        hours_with_data: defaultdict[str, set[int]] = defaultdict(set)
 
         # Count jobs per hour for each date to get distribution of job counts
         # This includes zero-job hours
-        job_counts_by_hour = defaultdict(lambda: defaultdict(int))
+        job_counts_by_hour: defaultdict[str, defaultdict[int, int]] = defaultdict(lambda: defaultdict(int))
 
         # Parse all job lines (single pass)
         for line in job_lines:
@@ -63,10 +68,10 @@ class HourlySampler:
 
         # Build distributions for each hour of day (0-23)
         for hour in range(24):
-            durations = []
-            nodes = []
-            cores_per_node = []
-            job_counts = []
+            durations: list[int] = []
+            nodes: list[int] = []
+            cores_per_node: list[int] = []
+            job_counts: list[int] = []
 
             # Collect job characteristics for this hour
             for job in hourly_jobs[hour]:
@@ -100,7 +105,7 @@ class HourlySampler:
             zero_pct = (np.count_nonzero(dist["job_count"] == 0) / len(dist["job_count"]) * 100) if len(dist["job_count"]) > 0 else 0
             print(f"  Hour {hour:2d}: avg={avg_count:.1f} jobs/hour, {zero_pct:.0f}% zero-job samples, {len(dist['durations'])} total jobs")
 
-    def sample(self, hour_of_day: int, rng):
+    def sample(self, hour_of_day: int, rng: np.random.Generator) -> list[dict[str, int]]:
         """
         Sample jobs for a given hour of day.
 
@@ -134,12 +139,12 @@ class HourlySampler:
             for d, n, c in zip(durations, nodes, cores)
         ]
 
-    def get_stats(self):
+    def get_stats(self) -> dict[int, dict[str, float]]:
         """Return summary statistics of the sampler."""
         if not self.initialized:
             raise RuntimeError("Sampler not initialized. Call parse_jobs() first.")
 
-        stats = {}
+        stats: dict[int, dict[str, float]] = {}
         for hour in range(24):
             dist = self.hour_distributions[hour]
             stats[hour] = {
@@ -153,7 +158,7 @@ class HourlySampler:
             }
         return stats
 
-    def precalculate_hourly_templates(self, cores_per_node: int, max_nodes_per_job: int, verbose: bool = True):
+    def precalculate_hourly_templates(self, cores_per_node: int, max_nodes_per_job: int, verbose: bool = True) -> None:
         """
         Precalculate aggregated hourly job templates for each hour of day.
 
@@ -188,8 +193,8 @@ class HourlySampler:
 
             # Separate sub-hour and hourly+ jobs
             # Sub-hour jobs are aggregated by resource profile
-            sub_hour_bins = {}  # key: (nodes, cores) -> total_minutes, count
-            hourly_jobs = []    # jobs >= 1 hour kept individually
+            sub_hour_bins: dict[tuple[int, int], dict[str, int]] = {}  # key: (nodes, cores) -> total_minutes, count
+            hourly_jobs: list[dict[str, int]] = []    # jobs >= 1 hour kept individually
 
             durations = dist["durations"]
             nodes = dist["nodes"]
@@ -222,8 +227,8 @@ class HourlySampler:
 
             # Convert sub-hour bins to hourly templates
             # Each bin becomes ceil(total_minutes / 60) jobs with duration=1 hour
-            templates = []
-            original_job_counts = []
+            templates: list[dict[str, int]] = []
+            original_job_counts: list[int] = []
 
             for (n_nodes, n_cores), bin_data in sub_hour_bins.items():
                 # Number of 1-hour jobs needed to represent this work
@@ -269,7 +274,7 @@ class HourlySampler:
                       f"({tmpl['sub_hour_bins']} sub-hour bins, {tmpl['hourly_jobs']} hourly+ jobs)")
             print(f"  Total: {total_orig} jobs -> {total_templates} templates")
 
-    def sample_aggregated(self, hour_of_day: int, rng):
+    def sample_aggregated(self, hour_of_day: int, rng: np.random.Generator) -> list[dict[str, int]]:
         """
         Sample aggregated hourly jobs for a given hour of day.
 
@@ -305,7 +310,7 @@ class HourlySampler:
             return []
 
         # Build result by scaling each template proportionally
-        result = []
+        result: list[dict[str, int]] = []
         for template in tmpl["templates"]:
             # For sub-hour aggregated bins, scale the hourly_job_count directly
             # (it already represents total work for all original jobs in this bin)

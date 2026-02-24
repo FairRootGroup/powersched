@@ -1,12 +1,16 @@
 """Job queue management and scheduling logic for the PowerSched environment."""
 
+from collections import deque
+from typing import Any
+
 import numpy as np
 from src.config import (
     MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE
 )
+from src.metrics_tracker import MetricsTracker
 
 
-def age_backlog_queue(backlog_queue, _metrics, _is_baseline=False):
+def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseline: bool = False) -> int:
     """
     Age jobs waiting in the backlog queue.
     NOTE: dropping based on MAX_JOB_AGE is temporarily disabled via an `if False` hotfix,
@@ -40,7 +44,7 @@ def age_backlog_queue(backlog_queue, _metrics, _is_baseline=False):
     return dropped
 
 
-def fill_queue_from_backlog(job_queue_2d, backlog_queue, next_empty_slot):
+def fill_queue_from_backlog(job_queue_2d: np.ndarray, backlog_queue: deque, next_empty_slot: int) -> tuple[int, int]:
     """
     Move jobs from backlog queue into the real queue (FIFO) until full.
     """
@@ -59,7 +63,7 @@ def fill_queue_from_backlog(job_queue_2d, backlog_queue, next_empty_slot):
     return next_empty_slot, moved
 
 
-def validate_next_empty(job_queue_2d, next_empty):
+def validate_next_empty(job_queue_2d: np.ndarray, next_empty: int) -> None:
     """Validator for debugging queue consistency."""
     n = len(job_queue_2d)
     if next_empty < n:
@@ -69,7 +73,7 @@ def validate_next_empty(job_queue_2d, next_empty):
         assert np.all(job_queue_2d[:next_empty, 0] != 0), "hole before next_empty_slot"
 
 
-def process_ongoing_jobs(nodes, cores_available, running_jobs):
+def process_ongoing_jobs(nodes: np.ndarray, cores_available: np.ndarray, running_jobs: dict[int, dict[str, Any]]) -> list[int]:
     """
     Process ongoing jobs: decrement their duration, complete finished jobs,
     and release resources.
@@ -113,8 +117,15 @@ def process_ongoing_jobs(nodes, cores_available, running_jobs):
     return completed_jobs
 
 
-def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_nodes,
-                 new_jobs_cores, next_empty_slot, backlog_queue=None):
+def add_new_jobs(
+        job_queue_2d: np.ndarray,
+        new_jobs_count: int,
+        new_jobs_durations: list[int],
+        new_jobs_nodes: list[int],
+        new_jobs_cores: list[int],
+        next_empty_slot: int,
+        backlog_queue: deque | None = None,
+) -> tuple[list[Any], int, int]:
     """
     Add new jobs to the queue.
 
@@ -167,8 +178,16 @@ def add_new_jobs(job_queue_2d, new_jobs_count, new_jobs_durations, new_jobs_node
     return new_jobs, next_empty_slot, num_dropped
 
 
-def assign_jobs_to_available_nodes(job_queue_2d, nodes, cores_available, running_jobs,
-                                   next_empty_slot, next_job_id, metrics, is_baseline=False):
+def assign_jobs_to_available_nodes(
+        job_queue_2d: np.ndarray,
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        next_empty_slot: int,
+        next_job_id: int,
+        metrics: MetricsTracker,
+        is_baseline: bool = False,
+) -> tuple[int, int, int, int]:
     """
     Assign jobs from queue to available nodes.
 

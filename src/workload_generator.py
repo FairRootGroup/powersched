@@ -1,15 +1,32 @@
 """Workload generation logic for the PowerSched environment."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 import numpy as np
 from src.config import (
     MAX_NEW_JOBS_PER_HOUR, MAX_JOB_DURATION, MIN_NODES_PER_JOB,
     MAX_NODES_PER_JOB, MIN_CORES_PER_JOB, CORES_PER_NODE
 )
 
+if TYPE_CHECKING:
+    from src.sampler_jobs import DurationSampler as JobsSampler
+    from src.sampler_hourly import HourlySampler
+    from src.sampler_duration import DurationSampler as DurationsSampler
+    from src.workloadgen import WorkloadGenerator
 
-def generate_jobs(current_hour, external_jobs, external_hourly_jobs,
-                 external_durations, workload_gen, jobs_sampler, hourly_sampler,
-                 durations_sampler, np_random):
+
+def generate_jobs(
+    current_hour: int,
+    external_jobs: str | None,
+    external_hourly_jobs: str | None,
+    external_durations: str | None,
+    workload_gen: WorkloadGenerator | None,
+    jobs_sampler: JobsSampler | None,
+    hourly_sampler: HourlySampler,
+    durations_sampler: DurationsSampler,
+    np_random: np.random.Generator,
+) -> tuple[int, list[int], list[int], list[int]]:
     """
     Generate new jobs for the current hour using configured workload source.
 
@@ -69,9 +86,9 @@ def generate_jobs(current_hour, external_jobs, external_hourly_jobs,
         else:
             new_jobs_count = np_random.integers(0, MAX_NEW_JOBS_PER_HOUR + 1)
             if external_durations:
-                new_jobs_durations = durations_sampler.sample(new_jobs_count)
+                new_jobs_durations = durations_sampler.sample(new_jobs_count).tolist()
             else:
-                new_jobs_durations = np_random.integers(1, MAX_JOB_DURATION + 1, size=new_jobs_count)
+                new_jobs_durations = np_random.integers(1, MAX_JOB_DURATION + 1, size=new_jobs_count).tolist()
             # Generate random node and core requirements
             for _ in range(new_jobs_count):
                 new_jobs_nodes.append(np_random.integers(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1))

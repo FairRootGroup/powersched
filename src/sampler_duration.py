@@ -1,13 +1,19 @@
+from __future__ import annotations
+
+from typing import Any
+
 import numpy as np
 import matplotlib.pyplot as plt
+from numpy.typing import NDArray
+
 
 class DurationSampler:
-    def __init__(self):
-        self.hours_data = None
-        self.sample_values = None
-        self.probabilities = None
+    def __init__(self) -> None:
+        self.hours_data: list[float] | None = None
+        self.sample_values: NDArray[np.float64] | None = None
+        self.probabilities: NDArray[np.float64] | None = None
 
-    def _parse_duration(self, duration_str):
+    def _parse_duration(self, duration_str: str) -> float:
         """Parse duration string in format HH:MM:SS or DD-HH:MM:SS into hours."""
         duration_str = duration_str.strip()
         days = 0
@@ -29,7 +35,7 @@ class DurationSampler:
         total_hours = days * 24 + hours + minutes/60 + seconds/3600
         return total_hours
 
-    def _create_sampler(self, hours):
+    def _create_sampler(self, hours: list[float]) -> None:
         """Create sampling function from duration data."""
         rounded_hours = np.ceil(np.maximum(hours, 1))
         max_hour = int(max(rounded_hours))
@@ -39,7 +45,7 @@ class DurationSampler:
         self.sample_values = edges[:-1]
         self.probabilities = probabilities
 
-    def init(self, file_path):
+    def init(self, file_path: str) -> DurationSampler:
         """Initialize the sampler with duration data from a file."""
         try:
             with open(file_path, 'r') as file:
@@ -53,7 +59,7 @@ class DurationSampler:
         self._create_sampler(self.hours_data)
         return self
 
-    def sample(self, n=1):
+    def sample(self, n: int = 1) -> NDArray[np.intp]:
         """
         Sample n durations from the empirical distribution.
 
@@ -69,7 +75,7 @@ class DurationSampler:
         samples = np.random.choice(self.sample_values, size=n, p=self.probabilities)
         return samples.astype(int)
 
-    def get_stats(self):
+    def get_stats(self) -> dict[str, Any]:
         """Return summary statistics of the duration data."""
         if self.hours_data is None:
             raise RuntimeError("No data available. Call init() first.")
@@ -89,7 +95,7 @@ class DurationSampler:
 
         return stats
 
-    def plot(self):
+    def plot(self) -> None:
         """Create and display a histogram of job durations."""
         if self.hours_data is None:
             raise RuntimeError("No data available. Call init() first.")

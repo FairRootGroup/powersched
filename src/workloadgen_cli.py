@@ -6,8 +6,9 @@ Provides:
 - build_workloadgen_config(): construct WorkloadGenConfig from parsed args
 """
 
+from __future__ import annotations
+
 import argparse
-from typing import Optional
 
 from src.config import (
     MAX_JOB_DURATION,
@@ -18,7 +19,7 @@ from src.config import (
 from src.workloadgen import WorkloadGenConfig
 
 
-def parse_quad_floats(raw: str):
+def parse_quad_floats(raw: str) -> tuple[float, float, float, float]:
     parts = [p.strip() for p in str(raw).split(",")]
     if len(parts) != 4:
         raise argparse.ArgumentTypeError(
@@ -30,7 +31,7 @@ def parse_quad_floats(raw: str):
         raise argparse.ArgumentTypeError(f"Invalid float in '{raw}'") from exc
 
 
-def parse_quad_ints(raw: str):
+def parse_quad_ints(raw: str) -> tuple[int, int, int, int]:
     parts = [p.strip() for p in str(raw).split(",")]
     if len(parts) != 4:
         raise argparse.ArgumentTypeError(
@@ -42,7 +43,7 @@ def parse_quad_ints(raw: str):
         raise argparse.ArgumentTypeError(f"Invalid int in '{raw}'") from exc
 
 
-def parse_quad_ranges(raw: str):
+def parse_quad_ranges(raw: str) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]:
     parts = [p.strip() for p in str(raw).split(",")]
     if len(parts) != 4:
         raise argparse.ArgumentTypeError(
@@ -84,14 +85,14 @@ def add_workloadgen_args(parser: argparse.ArgumentParser) -> None:
 
 
 def build_workloadgen_config(
-    args,
+    args: argparse.Namespace,
     min_duration: int = 1,
     max_duration: int = MAX_JOB_DURATION,
     min_nodes: int = MIN_NODES_PER_JOB,
     max_nodes: int = MAX_NODES_PER_JOB,
     min_cores: int = MIN_CORES_PER_JOB,
     max_cores: int = CORES_PER_NODE,
-) -> Optional[WorkloadGenConfig]:
+) -> WorkloadGenConfig | None:
     """Build a WorkloadGenConfig from parsed argparse *args*.
 
     Returns None if the workload generator is not enabled (--workload-gen is empty).

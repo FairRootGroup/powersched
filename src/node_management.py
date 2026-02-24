@@ -1,9 +1,18 @@
 """Node management and control logic for the PowerSched environment."""
 
+from typing import Callable
+
+import numpy as np
 from src.config import CORES_PER_NODE
 
 
-def adjust_nodes(action_type, action_magnitude, nodes, cores_available, env_print):
+def adjust_nodes(
+        action_type: int,
+        action_magnitude: int,
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        env_print: Callable[..., None],
+) -> int:
     """
     Adjust nodes based on action: turn nodes on or off.
 

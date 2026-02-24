@@ -1,6 +1,7 @@
 from src.config import EPISODE_HOURS, MAX_QUEUE_SIZE
 from stable_baselines3.common.callbacks import BaseCallback
 
+
 class ComputeClusterCallback(BaseCallback):
     """
     A custom callback that derives from ``BaseCallback``.

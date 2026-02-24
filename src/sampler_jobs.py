@@ -1,21 +1,26 @@
+from __future__ import annotations
+
 import re
 import datetime
 import math
 import random
 from collections import defaultdict
 
+Job = dict[str, int]
+
+
 class DurationSampler:
-    def __init__(self):
-        self.jobs = {}
-        self.aggregated_jobs = {}
-        self.hourly_jobs = {}
-        self.keys = []
-        self.current_position = 0
+    def __init__(self) -> None:
+        self.jobs: dict[str, list[Job]] = {}
+        self.aggregated_jobs: dict[str, list[Job]] = {}
+        self.hourly_jobs: dict[str, list[Job]] = {}
+        self.keys: list[str] = []
+        self.current_position: int = 0
 
-        self.max_new_jobs_per_hour = 0
-        self.max_job_duration = 0
+        self.max_new_jobs_per_hour: int = 0
+        self.max_job_duration: int = 0
 
-    def parse_jobs(self, filepath, bin_minutes=60):
+    def parse_jobs(self, filepath: str, bin_minutes: int = 60) -> DurationSampler | None:
         if filepath:
             with open(filepath, 'r') as f:
                 data_text = f.read()
@@ -25,8 +30,8 @@ class DurationSampler:
 
         lines = data_text.strip().split('\n')
         job_lines = [line for line in lines[2:] if line.strip() and not line.strip().startswith('-')]
-        jobs_temp = defaultdict(list)
-        all_timestamps = []
+        jobs_temp: defaultdict[str, list[Job]] = defaultdict(list)
+        all_timestamps: list[datetime.datetime] = []
 
         # Determine the time format based on bin_minutes
         if bin_minutes >= 1440:  # Daily or longer (≥ 24 hours)
@@ -114,13 +119,13 @@ class DurationSampler:
 
         return self
 
-    def get_all_jobs(self):
+    def get_all_jobs(self) -> dict[str, list[Job]]:
         return self.jobs
 
-    def get_all_aggregated_jobs(self):
+    def get_all_aggregated_jobs(self) -> dict[str, list[Job]]:
         return self.aggregated_jobs
 
-    def sample(self, n=1, wrap=True):
+    def sample(self, n: int = 1, wrap: bool = True) -> dict[str, list[Job]]:
         """
         Sample n consecutive time periods, including empty ones.
 
@@ -134,7 +139,7 @@ class DurationSampler:
         if not self.keys:
             return {}
 
-        result = {}
+        result: dict[str, list[Job]] = {}
         periods_sampled = 0
 
         # Get starting position
@@ -167,7 +172,7 @@ class DurationSampler:
 
         return result
 
-    def sample_aggregated(self, n=1, wrap=True):
+    def sample_aggregated(self, n: int = 1, wrap: bool = True) -> dict[str, list[Job]]:
         """
         Efficiently sample n time periods of aggregated jobs using precalculated data.
 
@@ -181,7 +186,7 @@ class DurationSampler:
         if not self.keys:
             return {}
 
-        result = {}
+        result: dict[str, list[Job]] = {}
         periods_sampled = 0
 
         # Get starting position
@@ -214,12 +219,12 @@ class DurationSampler:
 
         return result
 
-    def reset_position(self):
+    def reset_position(self) -> DurationSampler:
         """Reset the current sampling position to the beginning."""
         self.current_position = 0
         return self
 
-    def sample_random(self, n=1):
+    def sample_random(self, n: int = 1) -> dict[str, list[Job]]:
         """Sample n random time bins from the parsed data."""
         if not self.keys:
             return {}
@@ -227,7 +232,7 @@ class DurationSampler:
         selected_keys = random.sample(self.keys, min(n, len(self.keys)))
         return {key: self.jobs[key] for key in selected_keys}
 
-    def aggregate_jobs(self, jobs_list):
+    def aggregate_jobs(self, jobs_list: list[Job]) -> list[Job]:
         """
         Aggregate similar jobs to reduce the total number of job objects.
 
@@ -241,7 +246,7 @@ class DurationSampler:
             return []
 
         # Create bins for jobs with similar characteristics
-        job_bins = {}
+        job_bins: dict[tuple[int, int, int], Job] = {}
 
         for job in jobs_list:
             # Create a key based on job characteristics
@@ -269,7 +274,7 @@ class DurationSampler:
 
         return aggregated_jobs
 
-    def calculate_resource_hours(self, jobs):
+    def calculate_resource_hours(self, jobs: list[Job]) -> dict[str, float]:
         """
         Calculate the total resource-hours (node-hours, core-hours) for a set of jobs.
         Useful for validating that aggregation preserves the overall workload.
@@ -280,7 +285,7 @@ class DurationSampler:
         Returns:
         - Dictionary with resource usage statistics
         """
-        stats = {
+        stats: dict[str, float] = {
             'total_jobs': 0,
             'total_node_hours': 0,
             'total_core_hours': 0
@@ -299,7 +304,7 @@ class DurationSampler:
 
         return stats
 
-    def convert_to_hourly_jobs(self, aggregated_jobs, cores_per_node, max_nodes_per_job):
+    def convert_to_hourly_jobs(self, aggregated_jobs: list[Job], cores_per_node: int, max_nodes_per_job: int) -> list[Job]:
         """
         Convert aggregated jobs to hourly simulation jobs.
 
@@ -311,7 +316,7 @@ class DurationSampler:
         Returns:
         - List of hourly simulation job dictionaries
         """
-        hourly_jobs = []
+        hourly_jobs: list[Job] = []
 
         for agg_job in aggregated_jobs:
             # Calculate total compute resources needed
@@ -333,7 +338,7 @@ class DurationSampler:
                 cores_per_node_needed = min(cores_per_node, math.ceil(cores_needed / equivalent_nodes))
 
                 # Create the hourly equivalent job
-                hourly_job = {
+                hourly_job: Job = {
                     'nnodes': equivalent_nodes,
                     'cores_per_node': cores_per_node_needed,
                     'duration_hours': 1,  # 1 hour
@@ -361,7 +366,7 @@ class DurationSampler:
 
         return hourly_jobs
 
-    def precalculate_hourly_jobs(self, cores_per_node, max_nodes_per_job):
+    def precalculate_hourly_jobs(self, cores_per_node: int, max_nodes_per_job: int) -> DurationSampler:
         """
         Precalculate hourly job conversions for all time periods.
 
@@ -382,7 +387,7 @@ class DurationSampler:
 
         return self
 
-    def sample_hourly(self, n=1, wrap=True):
+    def sample_hourly(self, n: int = 1, wrap: bool = True) -> dict[str, dict[str, list[Job]]]:
         """
         Sample n time periods and return comprehensive data for each period.
 
@@ -403,7 +408,7 @@ class DurationSampler:
         sample_periods = self.sample(n, wrap)
 
         # Build comprehensive results
-        results = {}
+        results: dict[str, dict[str, list[Job]]] = {}
         for period_key in sample_periods:
             results[period_key] = {
                 'raw_jobs': self.jobs.get(period_key, []),
@@ -413,7 +418,7 @@ class DurationSampler:
 
         return results
 
-    def sample_one_hourly(self, wrap=True):
+    def sample_one_hourly(self, wrap: bool = True) -> dict[str, list[Job]]:
         """
         Sample one time period and return comprehensive data for each period.
 
@@ -433,7 +438,7 @@ class DurationSampler:
         sample_periods = self.sample(1, wrap)
 
         # Build comprehensive results
-        results = {}
+        results: dict[str, list[Job]] = {}
         for period_key in sample_periods:
             results = {
                 'raw_jobs': self.jobs.get(period_key, []),

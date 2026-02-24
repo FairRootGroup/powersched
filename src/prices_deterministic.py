@@ -3,39 +3,39 @@ import matplotlib.pyplot as plt
 from collections import deque
 
 class Prices:
-    ELECTRICITY_PRICE_BASE = 20
-    PERCENTILE_MIN = 1
-    PERCENTILE_MAX = 99
-    PREDICTION_WINDOW = 24
-    HISTORY_WINDOW = 24
+    ELECTRICITY_PRICE_BASE: int = 20
+    PERCENTILE_MIN: int = 1
+    PERCENTILE_MAX: int = 99
+    PREDICTION_WINDOW: int = 24
+    HISTORY_WINDOW: int = 24
 
-    def __init__(self, external_prices=None):
-        self.original_prices = external_prices
-        self.external_prices = None
+    def __init__(self, external_prices: np.ndarray | list[float] | None = None) -> None:
+        self.original_prices: np.ndarray | list[float] | None = external_prices
+        self.external_prices: np.ndarray | None = None
 
-        self.price_shift = 0
-        self.price_index = 0
-        self.price_history = deque(maxlen=self.HISTORY_WINDOW)
-        self.predicted_prices = None
+        self.price_shift: float = 0.0
+        self.price_index: int = 0
+        self.price_history: deque[float] = deque(maxlen=self.HISTORY_WINDOW)
+        self.predicted_prices: np.ndarray | None = None
 
         if self.original_prices is not None:
             prices = np.asarray(self.original_prices, dtype=np.float32)
             if prices.size == 0:
                 raise ValueError("external_prices must be a non-empty sequence")
- 
+
             min_price = float(np.min(prices))
             if min_price < 1:
                 self.price_shift = 1 - min_price
                 prices = prices + self.price_shift
 
             self.external_prices = prices
-            self.MIN_PRICE = float(np.percentile(self.external_prices, self.PERCENTILE_MIN))
-            self.MAX_PRICE = float(np.percentile(self.external_prices, self.PERCENTILE_MAX))
+            self.MIN_PRICE: float = float(np.percentile(self.external_prices, self.PERCENTILE_MIN))
+            self.MAX_PRICE: float = float(np.percentile(self.external_prices, self.PERCENTILE_MAX))
         else:
             self.external_prices = None
             # Keep your defaults for normalization bounds
-            self.MAX_PRICE = 24
-            self.MIN_PRICE = 16
+            self.MAX_PRICE = 24.0
+            self.MIN_PRICE = 16.0
 
         # IMPORTANT: initialize state in one place
         self.reset(start_index=0)
@@ -46,10 +46,10 @@ class Prices:
         base = self.ELECTRICITY_PRICE_BASE
         return float(max(1.0, base * (1 + 0.2 * np.sin((t % 24) / 24 * 2 * np.pi))))
 
-    def get_real_price(self, shifted_price):
+    def get_real_price(self, shifted_price: float) -> float:
         return shifted_price - self.price_shift
 
-    def reset(self, start_index: int = 0):
+    def reset(self, start_index: int = 0) -> None:
         """Reset internal timeline/state to episode start.
 
         start_index is the index in external_prices for the *first* element
@@ -76,7 +76,7 @@ class Prices:
             )
 
     # ---------- *stateful* stepping (used by env.step) ----------
-    def get_next_price(self):
+    def get_next_price(self) -> float:
         if self.external_prices is not None:
             new_price = float(self.external_prices[self.price_index % len(self.external_prices)])
         else:
@@ -88,23 +88,23 @@ class Prices:
 
         return new_price
 
-    def get_price_context(self):
+    def get_price_context(self) -> tuple[float | None, float]:
         history_avg = float(np.mean(self.price_history)) if self.price_history else None
         future_avg = float(np.mean(self.predicted_prices))
         return history_avg, future_avg
 
-    def advance_and_get_predicted_prices(self): # Changed name for readability
+    def advance_and_get_predicted_prices(self) -> np.ndarray:  # Changed name for readability
         new_price = self.get_next_price()
         self.predicted_prices = np.roll(self.predicted_prices, -1)
         self.predicted_prices[-1] = new_price
         return self.predicted_prices.copy()
 
     # ---------- NON-MUTATING utilities ----------
-    def _generated_prices_for_stats(self, n: int):
+    def _generated_prices_for_stats(self, n: int) -> np.ndarray:
         # Do NOT touch price_index/history here.
         return np.array([self._synthetic_price_at(i) for i in range(n)], dtype=np.float32)
 
-    def get_price_stats(self, use_original=False):
+    def get_price_stats(self, use_original: bool = False) -> dict[str, float]:
         if use_original and self.original_prices is not None:
             prices = np.asarray(self.original_prices, dtype=np.float32)
         elif self.external_prices is not None:
@@ -123,7 +123,7 @@ class Prices:
             'price_shift': float(self.price_shift),
         }
 
-    def plot_price_histogram(self, num_bins=50, save_path=None, use_original=False):
+    def plot_price_histogram(self, num_bins: int = 50, save_path: str | None = None, use_original: bool = False) -> None:
         if use_original and self.original_prices is not None:
             prices = np.asarray(self.original_prices, dtype=np.float32)
             price_type = "Original"
