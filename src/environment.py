@@ -64,7 +64,7 @@ class ComputeClusterEnv(gym.Env):
                  weights: Weights,
                  session: str,
                  render_mode: str,
-                 external_prices: str | None,
+                 external_prices: list[float] | np.ndarray | None,
                  external_durations: str | None,
                  external_jobs: str | None,
                  external_hourly_jobs: str | None,
