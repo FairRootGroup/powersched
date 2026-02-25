@@ -26,7 +26,8 @@ def parse_quad_floats(raw: str) -> tuple[float, float, float, float]:
             "Expected 4 comma-separated floats: arrivals,duration,nodes,cores"
         )
     try:
-        return tuple(float(p) for p in parts)
+        a, b, c, d = (float(p) for p in parts)
+        return (a, b, c, d)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"Invalid float in '{raw}'") from exc
 
@@ -38,7 +39,8 @@ def parse_quad_ints(raw: str) -> tuple[int, int, int, int]:
             "Expected 4 comma-separated ints: arrivals,duration,nodes,cores"
         )
     try:
-        return tuple(int(p) for p in parts)
+        a, b, c, d = (int(p) for p in parts)
+        return (a, b, c, d)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"Invalid int in '{raw}'") from exc
 
@@ -62,7 +64,8 @@ def parse_quad_ranges(raw: str) -> tuple[tuple[int, int], tuple[int, int], tuple
         if low > high:
             raise argparse.ArgumentTypeError(f"Range min > max in '{part}'")
         ranges.append((low, high))
-    return tuple(ranges)
+    (a, b, c, d) = ranges
+    return (a, b, c, d)
 
 
 def add_workloadgen_args(parser: argparse.ArgumentParser) -> None:

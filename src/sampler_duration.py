@@ -67,7 +67,7 @@ class DurationSampler:
             n (int): Number of samples to generate
 
         Returns:
-            float or numpy.ndarray: Single float if n=1, otherwise array of floats
+            NDArray[np.intp]: Array of integer durations with shape (n,)
         """
         if self.sample_values is None or self.probabilities is None:
             raise RuntimeError("Sampler not initialized. Call init() first.")
