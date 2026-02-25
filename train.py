@@ -289,16 +289,7 @@ def main():
                 plot_dashboard(
                     env,
                     num_hours=args.dashboard_hours,
-                 #   max_nodes=env.max_nodes if hasattr(env, "max_nodes") else env.num_nodes if hasattr(env, "num_nodes") else 0,
                     max_nodes=335,
-                    episode_costs=[  # adapt to what your plot_dashboard expects
-                        {
-                            "agent_cost": ep["agent_cost"],
-                            "baseline_cost": ep["baseline_cost"],
-                            "baseline_cost_off": ep["baseline_cost_off"],
-                        }
-                        for ep in env.metrics.episode_costs
-                    ],
                     save=True,
                     show=(args.render == "human"),
                     suffix=f"eval_{args.eval_months}m",
@@ -330,16 +321,7 @@ def main():
                         plot_dashboard(
                             env,
                             num_hours=args.dashboard_hours,
-                            #   max_nodes=env.max_nodes if hasattr(env, "max_nodes") else env.num_nodes if hasattr(env, "num_nodes") else 0,
                             max_nodes=335,
-                            episode_costs=[
-                                {
-                                    "agent_cost": ep["agent_cost"],
-                                    "baseline_cost": ep["baseline_cost"],
-                                    "baseline_cost_off": ep["baseline_cost_off"],
-                                }
-                                for ep in env.metrics.episode_costs
-                            ],
                             save=True,
                             show=False,
                             suffix=STEPS_PER_ITERATION * iters,
