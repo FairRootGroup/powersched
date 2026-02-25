@@ -69,9 +69,10 @@ class Prices:
             self.price_index = (start_index + self.PREDICTION_WINDOW) % n
         else:
             # synthetic mode
-            self.price_index = self.PREDICTION_WINDOW
+            start = int(start_index)
+            self.price_index = start + self.PREDICTION_WINDOW
             self.predicted_prices = np.array(
-                [self._synthetic_price_at(i) for i in range(self.PREDICTION_WINDOW)],
+                [self._synthetic_price_at(start + i) for i in range(self.PREDICTION_WINDOW)],
                 dtype=np.float32,
             )
 
