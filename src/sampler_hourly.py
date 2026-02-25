@@ -19,7 +19,7 @@ class HourlySampler:
         """Parse Slurm log file and build hourly distributions."""
         if not filepath:
             print("No jobs file path provided.")
-            return None
+            return
 
         with open(filepath, 'r') as f:
             data_text = f.read()
@@ -138,12 +138,12 @@ class HourlySampler:
             for d, n, c in zip(durations, nodes, cores)
         ]
 
-    def get_stats(self) -> dict[int, dict[str, float]]:
+    def get_stats(self) -> dict[int, dict[str, Any]]:
         """Return summary statistics of the sampler."""
         if not self.initialized:
             raise RuntimeError("Sampler not initialized. Call parse_jobs() first.")
 
-        stats: dict[int, dict[str, float]] = {}
+        stats: dict[int, dict[str, Any]] = {}
         for hour in range(24):
             dist = self.hour_distributions[hour]
             stats[hour] = {
