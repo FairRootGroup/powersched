@@ -34,15 +34,13 @@ class DurationSampler:
         all_timestamps: list[datetime.datetime] = []
 
         # Determine the time format based on bin_minutes
-        if bin_minutes >= 1440:  # Daily or longer (≥ 24 hours)
+        if bin_minutes % 1440 == 0:  # Daily-aligned bins
             time_format = "%Y-%m-%d"
-            time_delta = datetime.timedelta(days=1)
-        elif bin_minutes >= 60:  # Hourly or longer
+        elif bin_minutes % 60 == 0:  # Hour-aligned bins
             time_format = "%Y-%m-%d %H:00"
-            time_delta = datetime.timedelta(hours=1)
-        else:  # Less than an hour
+        else:  # Minute-aligned bins
             time_format = "%Y-%m-%d %H:%M"
-            time_delta = datetime.timedelta(minutes=bin_minutes)
+        time_delta = datetime.timedelta(minutes=bin_minutes)
 
         self.time_format = time_format
         self.time_delta = time_delta
