@@ -30,7 +30,6 @@ class HourlySampler:
 
         # Collect jobs by hour of day (0-23)
         hourly_jobs: defaultdict[int, list[dict[str, int]]] = defaultdict(list)
-        hourly_job_counts: defaultdict[int, list[int]] = defaultdict(list)
 
         # Track which hours have data (to calculate zero-job hours properly)
         hours_with_data: defaultdict[str, set[int]] = defaultdict(set)
