@@ -178,7 +178,7 @@ class RewardCalculator:
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
-                  env_print: Callable[[str], None]) -> tuple[float, float, float, float, float, float]:
+                  env_print: Callable[..., None]) -> tuple[float, float, float, float, float, float]:
         """
         Calculate total reward by aggregating weighted components.
 
