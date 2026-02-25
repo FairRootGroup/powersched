@@ -48,6 +48,7 @@ def baseline_step(
         next_job_id: Next available job ID
         metrics: MetricsTracker object to update with baseline job metrics
         env_print: Print function for logging
+        baseline_backlog_queue: Overflow queue for jobs that don't fit in the main queue
 
     Returns:
         Tuple of (baseline_cost, baseline_cost_off, updated baseline_next_empty_slot, updated next_job_id)
