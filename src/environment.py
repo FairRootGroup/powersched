@@ -317,7 +317,7 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(Fore.GREEN + f"\n[[[ Starting episode: {self.current_episode}, step: {self.current_step}, hour: {self.metrics.current_hour}" + Fore.RESET)
 
         self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
-        current_price = self.state['predicted_prices'][0]
+        current_price = float(self.state['predicted_prices'][0])
         if self.render_mode == 'human':
             self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
 
@@ -420,7 +420,7 @@ class ComputeClusterEnv(gym.Env):
         num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
         combined_queue_size = num_unprocessed_jobs + len(self.backlog_queue)
         num_unprocessed_jobs = combined_queue_size
-        average_future_price = np.mean(self.state['predicted_prices'])
+        average_future_price = float(np.mean(self.state['predicted_prices']))
         num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available)
         num_running_jobs = len(self.running_jobs)
 
