@@ -16,7 +16,7 @@ class Prices:
         self.price_shift: float = 0.0
         self.price_index: int = 0
         self.price_history: deque[float] = deque(maxlen=self.HISTORY_WINDOW)
-        self.predicted_prices: np.ndarray | None = None
+        self.predicted_prices: np.ndarray = np.empty(0, dtype=np.float32)
 
         if self.original_prices is not None:
             prices = np.asarray(self.original_prices, dtype=np.float32)
