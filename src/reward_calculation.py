@@ -176,7 +176,7 @@ class RewardCalculator:
         return float(np.clip(penalty, -1.0, 0.0))
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
-                  num_off_nodes: int, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,
+                  num_off_nodes: int, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - num_node_changes reserved for future node-change penalty
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None]) -> tuple[float, float, float, float, float, float]:
         """
