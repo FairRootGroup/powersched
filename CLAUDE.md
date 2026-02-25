@@ -21,8 +21,7 @@ powersched/
 │   ├── workloadgen.py      # Synthetic workload generator (no historical logs)
 │   ├── workloadgen_cli.py  # Shared CLI helpers for workload generator
 │   ├── baseline.py         # Baseline comparisons
-│   ├── prices.py           # Price modeling
-│   ├── prices_deterministic.py # Deterministic pricing
+│   ├── prices.py               # Electricity price modeling
 │   ├── sampler_*.py        # Job samplers (historical log replay)
 │   ├── callbacks.py        # Training callbacks
 │   ├── weights.py          # Reward weights
@@ -52,7 +51,7 @@ powersched/
 
 - **Environment** (`src/environment.py`): Gymnasium-compatible RL environment simulating a compute cluster with 335 nodes, job queues, and electricity pricing
 - **Training** (`train.py`): Main training script using stable-baselines3 PPO with tensorboard logging and model checkpointing
-- **Pricing** (`src/prices.py`, `src/prices_deterministic.py`): Electricity price modeling and data handling
+- **Pricing** (`src/prices.py`): Electricity price modeling and data handling
 - **Samplers**: Job duration (`src/sampler_duration.py`), job characteristics (`src/sampler_jobs.py`), and hourly statistical sampler (`src/sampler_hourly.py`) sampling from real data
 - **Workload Generator** (`src/workloadgen.py`, `src/workloadgen_cli.py`): Synthetic job generator that produces configurable, deterministic job streams without relying on historical logs. Supports flat/poisson/uniform arrival modes with optional burst injectors.
 - **Plotting** (`src/plot.py`): Visualization of training progress, rewards, and cluster state

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Test script to verify that prices_deterministic.py cycles through the price file."""
+"""Test script to verify that prices.py cycles through the price file."""
 
 import numpy as np
-from src.prices_deterministic import Prices
+from src.prices import Prices
 
 def test_cycling_behavior():
     """Test that prices continue through the file when given different start_index values."""
