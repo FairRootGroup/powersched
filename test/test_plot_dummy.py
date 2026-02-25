@@ -206,7 +206,6 @@ def main():
         env,
         num_hours=num_hours,
         max_nodes=max_nodes,
-        episode_costs=episode_costs,  # accepted but not used in dashboard; fine for API compatibility
         save=True,
         show=True,
         suffix="dummy_dashboard",

@@ -85,11 +85,10 @@ def _compute_cumulative_savings(episode_costs: list[dict[str, float | int]]) -> 
     }
 
 
-def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, episode_costs: list[dict[str, float | int]] | None = None, save: bool = True, show: bool = True, suffix: int | str = "") -> None:
+def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: bool = True, show: bool = True, suffix: int | str = "") -> None:
     """
     Per-hour dashboard: price, nodes, queue, reward components, etc.
-    NOTE: episode_costs is accepted for backwards compatibility but NOT used here anymore.
-          Cumulative savings now lives in plot_cumulative_savings().
+    Cumulative savings lives in plot_cumulative_savings().
     """
     hours = np.arange(num_hours)
 
