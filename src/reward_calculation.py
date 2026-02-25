@@ -8,7 +8,7 @@ from src.config import (
     COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE,
     PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, WEEK_HOURS
 )
-from src.prices_deterministic import Prices
+from src.prices import Prices
 from src.weights import Weights
 
 
@@ -82,7 +82,7 @@ class RewardCalculator:
             if num_unprocessed_jobs == 0:
                 return 1
             else:
-                return np.clip(1.0 / np.log1p(num_unprocessed_jobs), a_min=None, a_max=1.0)
+                return float(np.clip(1.0 / np.log1p(num_unprocessed_jobs), a_min=None, a_max=1.0))
         else:
             current_reward = self._reward_efficiency(num_used_nodes, total_cost)
             return self._normalize(current_reward, self._min_efficiency_reward, self._max_efficiency_reward)
@@ -117,7 +117,7 @@ class RewardCalculator:
         """Calculate normalized idle penalty [-1, 0]."""
         current_penalty = self._penalty_idle(num_idle_nodes)
         normalized_penalty = -self._normalize(current_penalty, self._min_idle_penalty, self._max_idle_penalty)
-        return np.clip(normalized_penalty, -1, 0)
+        return float(np.clip(normalized_penalty, -1, 0))
 
     @staticmethod
     def _penalty_job_age(num_off_nodes: int, job_queue_2d: np.ndarray) -> float:
@@ -143,7 +143,7 @@ class RewardCalculator:
         # _penalty_job_age already returns [0, 1]; negate to get [-1, 0]
         # normalized_penalty = self._normalize(current_penalty, 0, -1)
         normalized_penalty = -current_penalty
-        return np.clip(normalized_penalty, -1, 0)
+        return float(np.clip(normalized_penalty, -1, 0))
 
     def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:
         '''Redefine meaning of "efficiency". Use purely as "energy efficiency", aka: How much of the energy (in MW) which is currently needed, gets used for work.

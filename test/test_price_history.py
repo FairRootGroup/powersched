@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Test that price_history correctly maintains a 24-hour rolling window."""
 
-from src.prices_deterministic import Prices
+from src.prices import Prices
 
 def test_price_history_bounded():
     """Verify price_history is bounded to HISTORY_WINDOW."""

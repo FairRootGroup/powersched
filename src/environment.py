@@ -7,7 +7,7 @@ import gymnasium as gym
 import numpy as np
 from colorama import init, Fore
 
-from src.prices_deterministic import Prices
+from src.prices import Prices
 from src.weights import Weights
 from src.plot_config import PlotConfig
 from src.plot import plot, plot_reward
