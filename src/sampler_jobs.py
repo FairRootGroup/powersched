@@ -325,7 +325,7 @@ class DurationSampler:
             if agg_job['duration_minutes'] < 60:
                 # Calculate how many cores would be needed to do the same work in an hour
                 # This preserves the total core-hours
-                equivalent_cores = max(1, int(total_core_hours))
+                equivalent_cores = max(1, math.ceil(total_core_hours))
 
                 # Convert to nodes based on cores_per_node
                 equivalent_nodes = max(1, math.ceil(equivalent_cores / cores_per_node))
