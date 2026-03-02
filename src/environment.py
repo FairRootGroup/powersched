@@ -465,7 +465,7 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_baseline_cost += baseline_cost
         self.metrics.episode_baseline_cost_off += baseline_cost_off
 
-        step_reward, step_cost, eff_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
+        step_reward, step_cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
             num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d,
             num_unprocessed_jobs, self.weights, num_dropped_this_step, self.env_print
@@ -477,12 +477,12 @@ class ComputeClusterEnv(gym.Env):
 
         # Store normalized reward components for plotting
         self.metrics.eff_rewards.append(eff_reward_norm * 100)
-        self.metrics.price_rewards.append(price_reward_norm * 100)
+        self.metrics.price_rewards.append(price_reward * 100)
         self.metrics.job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.idle_penalties.append(idle_penalty_norm * 100)
         self.metrics.rewards.append(step_reward)
         self.metrics.episode_eff_rewards.append(eff_reward_norm * 100)
-        self.metrics.episode_price_rewards.append(price_reward_norm * 100)
+        self.metrics.episode_price_rewards.append(price_reward * 100)
         self.metrics.episode_job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.episode_idle_penalties.append(idle_penalty_norm * 100)
         self.metrics.episode_rewards.append(step_reward)

@@ -17,6 +17,7 @@ class Prices:
         self.price_index: int = 0
         self.price_history: deque[float] = deque(maxlen=self.HISTORY_WINDOW)
         self.predicted_prices: np.ndarray = np.empty(0, dtype=np.float32)
+        self.ENABLE_PRICE_SHIFT: bool = False
 
         if self.original_prices is not None:
             prices = np.asarray(self.original_prices, dtype=np.float32)
@@ -25,7 +26,7 @@ class Prices:
 
             min_price = float(np.min(prices))
             # hard block this for now during testing to keep things simple, but we could consider allowing it in the future with proper handling.
-            if min_price < 1 and 0:
+            if min_price < 1 and self.ENABLE_PRICE_SHIFT:
                 self.price_shift = 1 - min_price
                 prices = prices + self.price_shift
 
