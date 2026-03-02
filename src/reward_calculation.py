@@ -31,6 +31,16 @@ def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -
 
 
 class RewardCalculator:
+        
+    """Calculates rewards with pre-computed normalization bounds."""
+    PRICE_ADVANTAGE_GAIN = 3.0
+    # Asymmetric job scaling: penalize high-price execution faster than we reward low-price execution.
+    PRICE_JOB_TAU_POS = 850.0
+    PRICE_JOB_TAU_NEG = 300.0
+    NEGATIVE_PRICE_JOB_TAU = 30.0  # faster job saturation only for negative-price overdrive
+    NEGATIVE_PRICE_TAU = 12.0
+    NEGATIVE_PRICE_SUPER_BONUS = 0.4
+    PRICE_REWARD_OVERDRIVE_BASELINE = 1.05 # Guarantees negative-price overdrive stays above the best non-negative price reward.
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -52,16 +62,12 @@ class RewardCalculator:
         self._max_efficiency_reward = max(1.0, self._reward_efficiency(MAX_NODES, cost_for_max_efficiency))
 
         # Price bounds (legacy behavior kept for debugging/ablation).
-        self._min_price_reward_legacy = 0.0
         self._max_price_reward_legacy = self._reward_price_legacy(
             self.prices.MIN_PRICE,
             self.prices.MAX_PRICE,
             MAX_NEW_JOBS_PER_HOUR,
         )
-
-        # Active price reward uses fast saturation; values can exceed 1.0 in negative-price overdrive.
-        self._min_price_reward = 0.0
-        self._max_price_reward = 1.0
+        self._min_price_reward_legacy = -self._max_price_reward_legacy
 
         # Idle penalty bounds
         self._min_idle_penalty = self._penalty_idle(0)
@@ -122,14 +128,6 @@ class RewardCalculator:
         - Adds an extra strong bonus if work is done when price is negative.
         """
         
-        """Calculates rewards with pre-computed normalization bounds."""
-        PRICE_ADVANTAGE_GAIN = 3.0
-        PRICE_JOB_TAU = 850.0 # tuned to make price reward and efficiency reward have comparable gradients in typical scenarios. Saturation at roughly 2500 jobs, so with 850 job_component is about 0.98 for 2500 jobs.
-        NEGATIVE_PRICE_JOB_TAU = 30.0  # faster job saturation only for negative-price overdrive
-        NEGATIVE_PRICE_TAU = 12.0
-        NEGATIVE_PRICE_SUPER_BONUS = 0.4
-        PRICE_REWARD_OVERDRIVE_BASELINE = 1.05
-        
         if num_processed_jobs <= 0:
             return 0.0
 
@@ -137,28 +135,18 @@ class RewardCalculator:
         price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
         relative_advantage = (context_avg - current_price) / price_span
 
-        advantage_component = np.clip(np.tanh(PRICE_ADVANTAGE_GAIN * relative_advantage), 0.0, 1.0)
-        job_component = (1.0 - np.exp(-num_processed_jobs / PRICE_JOB_TAU))
+        advantage_component = np.tanh(self.PRICE_ADVANTAGE_GAIN * relative_advantage)
+        tau = self.PRICE_JOB_TAU_POS if advantage_component >= 0.0 else self.PRICE_JOB_TAU_NEG
+        job_component = (1.0 - np.exp(-num_processed_jobs / tau))
         reward = advantage_component * job_component
 
         if current_price < 0.0:
-            negative_strength = (1.0 - np.exp(-abs(current_price) / NEGATIVE_PRICE_TAU))
-            negative_job_component = (1.0 - np.exp(-num_processed_jobs / NEGATIVE_PRICE_JOB_TAU))
-            super_bonus = NEGATIVE_PRICE_SUPER_BONUS * negative_job_component * negative_strength
-            reward = max(reward, PRICE_REWARD_OVERDRIVE_BASELINE + super_bonus)
+            negative_strength = (1.0 - np.exp(-abs(current_price) / self.NEGATIVE_PRICE_TAU))
+            negative_job_component = (1.0 - np.exp(-num_processed_jobs / self.NEGATIVE_PRICE_JOB_TAU))
+            super_bonus = self.NEGATIVE_PRICE_SUPER_BONUS * negative_job_component * negative_strength
+            reward = max(reward, self.PRICE_REWARD_OVERDRIVE_BASELINE + super_bonus)
 
-        return (max(0.0, reward))
-
-    def _reward_price_normalized(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
-        """
-        Calculate active price reward.
-
-        Usually in [0, 1], but can exceed 1.0 in negative-price overdrive.
-        """
-        if num_processed_jobs == 0:
-            return 0.0
-        current_reward = self._reward_price(current_price, average_future_price, num_processed_jobs)
-        return self._normalize(current_reward, self._min_price_reward, self._max_price_reward)
+        return reward
 
     @staticmethod
     def _penalty_idle(num_idle_nodes: int) -> float:
@@ -249,7 +237,7 @@ class RewardCalculator:
             env_print: Print function for logging
 
         Returns:
-            Tuple of (total reward, total cost, eff_reward_norm, price_reward_norm,
+            Tuple of (total reward, total cost, eff_reward_norm, price_reward,
                       idle_penalty_norm, job_age_penalty_norm)
         """
         # 0. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
@@ -257,11 +245,11 @@ class RewardCalculator:
         efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes) + self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
-        # 2. increase reward if jobs were scheduled in this step and the current price is below average
-        price_reward_norm = self._reward_price_normalized(
+        # 2. increase reward if jobs were scheduled in this step and the current price is below average, with fast saturation and extra bonus for negative-price overdrive.
+        price_reward = self._reward_price(
             current_price, average_future_price, num_processed_jobs
         )
-        price_reward_weighted = weights.price_weight * price_reward_norm
+        price_reward_weighted = weights.price_weight * price_reward
 
         # 3. penalize delayed jobs, more if they are older. but only if there are turned off nodes
         job_age_penalty_norm = self._penalty_job_age_normalized(num_off_nodes, job_queue_2d)
@@ -287,4 +275,4 @@ class RewardCalculator:
         env_print(f"    > $$$TOTAL: {reward:.4f} = {efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + {idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f} + {drop_penalty_weighted:.4f}")
         env_print(f"    > step cost: €{total_cost:.4f}")
 
-        return reward, total_cost, efficiency_reward_norm, price_reward_norm, idle_penalty_norm, job_age_penalty_norm
+        return reward, total_cost, efficiency_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm
