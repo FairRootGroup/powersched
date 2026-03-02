@@ -31,7 +31,6 @@ def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -
 
 
 class RewardCalculator:
-    """Calculates rewards with pre-computed normalization bounds."""
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -52,9 +51,17 @@ class RewardCalculator:
         self._min_efficiency_reward = self._reward_efficiency(0, cost_for_min_efficiency)
         self._max_efficiency_reward = max(1.0, self._reward_efficiency(MAX_NODES, cost_for_max_efficiency))
 
-        # Price bounds
-        self._min_price_reward = 0
-        self._max_price_reward = self._reward_price(self.prices.MIN_PRICE, self.prices.MAX_PRICE, MAX_NEW_JOBS_PER_HOUR)
+        # Price bounds (legacy behavior kept for debugging/ablation).
+        self._min_price_reward_legacy = 0.0
+        self._max_price_reward_legacy = self._reward_price_legacy(
+            self.prices.MIN_PRICE,
+            self.prices.MAX_PRICE,
+            MAX_NEW_JOBS_PER_HOUR,
+        )
+
+        # Active price reward uses fast saturation; values can exceed 1.0 in negative-price overdrive.
+        self._min_price_reward = 0.0
+        self._max_price_reward = 1.0
 
         # Idle penalty bounds
         self._min_idle_penalty = self._penalty_idle(0)
@@ -87,24 +94,69 @@ class RewardCalculator:
             current_reward = self._reward_efficiency(num_used_nodes, total_cost)
             return self._normalize(current_reward, self._min_efficiency_reward, self._max_efficiency_reward)
 
-    def _reward_price(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
-        """Calculate price-based reward for scheduling jobs at favorable prices."""
+    def _price_context_average(self, average_future_price: float) -> float:
+        """Get context price average for comparison with current price."""
         history_avg, future_avg = self.prices.get_price_context()
-
         if history_avg is not None:
-            # We have some history - use both past and future
-            context_avg = (history_avg + future_avg) / 2
-            price_diff = context_avg - current_price
-        else:
-            # No history yet - fall back to just using future prices
-            price_diff = average_future_price - current_price
+            return (history_avg + future_avg) / 2
+        return average_future_price
 
+    def _reward_price_legacy(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
+        """Legacy linear reward: preserved for comparison/ablation."""
+        context_avg = self._price_context_average(average_future_price)
+        price_diff = context_avg - current_price
         return price_diff * num_processed_jobs
 
-    def _reward_price_normalized(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
-        """Calculate normalized price reward [0, 1]."""
+    def _reward_price_normalized_legacy(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
+        """Legacy normalized price reward [0, 1] in typical operating range."""
         if num_processed_jobs == 0:
-            return 0
+            return 0.0
+        current_reward = self._reward_price_legacy(current_price, average_future_price, num_processed_jobs)
+        return self._normalize(current_reward, self._min_price_reward_legacy, self._max_price_reward_legacy)
+
+    def _reward_price(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
+        """
+        Active price reward with fast saturation and negative-price overdrive.
+
+        - Saturates quickly with better-than-context prices and processed jobs.
+        - Adds an extra strong bonus if work is done when price is negative.
+        """
+        
+        """Calculates rewards with pre-computed normalization bounds."""
+        PRICE_ADVANTAGE_GAIN = 3.0
+        PRICE_JOB_TAU = 850.0 # tuned to make price reward and efficiency reward have comparable gradients in typical scenarios. Saturation at roughly 2500 jobs, so with 850 job_component is about 0.98 for 2500 jobs.
+        NEGATIVE_PRICE_JOB_TAU = 30.0  # faster job saturation only for negative-price overdrive
+        NEGATIVE_PRICE_TAU = 12.0
+        NEGATIVE_PRICE_SUPER_BONUS = 0.4
+        PRICE_REWARD_OVERDRIVE_BASELINE = 1.05
+        
+        if num_processed_jobs <= 0:
+            return 0.0
+
+        context_avg = self._price_context_average(average_future_price)
+        price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
+        relative_advantage = (context_avg - current_price) / price_span
+
+        advantage_component = np.clip(np.tanh(PRICE_ADVANTAGE_GAIN * relative_advantage), 0.0, 1.0)
+        job_component = (1.0 - np.exp(-num_processed_jobs / PRICE_JOB_TAU))
+        reward = advantage_component * job_component
+
+        if current_price < 0.0:
+            negative_strength = (1.0 - np.exp(-abs(current_price) / NEGATIVE_PRICE_TAU))
+            negative_job_component = (1.0 - np.exp(-num_processed_jobs / NEGATIVE_PRICE_JOB_TAU))
+            super_bonus = NEGATIVE_PRICE_SUPER_BONUS * negative_job_component * negative_strength
+            reward = max(reward, PRICE_REWARD_OVERDRIVE_BASELINE + super_bonus)
+
+        return (max(0.0, reward))
+
+    def _reward_price_normalized(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
+        """
+        Calculate active price reward.
+
+        Usually in [0, 1], but can exceed 1.0 in negative-price overdrive.
+        """
+        if num_processed_jobs == 0:
+            return 0.0
         current_reward = self._reward_price(current_price, average_future_price, num_processed_jobs)
         return self._normalize(current_reward, self._min_price_reward, self._max_price_reward)
 

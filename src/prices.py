@@ -24,7 +24,8 @@ class Prices:
                 raise ValueError("external_prices must be a non-empty sequence")
 
             min_price = float(np.min(prices))
-            if min_price < 1:
+            # hard block this for now during testing to keep things simple, but we could consider allowing it in the future with proper handling.
+            if min_price < 1 and 0:
                 self.price_shift = 1 - min_price
                 prices = prices + self.price_shift
 
