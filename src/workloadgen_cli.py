@@ -3,6 +3,7 @@
 Provides:
 - Argument parsers for quad-parameter CLI flags (floats, ints, ranges)
 - add_workloadgen_args(): register workload-gen argparse flags on a parser
+- build_workloadgen_cli_args(): serialize workload-gen argparse args back into CLI flags
 - build_workloadgen_config(): construct WorkloadGenConfig from parsed args
 """
 
@@ -85,6 +86,36 @@ def add_workloadgen_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--wg-uniform-ranges4", type=parse_quad_ranges, default=None, help="a_min:a_max,d_min:d_max,n_min:n_max,c_min:c_max")
     parser.add_argument("--wg-burst-small-prob", type=float, default=0.0, help="Probability of additive small-job burst per hour.")
     parser.add_argument("--wg-burst-heavy-prob", type=float, default=0.0, help="Probability of additive heavy-job burst per hour.")
+
+
+def build_workloadgen_cli_args(args: argparse.Namespace) -> list[str]:
+    """Serialize parsed workload-generator args back into CLI flags.
+
+    Returns an empty list when workload generation is disabled.
+    """
+    if not args.workload_gen:
+        return []
+
+    wg_args = [
+        "--workload-gen", args.workload_gen,
+        "--wg-poisson-lambda", str(args.wg_poisson_lambda),
+        "--wg-max-jobs-hour", str(args.wg_max_jobs_hour),
+        "--wg-flat-jobs-hour", str(args.wg_flat_jobs_hour),
+        "--wg-flat-jitter", str(args.wg_flat_jitter),
+        "--wg-burst-small-prob", str(args.wg_burst_small_prob),
+        "--wg-burst-heavy-prob", str(args.wg_burst_heavy_prob),
+    ]
+
+    if args.wg_poisson_lambdas4 is not None:
+        wg_args += ["--wg-poisson-lambdas4", ",".join(str(v) for v in args.wg_poisson_lambdas4)]
+    if args.wg_flat_targets4 is not None:
+        wg_args += ["--wg-flat-targets4", ",".join(str(v) for v in args.wg_flat_targets4)]
+    if args.wg_flat_jitters4 is not None:
+        wg_args += ["--wg-flat-jitters4", ",".join(str(v) for v in args.wg_flat_jitters4)]
+    if args.wg_uniform_ranges4 is not None:
+        wg_args += ["--wg-uniform-ranges4", ",".join(f"{lo}:{hi}" for lo, hi in args.wg_uniform_ranges4)]
+
+    return wg_args
 
 
 def build_workloadgen_config(
