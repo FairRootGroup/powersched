@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 
 def generate_weight_combinations(step=0.1, fixed_weights=None):
     weights = np.linspace(0, 1, num=int(1/step) + 1, endpoint=True)
@@ -108,6 +109,7 @@ def build_command(
     seed=None,
     evaluate_savings=False,
     eval_months=0,
+    workloadgen_args=None,
 ):
     python_executable = sys.executable
     command = [
@@ -132,12 +134,14 @@ def build_command(
         command += ["--seed", str(seed)]
     if evaluate_savings:
         command += ["--evaluate-savings", "--eval-months", str(eval_months)]
+    if workloadgen_args:
+        command += workloadgen_args
     return command
 
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, plot_dashboard, dashboard_hours,
-                     carry_over_state, seed, evaluate_savings, eval_months):
+                     carry_over_state, seed, evaluate_savings, eval_months, workloadgen_args):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
     failure_count = 0
@@ -167,6 +171,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
             plot_dashboard, dashboard_hours, carry_over_state, seed,
             evaluate_savings, eval_months,
+            workloadgen_args,
         )
         print(f"[run] starting: {label}")
         proc = subprocess.Popen(command, env=current_env)
@@ -201,6 +206,7 @@ def parse_fixed_weights(fix_weights_str, fix_values_str):
 
     return fixed_weights
 
+
 def main():
     parser = argparse.ArgumentParser(description="Run parameter sweep for weights")
     parser.add_argument("--step", type=float, default=0.1, help="Step size for weight combinations")
@@ -218,6 +224,7 @@ def main():
     parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
     parser.add_argument("--evaluate-savings", action="store_true", help="Forward to train.py to evaluate savings compared to baseline.")
     parser.add_argument("--eval-months", type=int, default=6, help="Number of months to evaluate savings over (forwarded to train.py)")
+    add_workloadgen_args(parser)
 
     parser.add_argument("--session", help="Session ID")
 
@@ -232,6 +239,7 @@ def main():
         parser.error(str(e))
 
     combinations = generate_weight_combinations(step=args.step, fixed_weights=fixed_weights)
+    workloadgen_args = build_workloadgen_cli_args(args)
 
     if not combinations:
         print("No valid weight combinations found with the given constraints")
@@ -258,6 +266,7 @@ def main():
         seed=args.seed,
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,
+        workloadgen_args=workloadgen_args,
     )
     if failures:
         print(f"{failures} run(s) failed")
