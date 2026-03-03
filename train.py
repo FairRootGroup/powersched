@@ -225,7 +225,7 @@ def main():
                 f"AvgWait={avg_wait:.1f}h, "
                 f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
                 f"MaxQueue={env.metrics.max_queue_size_reached}, "
-                f"Agent Occupancy (Cores)={env.metrics.episode_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES)if env.metrics.episode_used_cores else 0 :.2f}%, Baseline Occupancy (Cores)={env.metrics.episode_baseline_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_baseline_used_cores else 0 :.2f}% "
+                f"Agent Occupancy (Cores)={env.metrics.episode_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_used_cores else 0 :.2f}%, Baseline Occupancy (Cores)={env.metrics.episode_baseline_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_baseline_used_cores else 0 :.2f}%, "
                 f"Agent Occupancy (Nodes)={env.metrics.episode_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_used_nodes else 0 :.2f}%, Baseline Occupancy (Nodes)={env.metrics.episode_baseline_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_baseline_used_nodes else 0 :.2f}% " )
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
