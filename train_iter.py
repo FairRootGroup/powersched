@@ -106,6 +106,8 @@ def build_command(
     dashboard_hours=24 * 14,
     carry_over_state=False,
     seed=None,
+    evaluate_savings=False,
+    eval_months=0,
 ):
     python_executable = sys.executable
     command = [
@@ -128,12 +130,14 @@ def build_command(
         command += ["--carry-over-state"]
     if seed is not None:
         command += ["--seed", str(seed)]
+    if evaluate_savings:
+        command += ["--evaluate-savings", "--eval-months", str(eval_months)]
     return command
 
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, plot_dashboard, dashboard_hours,
-                     carry_over_state, seed):
+                     carry_over_state, seed, evaluate_savings, eval_months):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
     failure_count = 0
@@ -162,6 +166,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
             efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
             plot_dashboard, dashboard_hours, carry_over_state, seed,
+            evaluate_savings, eval_months,
         )
         print(f"[run] starting: {label}")
         proc = subprocess.Popen(command, env=current_env)
@@ -211,6 +216,8 @@ def main():
     parser.add_argument("--carry-over-state", action="store_true", help="Forward to train.py to carry state across episodes.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (forwarded to train.py)")
     parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
+    parser.add_argument("--evaluate-savings", action="store_true", help="Forward to train.py to evaluate savings compared to baseline.")
+    parser.add_argument("--eval-months", type=int, default=6, help="Number of months to evaluate savings over (forwarded to train.py)")
 
     parser.add_argument("--session", help="Session ID")
 
@@ -249,6 +256,8 @@ def main():
         dashboard_hours=args.dashboard_hours,
         carry_over_state=args.carry_over_state,
         seed=args.seed,
+        evaluate_savings=args.evaluate_savings,
+        eval_months=args.eval_months,
     )
     if failures:
         print(f"{failures} run(s) failed")
