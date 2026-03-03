@@ -114,5 +114,5 @@ def baseline_step(
     baseline_cost_off = power_cost(num_used_nodes, 0, current_price)
     env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
 
-    num_used_cores = np.sum((baseline_state['nodes'] > 0) * CORES_PER_NODE)
+    num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(baseline_cores_available)
     return baseline_cost, baseline_cost_off, baseline_next_empty_slot, next_job_id, num_used_nodes, num_used_cores
