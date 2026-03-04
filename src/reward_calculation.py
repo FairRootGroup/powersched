@@ -41,8 +41,16 @@ class RewardCalculator:
     PRICE_NODE_TAU_NEG = 40.0
     NEGATIVE_PRICE_NODE_TAU = 14.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
-    NEGATIVE_PRICE_SUPER_BONUS = 0.4
-    PRICE_REWARD_OVERDRIVE_BASELINE = 1.05 # Guarantees negative-price overdrive stays above the best non-negative price reward.
+    # Overdrive terms for negative prices:
+    # - gain controls overdrive strength during negative-price windows
+    # - floor guarantees a minimum positive drive proportional to negative-price strength and used work
+    # Toggle behavior:
+    # - capped mode (default): overdrive is folded into tanh, so reward stays <= 1
+    # - uncapped mode: overdrive is added after tanh and can exceed 1 up to NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD
+    NEGATIVE_PRICE_OVERDRIVE_GAIN = 2.5
+    NEGATIVE_PRICE_OVERDRIVE_FLOOR = 0.35
+    NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE = True
+    NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD = 1.5
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -124,10 +132,10 @@ class RewardCalculator:
 
     def _reward_price(self, current_price: float, average_future_price: float, num_used_nodes: int) -> float:
         """
-        Active price reward with fast saturation and negative-price overdrive.
+        Active signed price reward with fast saturation and negative-price overdrive.
 
         - Saturates quickly with better-than-context prices and used nodes.
-        - Adds an extra strong bonus if work is done when price is negative.
+        - Always applies overdrive when current price is negative.
         """
         
         if num_used_nodes <= 0:
@@ -140,13 +148,32 @@ class RewardCalculator:
         advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
         tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
         node_component = 1.0 - np.exp(-num_used_nodes / tau)
-        reward = np.tanh(advantage_component * node_component)
+        raw_reward = advantage_component * node_component
 
         if current_price < 0.0:
+            # Negative-price overdrive:
+            # - negative_strength: how strongly negative the current price is (saturates to 1).
+            # - negative_node_component: how much usable work is active (used-node saturation).
+            # - overdrive: combined activation of "cheap enough" and "enough work running".
+            # The floor guarantees a minimum positive incentive during negative-price windows,
+            # scaled by overdrive instead of a fixed constant.
             negative_strength = (1.0 - np.exp(-abs(current_price) / self.NEGATIVE_PRICE_TAU))
             negative_node_component = (1.0 - np.exp(-num_used_nodes / self.NEGATIVE_PRICE_NODE_TAU))
-            super_bonus = self.NEGATIVE_PRICE_SUPER_BONUS * negative_node_component * negative_strength
-            reward = max(reward, self.PRICE_REWARD_OVERDRIVE_BASELINE + super_bonus)
+            overdrive = negative_node_component * negative_strength
+
+            if self.NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE:
+                # Uncapped mode: keep signed base in [-1, 1], then add overdrive on top.
+                # This allows >1 reward in negative-price periods, up to configurable max.
+                reward = np.tanh(raw_reward) + self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = min(reward, self.NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD)
+            else:
+                # Capped mode: fold overdrive into raw score before tanh, keeping reward <= 1.
+                raw_reward += self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = np.tanh(raw_reward)
+
+            reward = max(reward, self.NEGATIVE_PRICE_OVERDRIVE_FLOOR * overdrive)
+        else:
+            reward = np.tanh(raw_reward)
 
         return reward
 
@@ -196,7 +223,7 @@ class RewardCalculator:
         total_work = num_used_nodes * COST_USED_MW + num_idle_nodes * COST_IDLE_MW
         if total_work <= 0.0:
             return 0.0  # nothing on => no "efficiency" signal
-        return float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))
+        return 2*(float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))) - 1.0 # scale to [-1, 1] so that it can be weighted in either direction without exceeding bounds.
 
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
