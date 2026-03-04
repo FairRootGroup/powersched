@@ -33,12 +33,14 @@ def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -
 class RewardCalculator:
         
     """Calculates rewards with pre-computed normalization bounds."""
-    PRICE_ADVANTAGE_GAIN = 3.0
-    # Asymmetric job scaling: penalize high-price execution faster than we reward low-price execution.
-    PRICE_JOB_TAU_POS = 850.0
-    PRICE_JOB_TAU_NEG = 300.0
-    NEGATIVE_PRICE_JOB_TAU = 30.0  # faster job saturation only for negative-price overdrive
-    NEGATIVE_PRICE_TAU = 12.0
+    # Faster response so price signal reacts on the same horizon as node-efficiency actions.
+    # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
+    PRICE_ADVANTAGE_GAIN = 4.0
+    # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
+    PRICE_NODE_TAU_POS = 70.0
+    PRICE_NODE_TAU_NEG = 40.0
+    NEGATIVE_PRICE_NODE_TAU = 14.0  # fast node saturation only for negative-price overdrive
+    NEGATIVE_PRICE_TAU = 8.0
     NEGATIVE_PRICE_SUPER_BONUS = 0.4
     PRICE_REWARD_OVERDRIVE_BASELINE = 1.05 # Guarantees negative-price overdrive stays above the best non-negative price reward.
 
@@ -120,30 +122,30 @@ class RewardCalculator:
         current_reward = self._reward_price_legacy(current_price, average_future_price, num_processed_jobs)
         return self._normalize(current_reward, self._min_price_reward_legacy, self._max_price_reward_legacy)
 
-    def _reward_price(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
+    def _reward_price(self, current_price: float, average_future_price: float, num_used_nodes: int) -> float:
         """
         Active price reward with fast saturation and negative-price overdrive.
 
-        - Saturates quickly with better-than-context prices and processed jobs.
+        - Saturates quickly with better-than-context prices and used nodes.
         - Adds an extra strong bonus if work is done when price is negative.
         """
         
-        if num_processed_jobs <= 0:
+        if num_used_nodes <= 0:
             return 0.0
 
         context_avg = self._price_context_average(average_future_price)
         price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
         relative_advantage = (context_avg - current_price) / price_span
 
-        advantage_component = np.tanh(self.PRICE_ADVANTAGE_GAIN * relative_advantage)
-        tau = self.PRICE_JOB_TAU_POS if advantage_component >= 0.0 else self.PRICE_JOB_TAU_NEG
-        job_component = (1.0 - np.exp(-num_processed_jobs / tau))
-        reward = advantage_component * job_component
+        advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
+        tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
+        node_component = 1.0 - np.exp(-num_used_nodes / tau)
+        reward = np.tanh(advantage_component * node_component)
 
         if current_price < 0.0:
             negative_strength = (1.0 - np.exp(-abs(current_price) / self.NEGATIVE_PRICE_TAU))
-            negative_job_component = (1.0 - np.exp(-num_processed_jobs / self.NEGATIVE_PRICE_JOB_TAU))
-            super_bonus = self.NEGATIVE_PRICE_SUPER_BONUS * negative_job_component * negative_strength
+            negative_node_component = (1.0 - np.exp(-num_used_nodes / self.NEGATIVE_PRICE_NODE_TAU))
+            super_bonus = self.NEGATIVE_PRICE_SUPER_BONUS * negative_node_component * negative_strength
             reward = max(reward, self.PRICE_REWARD_OVERDRIVE_BASELINE + super_bonus)
 
         return reward
@@ -216,7 +218,7 @@ class RewardCalculator:
         return float(np.clip(penalty, -1.0, 0.0))
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
-                  num_off_nodes: int, num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - num_node_changes reserved for future node-change penalty
+                  num_off_nodes: int, _num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - _num_processed_jobs legacy; num_node_changes reserved for future node-change penalty
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None]) -> tuple[float, float, float, float, float, float]:
         """
@@ -228,7 +230,7 @@ class RewardCalculator:
             current_price: Current electricity price
             average_future_price: Average predicted future price
             num_off_nodes: Number of offline nodes
-            num_processed_jobs: Number of jobs launched this step
+            _num_processed_jobs: Number of jobs launched this step (legacy param, unused by active price reward)
             num_node_changes: Number of node state changes
             job_queue_2d: 2D job queue array
             num_unprocessed_jobs: Number of jobs waiting in queue
@@ -245,9 +247,9 @@ class RewardCalculator:
         efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes) + self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
-        # 2. increase reward if jobs were scheduled in this step and the current price is below average, with fast saturation and extra bonus for negative-price overdrive.
+        # 2. Increase reward if current price is favorable and currently used nodes are high.
         price_reward = self._reward_price(
-            current_price, average_future_price, num_processed_jobs
+            current_price, average_future_price, num_used_nodes
         )
         price_reward_weighted = weights.price_weight * price_reward
 
