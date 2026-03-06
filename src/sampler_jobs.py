@@ -315,6 +315,7 @@ class DurationSampler:
         - List of hourly simulation job dictionaries
         """
         hourly_jobs: list[Job] = []
+        expanded_jobs_count = 0
 
         for agg_job in aggregated_jobs:
             # Calculate total compute resources needed
@@ -340,27 +341,33 @@ class DurationSampler:
                     'nnodes': equivalent_nodes,
                     'cores_per_node': cores_per_node_needed,
                     'duration_hours': 1,  # 1 hour
-                    'original_job_count': agg_job['count']
+                    'original_job_count': agg_job['count'],
+                    # This template already represents the full sub-hour bin.
+                    # Do not multiply by original_job_count during replay.
+                    'instances': 1,
                 }
                 hourly_jobs.append(hourly_job)
             else:
                 # For longer jobs, keep the original structure but convert to hours
-                # with appropriate scaling
+                # with appropriate scaling. Replay must create one instance per
+                # original job to preserve core-hours and concurrency.
                 duration_hours = math.ceil(agg_job['duration_minutes'] / 60)
 
                 hourly_job = {
                     'nnodes': agg_job['nnodes'],
                     'cores_per_node': agg_job['cores_per_node'],
                     'duration_hours': duration_hours,
-                    'original_job_count': agg_job['count']
+                    'original_job_count': agg_job['count'],
+                    'instances': agg_job['count'],
                 }
                 hourly_jobs.append(hourly_job)
 
             if hourly_job['duration_hours'] > self.max_job_duration:
                 self.max_job_duration = hourly_job['duration_hours']
+            expanded_jobs_count += hourly_job.get('instances', 1)
 
-        if len(hourly_jobs) > self.max_new_jobs_per_hour:
-            self.max_new_jobs_per_hour = len(hourly_jobs)
+        if expanded_jobs_count > self.max_new_jobs_per_hour:
+            self.max_new_jobs_per_hour = expanded_jobs_count
 
         return hourly_jobs
 

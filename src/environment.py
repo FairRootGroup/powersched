@@ -72,7 +72,9 @@ class ComputeClusterEnv(gym.Env):
                  steps_per_iteration: int,
                  evaluation_mode: bool = False,
                  workload_gen: WorkloadGenerator | None = None,
-                 ) -> None:
+                 job_arrival_scale: float = 1.0,
+                 jobs_exact_replay: bool = False,
+                 jobs_exact_replay_aggregate: bool = False) -> None:
         super().__init__()
 
         self.weights = weights
@@ -85,6 +87,9 @@ class ComputeClusterEnv(gym.Env):
         self.plot_config = plot_config
         self.steps_per_iteration = steps_per_iteration
         self.evaluation_mode = evaluation_mode
+        self.job_arrival_scale = float(job_arrival_scale)
+        self.jobs_exact_replay = bool(jobs_exact_replay)
+        self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
 
         self.next_plot_save = self.steps_per_iteration
 
@@ -111,16 +116,26 @@ class ComputeClusterEnv(gym.Env):
             self.jobs_sampler.parse_jobs(self.external_jobs, 60)
             print(f"Parsed jobs for {len(self.jobs_sampler.jobs)} hours")
             print(f"Parsed aggregated jobs for {len(self.jobs_sampler.aggregated_jobs)} hours")
-            self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
-            print(f"Max jobs per hour: {self.jobs_sampler.max_new_jobs_per_hour}")
-            print(f"Max job duration: {self.jobs_sampler.max_job_duration}")
-            print(f"Parsed hourly jobs for {len(self.jobs_sampler.hourly_jobs)} hours")
+            if self.jobs_exact_replay:
+                max_raw_jobs = max((len(v) for v in self.jobs_sampler.jobs.values()), default=0)
+                if self.jobs_exact_replay_aggregate:
+                    print("Jobs replay mode: exact timeline (aggregated per step)")
+                else:
+                    print("Jobs replay mode: exact timeline (raw jobs per hour)")
+                print(f"Max raw jobs per hour: {max_raw_jobs}")
+            else:
+                self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
+                print("Jobs replay mode: aggregated hourly templates")
+                print(f"Max jobs per hour: {self.jobs_sampler.max_new_jobs_per_hour}")
+                print(f"Max job duration: {self.jobs_sampler.max_job_duration}")
+                print(f"Parsed hourly jobs for {len(self.jobs_sampler.hourly_jobs)} hours")
 
         if self.external_hourly_jobs:
             print(f"Loading hourly jobs from {self.external_hourly_jobs}")
             hourly_sampler.parse_jobs(self.external_hourly_jobs)
             hourly_sampler.precalculate_hourly_templates(CORES_PER_NODE, MAX_NODES_PER_JOB)
             print(f"Hourly sampler initialized with 24-hour distributions")
+        print(f"Job arrival scale: {self.job_arrival_scale:.3f}x")
 
         self.current_step = 0
         self.current_episode = 0
@@ -326,7 +341,10 @@ class ComputeClusterEnv(gym.Env):
             self.metrics.current_hour,
             self.external_jobs, self.external_hourly_jobs, self.external_durations,
             self.workload_gen, self.jobs_sampler if hasattr(self, 'jobs_sampler') else None,
-            hourly_sampler, durations_sampler, self.np_random
+            hourly_sampler, durations_sampler, self.np_random,
+            job_arrival_scale=self.job_arrival_scale,
+            jobs_exact_replay=self.jobs_exact_replay,
+            jobs_exact_replay_aggregate=self.jobs_exact_replay_aggregate,
         )
 
         # Add new jobs to queue (overflow goes to helper)
