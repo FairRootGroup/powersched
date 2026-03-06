@@ -30,6 +30,22 @@ def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -
     return total_cost
 
 
+def power_consumption_mwh(num_used_nodes: int, num_idle_nodes: int) -> float:
+    """
+    Calculate energy consumption for one environment step.
+
+    One environment step equals one hour, so this is both average MW and MWh/step.
+
+    Args:
+        num_used_nodes: Number of nodes with jobs running
+        num_idle_nodes: Number of idle (on but unused) nodes
+
+    Returns:
+        Energy consumption in MWh for this step
+    """
+    return COST_IDLE_MW * num_idle_nodes + COST_USED_MW * num_used_nodes
+
+
 class RewardCalculator:
         
     """Calculates rewards with pre-computed normalization bounds."""

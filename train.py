@@ -234,10 +234,18 @@ def main():
             savings_vs_baseline_off = env.metrics.baseline_cost_off - env.metrics.total_cost
             completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
             avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
+            agent_power_mwh = env.metrics.episode_total_power_consumption_mwh
+            baseline_power_mwh = env.metrics.episode_baseline_power_consumption_mwh
+            baseline_power_off_mwh = env.metrics.episode_baseline_power_consumption_off_mwh
+            agent_mean_price = (env.metrics.episode_total_cost / agent_power_mwh) if agent_power_mwh > 0 else 0.0
+            baseline_mean_price = (env.metrics.episode_baseline_cost / baseline_power_mwh) if baseline_power_mwh > 0 else 0.0
+            baseline_off_mean_price = (env.metrics.episode_baseline_cost_off / baseline_power_off_mwh) if baseline_power_off_mwh > 0 else 0.0
             print(f"  Episode {episode + 1}: "
                 f"Agent Cost=€{env.metrics.total_cost:.0f}, "
                 f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
+                f"Power={agent_power_mwh:.1f}/{baseline_power_mwh:.1f}/{baseline_power_off_mwh:.1f} MWh (agent/base/base_off), "
+                f"MeanPrice={agent_mean_price:.2f}/{baseline_mean_price:.2f}/{baseline_off_mean_price:.2f} €/MWh (agent/base/base_off), "
                 f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
                 f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
@@ -273,17 +281,35 @@ def main():
                 avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * ep['baseline_jobs_completed'] for ep in env.metrics.episode_costs) / total_baseline_completed if total_baseline_completed > 0 else 0
                 avg_max_queue = sum(ep['max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
                 avg_baseline_max_queue = sum(ep['baseline_max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
+                total_agent_cost = sum(float(ep['agent_cost']) for ep in env.metrics.episode_costs)
+                total_baseline_cost = sum(float(ep['baseline_cost']) for ep in env.metrics.episode_costs)
+                total_baseline_off_cost = sum(float(ep['baseline_cost_off']) for ep in env.metrics.episode_costs)
+                total_agent_power_mwh = sum(float(ep.get('agent_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_power_mwh = sum(float(ep.get('baseline_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_off_power_mwh = sum(float(ep.get('baseline_power_consumption_off_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_agent_mean_price = (total_agent_cost / total_agent_power_mwh) if total_agent_power_mwh > 0 else 0.0
+                total_baseline_mean_price = (total_baseline_cost / total_baseline_power_mwh) if total_baseline_power_mwh > 0 else 0.0
+                total_baseline_off_mean_price = (total_baseline_off_cost / total_baseline_off_power_mwh) if total_baseline_off_power_mwh > 0 else 0.0
 
                 print(f"\n=== JOB PROCESSING METRICS ===")
                 print(f"\nAgent:")
                 print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_jobs_completed/total_jobs_submitted*100:.1f}%)")
                 print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
+                print(f"  Total Cost: €{total_agent_cost:,.0f}")
 
                 print(f"\nBaseline:")
                 print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completed/total_baseline_submitted*100:.1f}%)")
                 print(f"  Average Wait Time: {avg_baseline_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_baseline_max_queue:.0f}")
+                print(f"  Baseline Total Cost: €{total_baseline_cost:,.0f}")
+                print(f"  Baseline_off Total Cost: €{total_baseline_off_cost:,.0f}")
+
+
+                print(f"\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")
+                print(f"  Agent:        Power={total_agent_power_mwh:,.1f} MWh, Mean Price={total_agent_mean_price:.2f} €/MWh")
+                print(f"  Baseline:     Power={total_baseline_power_mwh:,.1f} MWh, Mean Price={total_baseline_mean_price:.2f} €/MWh")
+                print(f"  Baseline_off: Power={total_baseline_off_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_mean_price:.2f} €/MWh")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 

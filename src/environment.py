@@ -27,7 +27,7 @@ from src.job_management import (
     assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue
 )
 from src.node_management import adjust_nodes
-from src.reward_calculation import RewardCalculator
+from src.reward_calculation import RewardCalculator, power_consumption_mwh
 from src.baseline import baseline_step
 from src.workload_generator import generate_jobs
 from src.metrics_tracker import MetricsTracker
@@ -452,7 +452,7 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"[5] Calculating reward...")
 
         # Baseline step
-        baseline_cost, baseline_cost_off, self.baseline_next_empty_slot, self.next_job_id, baseline_num_used_nodes, baseline_num_used_cores = baseline_step(
+        baseline_cost, baseline_cost_off, baseline_power_mwh, baseline_power_off_mwh, self.baseline_next_empty_slot, self.next_job_id, baseline_num_used_nodes, baseline_num_used_cores = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
             self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print,
@@ -463,6 +463,10 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.baseline_cost_off += baseline_cost_off
         self.metrics.episode_baseline_cost += baseline_cost
         self.metrics.episode_baseline_cost_off += baseline_cost_off
+        self.metrics.baseline_power_consumption_mwh += baseline_power_mwh
+        self.metrics.baseline_power_consumption_off_mwh += baseline_power_off_mwh
+        self.metrics.episode_baseline_power_consumption_mwh += baseline_power_mwh
+        self.metrics.episode_baseline_power_consumption_off_mwh += baseline_power_off_mwh
 
         self.metrics.episode_baseline_used_nodes.append(baseline_num_used_nodes)
         self.metrics.episode_baseline_used_cores.append(baseline_num_used_cores)
@@ -476,6 +480,9 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_reward += step_reward
         self.metrics.total_cost += step_cost
         self.metrics.episode_total_cost += step_cost
+        step_power_mwh = power_consumption_mwh(num_used_nodes, num_idle_nodes)
+        self.metrics.total_power_consumption_mwh += step_power_mwh
+        self.metrics.episode_total_power_consumption_mwh += step_power_mwh
 
         # Store normalized reward components for plotting
         self.metrics.eff_rewards.append(eff_reward_norm * 100)

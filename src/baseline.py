@@ -12,7 +12,7 @@ from src.job_management import (
     age_backlog_queue,
 )
 from src.metrics_tracker import MetricsTracker
-from src.reward_calculation import power_cost
+from src.reward_calculation import power_cost, power_consumption_mwh
 from src.config import CORES_PER_NODE
 
 
@@ -30,7 +30,7 @@ def baseline_step(
         metrics: MetricsTracker,
         env_print: Callable[..., None],
         baseline_backlog_queue: deque,
-) -> tuple[float, float, int, int]:
+) -> tuple[float, float, float, float, int, int, int, int]:
     """
     Run one step of the baseline simulation for comparison.
 
@@ -52,7 +52,12 @@ def baseline_step(
         baseline_backlog_queue: Overflow queue for jobs that don't fit in the main queue
 
     Returns:
-        Tuple of (baseline_cost, baseline_cost_off, updated baseline_next_empty_slot, updated next_job_id)
+        Tuple of (
+            baseline_cost, baseline_cost_off,
+            baseline_power_mwh, baseline_power_off_mwh,
+            updated baseline_next_empty_slot, updated next_job_id,
+            baseline_num_used_nodes, baseline_num_used_cores
+        )
     """
     job_queue_2d = baseline_state['job_queue'].reshape(-1, 4)
 
@@ -113,6 +118,17 @@ def baseline_step(
     env_print(f"    > baseline_cost: €{baseline_cost:.4f} | used nodes: {num_used_nodes}, idle nodes: {num_idle_nodes}")
     baseline_cost_off = power_cost(num_used_nodes, 0, current_price)
     env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
+    baseline_power_mwh = power_consumption_mwh(num_used_nodes, num_idle_nodes)
+    baseline_power_off_mwh = power_consumption_mwh(num_used_nodes, 0)
 
     num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(baseline_cores_available)
-    return baseline_cost, baseline_cost_off, baseline_next_empty_slot, next_job_id, num_used_nodes, num_used_cores
+    return (
+        baseline_cost,
+        baseline_cost_off,
+        baseline_power_mwh,
+        baseline_power_off_mwh,
+        baseline_next_empty_slot,
+        next_job_id,
+        num_used_nodes,
+        num_used_cores,
+    )
