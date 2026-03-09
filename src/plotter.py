@@ -171,8 +171,8 @@ def plot_episode(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: b
 
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plt.savefig(f"{env.plots_dir}{prefix}_{suffix:09d}_{timestamp}.png")
-        print(f"Figure saved as: {env.plots_dir}{prefix}_{suffix:09d}_{timestamp}.png\nExpecting next save after {env.next_plot_save + env.steps_per_iteration}")
+        plt.savefig(f"{env.plots_dir}{prefix}_ep_{suffix:09d}_{timestamp}.png")
+        print(f"Figure saved as: {env.plots_dir}{prefix}_ep_{suffix:09d}_{timestamp}.png\nExpecting next save after {env.next_plot_save + env.steps_per_iteration}")
     if show:
         plt.show()
 
@@ -325,7 +325,7 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
     prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_a{env.weights.job_age_weight}_d{env.weights.drop_weight}"
     if save:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        fname = f"{prefix}_{suffix}_{timestamp}.png"
+        fname = f"{prefix}_dash_{suffix:09d}_{timestamp}.png" if isinstance(suffix, int) else f"{prefix}_{suffix}_{timestamp}.png"
         save_path = os.path.join(env.plots_dir, fname)
         plt.savefig(save_path, dpi=200, bbox_inches="tight")
         print(f"Dashboard figure saved as: {save_path}")
