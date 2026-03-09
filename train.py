@@ -55,7 +55,6 @@ def main():
     add_workloadgen_args(parser)
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
-    parser.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
@@ -134,8 +133,7 @@ def main():
                             plot_config=plot_config,
                             steps_per_iteration=STEPS_PER_ITERATION,
                             evaluation_mode=args.evaluate_savings,
-                            workload_gen=workload_gen,
-                            carry_over_state=args.carry_over_state)
+                            workload_gen=workload_gen)
     env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir

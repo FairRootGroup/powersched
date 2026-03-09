@@ -253,8 +253,6 @@ def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str
         "--wg-burst-heavy-prob",
         str(args.wg_burst_heavy_prob),
     ]
-    if args.carry_over_state:
-        cmd.append("--carry-over-state")
     if args.plot_dashboard:
         cmd.append("--plot-dashboard")
     if args.dashboard_hours is not None:
@@ -639,7 +637,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--eval-months", type=int, default=12)
     parser.add_argument("--model", type=int, default=1000000)
 
-    parser.add_argument("--carry-over-state", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dashboard-hours", type=int, default=None)
 
