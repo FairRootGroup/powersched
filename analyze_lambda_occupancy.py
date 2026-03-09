@@ -7,6 +7,9 @@ Sweep workload Poisson lambda values and analyze:
 4) lambda -> completion rate
 5) occupancy -> effective savings
 6) occupancy -> effective savings_off
+7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
+8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
+9) occupancy -> (baseline_off - agent) power / baseline_off
 
 For each lambda, this script runs train.py in evaluation mode for one year
 (12 months = 24 episodes), parses per-episode metrics from stdout, computes
@@ -39,6 +42,10 @@ import numpy as np
 EPISODE_RE = re.compile(
     r"Episode\s+(?P<episode>\d+):.*?"
     r"Savings=€(?P<savings>-?[\d,]+(?:\.\d+)?)\/€(?P<savings_off>-?[\d,]+(?:\.\d+)?),.*?"
+    r"Power=(?P<agent_power>-?[\d.]+)\/(?P<baseline_power>-?[\d.]+)\/(?P<baseline_off_power>-?[\d.]+)\s*MWh.*?"
+    r"CostPer1kCompleted=(?P<agent_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\/"
+    r"(?P<baseline_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\/"
+    r"(?P<baseline_off_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\s*€/1k.*?"
     r"Jobs=[\d,]+\/[\d,]+\s+\((?P<completion_rate>-?[\d.]+)%\),\s*"
     r"AvgWait=(?P<avg_wait>-?[\d.]+)h,.*?"
     r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%",
@@ -72,6 +79,12 @@ class LambdaRunStats:
     effective_savings_std: float
     effective_savings_off_mean: float
     effective_savings_off_std: float
+    cost_per_1k_delta_pct_baseline_mean: float
+    cost_per_1k_delta_pct_baseline_std: float
+    cost_per_1k_delta_pct_baseline_off_mean: float
+    cost_per_1k_delta_pct_baseline_off_std: float
+    power_delta_pct_baseline_off_mean: float
+    power_delta_pct_baseline_off_std: float
     annual_total_savings: float
     annual_total_savings_off: float
     command: list[str]
@@ -82,10 +95,22 @@ class LambdaRunStats:
     completion_rate_samples: list[float] = field(default_factory=list)
     effective_savings_samples: list[float] = field(default_factory=list)
     effective_savings_off_samples: list[float] = field(default_factory=list)
+    cost_per_1k_delta_pct_baseline_samples: list[float] = field(default_factory=list)
+    cost_per_1k_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
+    power_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
 
 
 def _to_float(raw: str) -> float:
     return float(raw.replace(",", ""))
+
+
+def _to_float_or_nan(raw: str | None) -> float:
+    if raw is None:
+        return float("nan")
+    val = raw.strip().lower()
+    if val in {"n/a", "nan"}:
+        return float("nan")
+    return _to_float(raw)
 
 
 def _diff_cumulative(values: list[float]) -> np.ndarray:
@@ -95,12 +120,17 @@ def _diff_cumulative(values: list[float]) -> np.ndarray:
     return np.diff(np.concatenate(([0.0], arr)))
 
 
-def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     occupancy = []
     cumulative_savings = []
     cumulative_savings_off = []
     completion_rate = []
     avg_wait = []
+    agent_cost_1k = []
+    baseline_cost_1k = []
+    baseline_off_cost_1k = []
+    agent_power = []
+    baseline_off_power = []
 
     for match in EPISODE_RE.finditer(stdout):
         occupancy.append(_to_float(match.group("occupancy")))
@@ -108,6 +138,11 @@ def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
         cumulative_savings_off.append(_to_float(match.group("savings_off")))
         completion_rate.append(_to_float(match.group("completion_rate")))
         avg_wait.append(_to_float(match.group("avg_wait")))
+        agent_cost_1k.append(_to_float_or_nan(match.group("agent_cost_1k")))
+        baseline_cost_1k.append(_to_float_or_nan(match.group("baseline_cost_1k")))
+        baseline_off_cost_1k.append(_to_float_or_nan(match.group("baseline_off_cost_1k")))
+        agent_power.append(_to_float(match.group("agent_power")))
+        baseline_off_power.append(_to_float(match.group("baseline_off_power")))
 
     if not occupancy:
         raise RuntimeError(
@@ -123,6 +158,11 @@ def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
         episode_savings_off,
         np.asarray(completion_rate, dtype=float),
         np.asarray(avg_wait, dtype=float),
+        np.asarray(agent_cost_1k, dtype=float),
+        np.asarray(baseline_cost_1k, dtype=float),
+        np.asarray(baseline_off_cost_1k, dtype=float),
+        np.asarray(agent_power, dtype=float),
+        np.asarray(baseline_off_power, dtype=float),
     )
 
 
@@ -137,6 +177,16 @@ def safe_divide(numer: np.ndarray, denom: float) -> np.ndarray:
     if abs(denom) < 1e-12:
         return np.full_like(numer, np.nan, dtype=float)
     return numer / denom
+
+
+def safe_divide_arrays(numer: np.ndarray, denom: np.ndarray) -> np.ndarray:
+    numer_arr = np.asarray(numer, dtype=float)
+    denom_arr = np.asarray(denom, dtype=float)
+    out = np.full_like(numer_arr, np.nan, dtype=float)
+    finite = np.isfinite(numer_arr) & np.isfinite(denom_arr)
+    valid = finite & (np.abs(denom_arr) >= 1e-12)
+    out[valid] = numer_arr[valid] / denom_arr[valid]
+    return out
 
 
 def finite_mean_std(values: np.ndarray) -> tuple[float, float]:
@@ -156,12 +206,23 @@ def make_run_stats(
     completion_rate: np.ndarray,
     agent_avg_wait_hours: float,
     baseline_avg_wait_hours: float,
+    agent_cost_1k: np.ndarray,
+    baseline_cost_1k: np.ndarray,
+    baseline_off_cost_1k: np.ndarray,
+    agent_power: np.ndarray,
+    baseline_off_power: np.ndarray,
 ) -> LambdaRunStats:
     wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
     effective_savings = safe_divide(savings * (completion_rate/100)**2, wait_delta_hours+1)
     effective_savings_off = safe_divide(savings_off * (completion_rate/100)**2, wait_delta_hours+1)
     effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
     effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
+    cost_per_1k_delta_pct_baseline = safe_divide_arrays((baseline_cost_1k - agent_cost_1k) * 100.0, baseline_cost_1k)
+    cost_per_1k_delta_pct_baseline_off = safe_divide_arrays((baseline_off_cost_1k - agent_cost_1k) * 100.0, baseline_off_cost_1k)
+    power_delta_pct_baseline_off = safe_divide_arrays((baseline_off_power - agent_power) * 100.0, baseline_off_power)
+    cost_per_1k_delta_pct_baseline_mean, cost_per_1k_delta_pct_baseline_std = finite_mean_std(cost_per_1k_delta_pct_baseline)
+    cost_per_1k_delta_pct_baseline_off_mean, cost_per_1k_delta_pct_baseline_off_std = finite_mean_std(cost_per_1k_delta_pct_baseline_off)
+    power_delta_pct_baseline_off_mean, power_delta_pct_baseline_off_std = finite_mean_std(power_delta_pct_baseline_off)
     return LambdaRunStats(
         lambda_value=lambda_value,
         episodes=int(occupancy.size),
@@ -180,6 +241,12 @@ def make_run_stats(
         effective_savings_std=effective_savings_std,
         effective_savings_off_mean=effective_savings_off_mean,
         effective_savings_off_std=effective_savings_off_std,
+        cost_per_1k_delta_pct_baseline_mean=cost_per_1k_delta_pct_baseline_mean,
+        cost_per_1k_delta_pct_baseline_std=cost_per_1k_delta_pct_baseline_std,
+        cost_per_1k_delta_pct_baseline_off_mean=cost_per_1k_delta_pct_baseline_off_mean,
+        cost_per_1k_delta_pct_baseline_off_std=cost_per_1k_delta_pct_baseline_off_std,
+        power_delta_pct_baseline_off_mean=power_delta_pct_baseline_off_mean,
+        power_delta_pct_baseline_off_std=power_delta_pct_baseline_off_std,
         annual_total_savings=float(np.sum(savings)),
         annual_total_savings_off=float(np.sum(savings_off)),
         command=command,
@@ -190,6 +257,9 @@ def make_run_stats(
         completion_rate_samples=completion_rate.tolist(),
         effective_savings_samples=effective_savings.tolist(),
         effective_savings_off_samples=effective_savings_off.tolist(),
+        cost_per_1k_delta_pct_baseline_samples=cost_per_1k_delta_pct_baseline.tolist(),
+        cost_per_1k_delta_pct_baseline_off_samples=cost_per_1k_delta_pct_baseline_off.tolist(),
+        power_delta_pct_baseline_off_samples=power_delta_pct_baseline_off.tolist(),
     )
 
 
@@ -280,7 +350,7 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
             f"Last output lines:\n{os_tail(combined_output, lines=40)}"
         )
 
-    occupancy, savings, savings_off, completion_rate, avg_wait = parse_episode_metrics(combined_output)
+    occupancy, savings, savings_off, completion_rate, avg_wait, agent_cost_1k, baseline_cost_1k, baseline_off_cost_1k, agent_power, baseline_off_power = parse_episode_metrics(combined_output)
     agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
     if agent_wait_summary is None or baseline_wait_summary is None:
         print(f"[warn] lambda={lambda_value}: could not parse run-level wait summary; effective savings may be NaN.")
@@ -298,6 +368,11 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         completion_rate,
         agent_avg_wait_hours,
         baseline_avg_wait_hours,
+        agent_cost_1k,
+        baseline_cost_1k,
+        baseline_off_cost_1k,
+        agent_power,
+        baseline_off_power,
     )
     print(
         f"[ok ] lambda={lambda_value}: "
@@ -421,6 +496,12 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
         "effective_savings_std",
         "effective_savings_off_mean",
         "effective_savings_off_std",
+        "cost_per_1k_delta_pct_baseline_mean",
+        "cost_per_1k_delta_pct_baseline_std",
+        "cost_per_1k_delta_pct_baseline_off_mean",
+        "cost_per_1k_delta_pct_baseline_off_std",
+        "power_delta_pct_baseline_off_mean",
+        "power_delta_pct_baseline_off_std",
         "annual_total_savings_eur",
         "annual_total_savings_off_eur",
     ]
@@ -447,6 +528,12 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
                     "effective_savings_std": f"{s.effective_savings_std:.6f}",
                     "effective_savings_off_mean": f"{s.effective_savings_off_mean:.6f}",
                     "effective_savings_off_std": f"{s.effective_savings_off_std:.6f}",
+                    "cost_per_1k_delta_pct_baseline_mean": f"{s.cost_per_1k_delta_pct_baseline_mean:.6f}",
+                    "cost_per_1k_delta_pct_baseline_std": f"{s.cost_per_1k_delta_pct_baseline_std:.6f}",
+                    "cost_per_1k_delta_pct_baseline_off_mean": f"{s.cost_per_1k_delta_pct_baseline_off_mean:.6f}",
+                    "cost_per_1k_delta_pct_baseline_off_std": f"{s.cost_per_1k_delta_pct_baseline_off_std:.6f}",
+                    "power_delta_pct_baseline_off_mean": f"{s.power_delta_pct_baseline_off_mean:.6f}",
+                    "power_delta_pct_baseline_off_std": f"{s.power_delta_pct_baseline_off_std:.6f}",
                     "annual_total_savings_eur": f"{s.annual_total_savings:.6f}",
                     "annual_total_savings_off_eur": f"{s.annual_total_savings_off:.6f}",
                 }
@@ -471,6 +558,12 @@ def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats], fit: bool = Fal
     eff_sav_std = np.array([s.effective_savings_std for s in ordered], dtype=float)
     eff_sav_off_mean = np.array([s.effective_savings_off_mean for s in ordered], dtype=float)
     eff_sav_off_std = np.array([s.effective_savings_off_std for s in ordered], dtype=float)
+    cost_per_1k_delta_base_mean = np.array([s.cost_per_1k_delta_pct_baseline_mean for s in ordered], dtype=float)
+    cost_per_1k_delta_base_std = np.array([s.cost_per_1k_delta_pct_baseline_std for s in ordered], dtype=float)
+    cost_per_1k_delta_base_off_mean = np.array([s.cost_per_1k_delta_pct_baseline_off_mean for s in ordered], dtype=float)
+    cost_per_1k_delta_base_off_std = np.array([s.cost_per_1k_delta_pct_baseline_off_std for s in ordered], dtype=float)
+    power_delta_base_off_mean = np.array([s.power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
+    power_delta_base_off_std = np.array([s.power_delta_pct_baseline_off_std for s in ordered], dtype=float)
 
     lam_min = float(np.min(lambdas))
     lam_max = float(np.max(lambdas))
@@ -510,9 +603,10 @@ def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats], fit: bool = Fal
                 alpha=0.95,
             )
 
-    fig, axes = plt.subplots(2, 3, figsize=(20, 12), constrained_layout=True)
+    fig, axes = plt.subplots(3, 3, figsize=(20, 17), constrained_layout=True)
     ax00, ax01, ax02 = axes[0]
     ax10, ax11, ax12 = axes[1]
+    ax20, ax21, ax22 = axes[2]
 
     # Panel 1: lambda vs occupancy.
     plot_colored_points(ax00, lambdas, occ_mean, yerr=occ_std)
@@ -607,6 +701,54 @@ def make_plot(path: Path, stats_by_lambda: list[LambdaRunStats], fit: bool = Fal
     ax12.grid(alpha=0.3)
     if coeffs is not None:
         ax12.legend()
+
+    # Panel 7: occupancy vs cost_per_1k delta (%) vs baseline.
+    plot_colored_points(ax20, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax20.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax20.set_title("Occupancy vs Cost/1k Delta vs Baseline")
+    ax20.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax20.set_ylabel("(Baseline - Agent) / Baseline  [%]")
+    ax20.grid(alpha=0.3)
+    if coeffs is not None:
+        ax20.legend()
+
+    # Panel 8: occupancy vs cost_per_1k delta (%) vs baseline_off.
+    plot_colored_points(ax21, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax21.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax21.set_title("Occupancy vs Cost/1k Delta vs Baseline_off")
+    ax21.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax21.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
+    ax21.grid(alpha=0.3)
+    if coeffs is not None:
+        ax21.legend()
+
+    # Panel 9: occupancy vs power delta (%) vs baseline_off.
+    plot_colored_points(ax22, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, power_delta_base_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(power_delta_base_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax22.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax22.set_title("Occupancy vs Power Delta vs Baseline_off")
+    ax22.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax22.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
+    ax22.grid(alpha=0.3)
+    if coeffs is not None:
+        ax22.legend()
 
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
