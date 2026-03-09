@@ -10,7 +10,7 @@ from colorama import init, Fore
 from src.prices import Prices
 from src.weights import Weights
 from src.plot_config import PlotConfig
-from src.plot import plot, plot_reward
+from src.plotter import plot_episode
 from src.sampler_duration import durations_sampler
 from src.sampler_jobs import DurationSampler
 from src.sampler_hourly import hourly_sampler
@@ -504,20 +504,17 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f"price: current: {current_price}, average future: {average_future_price:.4f}")
         self.env_print(f"step reward: {step_reward:.4f}, episode reward: {self.metrics.episode_reward:.4f}")
 
-        if self.plot_config.plot_rewards:
-            plot_reward(self, num_used_nodes, num_idle_nodes, current_price, num_off_nodes, average_future_price, num_launched_jobs, num_node_changes, job_queue_2d, MAX_NODES)
-
         truncated = False
         terminated = False
         if self.metrics.current_hour == EPISODE_HOURS:
             if self.render_mode == 'human':
-                plot(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
+                plot_episode(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
                 if self.plot_config.plot_once:
                     raise PlottingComplete
             else:
                 # Only do training plots in training mode
                 if not self.evaluation_mode and self.current_step > self.next_plot_save:
-                    plot(self, EPISODE_HOURS, MAX_NODES, True, False, self.current_step)
+                    plot_episode(self, EPISODE_HOURS, MAX_NODES, True, False, self.current_step)
                     self.next_plot_save += self.steps_per_iteration
                     print(self.next_plot_save)
             truncated = True

@@ -6,7 +6,6 @@ from src.environment import ComputeClusterEnv, Weights, PlottingComplete
 from src.plot_config import PlotConfig
 from src.callbacks import ComputeClusterCallback
 from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_summary
-from src.plot import plot_cumulative_savings as plot_cumulative_savings_legacy
 import re
 import glob
 import argparse
@@ -34,7 +33,6 @@ def main():
     parser.add_argument('--job-durations', type=str, nargs='?', const="", default="", help='Path to a file containing job duration samples (for use with durations_sampler)')
     parser.add_argument('--jobs', type=str, nargs='?', const="", default="", help='Path to a file containing job samples (for use with jobs_sampler)')
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
-    parser.add_argument('--plot-rewards', action='store_true', help='Per step, plot rewards for all possible num_idle_nodes & num_used_nodes (default: False).')
     parser.add_argument('--plot-eff-reward', action=argparse.BooleanOptionalAction, default=True, help='Include efficiency reward in the plot (dashed line).')
     parser.add_argument('--plot-price-reward', action=argparse.BooleanOptionalAction, default=True, help='Include price reward in the plot (dashed line).')
     parser.add_argument('--plot-idle-penalty', action=argparse.BooleanOptionalAction, default=True, help='Include idle penalty in the plot (dashed line).')
@@ -114,7 +112,6 @@ def main():
 
     plot_config = PlotConfig(
         quick_plot=args.quick_plot,
-        plot_rewards=args.plot_rewards,
         plot_once=args.plot_once,
         plot_eff_reward=args.plot_eff_reward,
         plot_price_reward=args.plot_price_reward,
@@ -234,22 +231,7 @@ def main():
         session_dir = f"sessions/{args.session}"
         try:
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
-            plot_cumulative_savings_legacy(
-                env,
-                env.metrics.episode_costs,
-                session_dir,
-                months=args.eval_months,
-                save=True,
-                show=args.render == 'human',
-            )
-            plot_episode_summary(
-                env,
-                env.metrics.episode_costs,
-                session_dir,
-                save=True,
-                show=args.render == 'human',
-                suffix=f"eval_{args.eval_months}m",
-            )
+            plot_episode_summary(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human', suffix=f"eval_{args.eval_months}m")
             if results:
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")

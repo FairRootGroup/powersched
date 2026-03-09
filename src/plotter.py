@@ -85,6 +85,100 @@ def _compute_cumulative_savings(episode_costs: list[dict[str, float | int]]) -> 
     }
 
 
+def plot_episode(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: bool = True, show: bool = True, suffix: int = 0) -> None:
+    hours = np.arange(num_hours)
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    color = 'tab:blue'
+    ax1.set_xlabel('Hours')
+    ax1.set_ylabel('Electricity Price (€/MWh)', color=color)
+    if env.plot_config.plot_price:
+        ax1.plot(hours, env.metrics.episode_price_stats, color=color, label='Electricity Price (€/MWh)')
+    ax1.tick_params(axis='y', labelcolor=color)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Count / Rewards', color='tab:orange')
+
+    if env.plot_config.plot_online_nodes:
+        ax2.plot(hours, env.metrics.episode_on_nodes, color='orange', label='Online Nodes')
+    if env.plot_config.plot_used_nodes:
+        ax2.plot(hours, env.metrics.episode_used_nodes, color='green', label='Used Nodes')
+    if env.plot_config.plot_job_queue:
+        ax2.plot(hours, env.metrics.episode_job_queue_sizes, color='red', label='Job Queue Size')
+
+    if env.plot_config.plot_eff_reward:
+        ax2.plot(hours, env.metrics.episode_eff_rewards, color='brown', linestyle='--', label='Efficiency Rewards')
+    if env.plot_config.plot_price_reward:
+        ax2.plot(hours, env.metrics.episode_price_rewards, color='blue', linestyle='--', label='Price Rewards')
+    if env.plot_config.plot_idle_penalty:
+        ax2.plot(hours, env.metrics.episode_idle_penalties, color='green', linestyle='--', label='Idle Penalties')
+    if env.plot_config.plot_job_age_penalty:
+        ax2.plot(hours, env.metrics.episode_job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties')
+
+    ax2.tick_params(axis='y')
+    if env.plot_config.plot_idle_penalty or env.plot_config.plot_job_age_penalty:
+        ax2.set_ylim(-100, max_nodes)
+    else:
+        ax2.set_ylim(0, max_nodes)
+
+    completion_rate = (
+        (env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100)
+        if env.metrics.episode_jobs_submitted > 0
+        else 0
+    )
+    baseline_completion_rate = (
+        (env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100)
+        if env.metrics.episode_baseline_jobs_submitted > 0
+        else 0
+    )
+    avg_wait = (
+        env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed
+        if env.metrics.episode_jobs_completed > 0
+        else 0
+    )
+    baseline_avg_wait = (
+        env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed
+        if env.metrics.episode_baseline_jobs_completed > 0
+        else 0
+    )
+    baseline_savings_pct = (
+        ((env.metrics.episode_baseline_cost - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost) * 100
+        if env.metrics.episode_baseline_cost > 0
+        else 0
+    )
+    baseline_off_savings_pct = (
+        ((env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost_off) * 100
+        if env.metrics.episode_baseline_cost_off > 0
+        else 0
+    )
+
+    plt.title(f"{env.session} | ep:{env.current_episode} step:{env.current_step} | {env.weights}\n"
+              f"Cost: €{env.metrics.episode_total_cost:.0f}, Base: €{env.metrics.episode_baseline_cost:.0f} "
+              f"(+{env.metrics.episode_baseline_cost - env.metrics.episode_total_cost:.0f}, {baseline_savings_pct:.1f}%), "
+              f"Base_Off: €{env.metrics.episode_baseline_cost_off:.0f} "
+              f"(+{env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost:.0f}, {baseline_off_savings_pct:.1f}%)\n"
+              f"Jobs: {env.metrics.episode_jobs_completed}/{env.metrics.episode_jobs_submitted} ({completion_rate:.0f}%, "
+              f"wait={avg_wait:.1f}h, Q={env.metrics.episode_max_queue_size_reached}) | "
+              f"Base: {env.metrics.episode_baseline_jobs_completed}/{env.metrics.episode_baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, "
+              f"wait={baseline_avg_wait:.1f}h, Q={env.metrics.episode_baseline_max_queue_size_reached})",
+              fontsize=9)
+
+    lines, labels = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines + lines2, labels + labels2, loc='upper left')
+
+    prefix = f"e{env.weights.efficiency_weight}_p{env.weights.price_weight}_i{env.weights.idle_weight}_a{env.weights.job_age_weight}_d{env.weights.drop_weight}"
+
+    if save:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plt.savefig(f"{env.plots_dir}{prefix}_{suffix:09d}_{timestamp}.png")
+        print(f"Figure saved as: {env.plots_dir}{prefix}_{suffix:09d}_{timestamp}.png\nExpecting next save after {env.next_plot_save + env.steps_per_iteration}")
+    if show:
+        plt.show()
+
+    plt.close(fig)
+
+
 def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: bool = True, show: bool = True, suffix: int | str = "") -> None:
     """
     Per-hour dashboard: price, nodes, queue, reward components, etc.
