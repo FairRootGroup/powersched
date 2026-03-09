@@ -72,7 +72,7 @@ class ComputeClusterEnv(gym.Env):
                  steps_per_iteration: int,
                  evaluation_mode: bool = False,
                  workload_gen: WorkloadGenerator | None = None,
-                 carry_over_state: bool = False) -> None:
+                 ) -> None:
         super().__init__()
 
         self.weights = weights
@@ -101,7 +101,6 @@ class ComputeClusterEnv(gym.Env):
         self.np_random = None
         self._seed = None
         self.workload_gen = workload_gen
-        self.carry_over_state = carry_over_state
 
         if self.external_durations:
             durations_sampler.init(self.external_durations)
@@ -277,34 +276,15 @@ class ComputeClusterEnv(gym.Env):
         else:
             self.episode_idx += 1
 
-        if not self.carry_over_state:
-            self.metrics.reset_timeline_metrics()
-            self.metrics.reset_episode_metrics()
-
-            # Choose starting index in the external price series
+        self.metrics.reset_episode_metrics()
+        if "price_start_index" in options:
             if self.prices is not None and self.prices.external_prices is not None:
                 n_prices = len(self.prices.external_prices)
-                episode_span = EPISODE_HOURS
-
-                # Episode k starts at hour k * episode_span (wrapping around the year)
-                start_index = (self.episode_idx * episode_span) % n_prices
-                if "price_start_index" in options:  # For testing purposes.
-                    start_index = int(options["price_start_index"]) % n_prices
+                start_index = int(options["price_start_index"]) % n_prices
             else:
-                # Synthetic prices or no external prices
-                start_index = int(options.get("price_start_index", 0))
-
-            self._reset_timeline_state(start_index=start_index)
-        else:
-            self.metrics.reset_episode_metrics()
-            if "price_start_index" in options:
-                if self.prices is not None and self.prices.external_prices is not None:
-                    n_prices = len(self.prices.external_prices)
-                    start_index = int(options["price_start_index"]) % n_prices
-                else:
-                    start_index = int(options["price_start_index"])
-                self.prices.reset(start_index=start_index)
-                self.state["predicted_prices"] = self.prices.predicted_prices.copy()
+                start_index = int(options["price_start_index"])
+            self.prices.reset(start_index=start_index)
+            self.state["predicted_prices"] = self.prices.predicted_prices.copy()
 
         return self.state, {}
 

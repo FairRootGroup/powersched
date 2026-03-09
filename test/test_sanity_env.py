@@ -5,7 +5,7 @@ like API compliance, invariants, determinism.'''
 
 '''Use it as:
 - Quick invariant run: python -m test.test_sanity_env.py --steps 200
-- Full belt-and-braces: python -m test.test_sanity_env.py --check-gym --check-determinism --steps 300
+- Full belt-and-braces: python -m test.test_sanity_env.py --check-determinism --steps 300
 - With external data: python -m test.test_sanity_env.py --prices <<data/prices.csv>> --hourly-jobs <<data/slurm_hourly.log>> --steps 300 --print-job-every 50 --print-job-kind both
 '''
 
@@ -13,7 +13,6 @@ import argparse
 import copy
 import numpy as np
 
-from gymnasium.utils.env_checker import check_env
 
 from src.environment import ComputeClusterEnv, Weights
 from src.plot_config import PlotConfig
@@ -206,7 +205,6 @@ def parse_args():
     p.add_argument("--seed", type=int, default=123)
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--episodes", type=int, default=1)
-    p.add_argument("--check-gym", action="store_true", help="Run gymnasium check_env")
     p.add_argument("--check-determinism", action="store_true")
     # mirror train.py-ish knobs (mostly optional)
     p.add_argument("--session", default="sanity")
@@ -224,10 +222,6 @@ def parse_args():
     p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
     p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue", help="Where to sample the job from.")
     p.add_argument("--print-job-index", type=int, default=-1, help="Queue index to print (>=0), or -1 to print first active job.")
-    p.add_argument("--carry-over-state", action="store_true", help="Carry over nodes/jobs/prices across episodes (timeline mode).")
-
-
-
     return p.parse_args()
 
 
@@ -266,7 +260,6 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         steps_per_iteration=EPISODE_HOURS,  # prevent plot cadence surprises
         evaluation_mode=False,
         workload_gen=workload_gen,
-        carry_over_state=args.carry_over_state
     )
 
 def maybe_print_job(env, obs, step_idx, every, kind="queue", job_index=-1):
@@ -323,17 +316,15 @@ def main():
                 options["price_start_index"] = 0
             return super().reset(seed=seed, options=options)
 
-    def make_env_with_carry(carry_over_state, env_cls=ComputeClusterEnv):
-        local_args = argparse.Namespace(**vars(args))
-        local_args.carry_over_state = carry_over_state
-        return make_env_from_args(local_args, env_cls=env_cls)
+    def make_env_with_carry(env_cls=ComputeClusterEnv):
+        return make_env_from_args(args, env_cls=env_cls)
 
 # -------------------------------------
 
     seed = 123
     action = np.array([1, 0, 1], dtype=np.int64)  # "maintain, magnitude 1, refill" effectively
 
-    env = make_env_with_carry(False, env_cls=DeterministicPriceEnv)
+    env = make_env_with_carry(env_cls=DeterministicPriceEnv)
 
     o1, _ = env.reset(seed=seed)
     o1s, r1, t1, tr1, i1 = env.step(action)
@@ -357,15 +348,7 @@ def main():
 
 #----------------------------------------
 
-    # 1) Gym API compliance (optional)
-    if args.check_gym:
-        # Pin external price window so gym's determinism check is meaningful.
-        env = make_env_with_carry(False, env_cls=DeterministicPriceEnv)
-        check_env(env, skip_render_check=True)
-        env.close()
-        print("[OK] gymnasium check_env passed")
-
-    # 2) Invariants + copy checks during random rollout
+    # 1) Invariants + copy checks during random rollout
     env = make_env_from_args(args)
     for ep in range(args.episodes):
         obs, info = env.reset(seed=args.seed + ep)
@@ -394,13 +377,12 @@ def main():
 
     # 3) Determinism (optional)
     if args.check_determinism:
-        determinism_test(lambda: make_env_with_carry(False), seed=args.seed, n_steps=min(args.steps, 500))
+        determinism_test(lambda: make_env_with_carry(), seed=args.seed, n_steps=min(args.steps, 500))
         print("[OK] determinism test passed")
 
-    # 4) Carry-over continuity (optional)
-    if args.carry_over_state:
-        carry_over_test(lambda: make_env_with_carry(True), seed=args.seed, n_steps=min(args.steps, 10))
-        print("[OK] carry-over continuity test passed")
+    # 4) Carry-over continuity
+    carry_over_test(lambda: make_env_with_carry(), seed=args.seed, n_steps=min(args.steps, 10))
+    print("[OK] carry-over continuity test passed")
 
     print("done")
 

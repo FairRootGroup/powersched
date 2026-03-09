@@ -105,7 +105,6 @@ def build_command(
     hourly_jobs,
     plot_dashboard=False,
     dashboard_hours=24 * 14,
-    carry_over_state=False,
     seed=None,
     evaluate_savings=False,
     eval_months=0,
@@ -128,8 +127,6 @@ def build_command(
     ]
     if plot_dashboard:
         command += ["--plot-dashboard", "--dashboard-hours", str(dashboard_hours)]
-    if carry_over_state:
-        command += ["--carry-over-state"]
     if seed is not None:
         command += ["--seed", str(seed)]
     if evaluate_savings:
@@ -141,7 +138,7 @@ def build_command(
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, plot_dashboard, dashboard_hours,
-                     carry_over_state, seed, evaluate_savings, eval_months, workloadgen_args):
+                     seed, evaluate_savings, eval_months, workloadgen_args):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
     failure_count = 0
@@ -169,7 +166,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
         command = build_command(
             efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
-            plot_dashboard, dashboard_hours, carry_over_state, seed,
+            plot_dashboard, dashboard_hours, seed,
             evaluate_savings, eval_months,
             workloadgen_args,
         )
@@ -219,7 +216,6 @@ def main():
     parser.add_argument("--iter-limit-per-step", type=int, help="Max number of training iterations per step (1 iteration = {TIMESTEPS} steps)")
     parser.add_argument("--plot-dashboard", action="store_true", help="Forward to train.py to generate dashboard plots.")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Forward to train.py.")
-    parser.add_argument("--carry-over-state", action="store_true", help="Forward to train.py to carry state across episodes.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (forwarded to train.py)")
     parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
     parser.add_argument("--evaluate-savings", action="store_true", help="Forward to train.py to evaluate savings compared to baseline.")
@@ -262,7 +258,6 @@ def main():
         hourly_jobs=args.hourly_jobs,
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
-        carry_over_state=args.carry_over_state,
         seed=args.seed,
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,
