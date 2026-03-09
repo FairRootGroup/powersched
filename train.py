@@ -22,6 +22,19 @@ import time
 def norm_path(x):
     return None if (x is None or str(x).strip() == "") else x
 
+
+def safe_ratio(numerator: float, denominator: float) -> float | None:
+    """Return numerator/denominator, or None when denominator is not positive."""
+    return (numerator / denominator) if denominator > 0 else None
+
+
+def fmt_optional(value: float | None, precision: int = 2, thousands: bool = False) -> str:
+    """Format float values for logs, using 'n/a' when value is undefined."""
+    if value is None:
+        return "n/a"
+    return f"{value:,.{precision}f}" if thousands else f"{value:.{precision}f}"
+
+
 STEPS_PER_ITERATION = 100000
 
 
@@ -240,12 +253,20 @@ def main():
             agent_mean_price = (env.metrics.episode_total_cost / agent_power_mwh) if agent_power_mwh > 0 else 0.0
             baseline_mean_price = (env.metrics.episode_baseline_cost / baseline_power_mwh) if baseline_power_mwh > 0 else 0.0
             baseline_off_mean_price = (env.metrics.episode_baseline_cost_off / baseline_power_off_mwh) if baseline_power_off_mwh > 0 else 0.0
+            agent_cost_per_1000_completed = safe_ratio(env.metrics.total_cost * 1000.0, env.metrics.jobs_completed)
+            baseline_cost_per_1000_completed = safe_ratio(env.metrics.baseline_cost * 1000.0, env.metrics.baseline_jobs_completed)
+            # baseline_off is a cost variant of baseline scheduling, so it uses the same completed-job count.
+            baseline_off_cost_per_1000_completed = safe_ratio(env.metrics.baseline_cost_off * 1000.0, env.metrics.baseline_jobs_completed)
+            dropped_jobs_per_saved_euro = safe_ratio(env.metrics.episode_jobs_dropped, savings_vs_baseline) if savings_vs_baseline > 0 else None
+            dropped_jobs_per_saved_euro_off = safe_ratio(env.metrics.episode_jobs_dropped, savings_vs_baseline_off) if savings_vs_baseline_off > 0 else None
             print(f"  Episode {episode + 1}: "
                 f"Agent Cost=€{env.metrics.total_cost:.0f}, "
                 f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
                 f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
                 f"Power={agent_power_mwh:.1f}/{baseline_power_mwh:.1f}/{baseline_power_off_mwh:.1f} MWh (agent/base/base_off), "
                 f"MeanPrice={agent_mean_price:.2f}/{baseline_mean_price:.2f}/{baseline_off_mean_price:.2f} €/MWh (agent/base/base_off), "
+                f"CostPer1kCompleted={fmt_optional(agent_cost_per_1000_completed, 1, thousands=True)}/{fmt_optional(baseline_cost_per_1000_completed, 1, thousands=True)}/{fmt_optional(baseline_off_cost_per_1000_completed, 1, thousands=True)} €/1k (agent/base/base_off), "
+                f"DroppedPerSavedEuro={fmt_optional(dropped_jobs_per_saved_euro, 6)}/{fmt_optional(dropped_jobs_per_saved_euro_off, 6)} jobs/€ (vs base/base_off), "
                 f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
                 f"AvgWait={avg_wait:.1f}h, "
                 f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
@@ -284,26 +305,47 @@ def main():
                 total_agent_cost = sum(float(ep['agent_cost']) for ep in env.metrics.episode_costs)
                 total_baseline_cost = sum(float(ep['baseline_cost']) for ep in env.metrics.episode_costs)
                 total_baseline_off_cost = sum(float(ep['baseline_cost_off']) for ep in env.metrics.episode_costs)
+                total_jobs_dropped = sum(int(ep.get('jobs_dropped', 0)) for ep in env.metrics.episode_costs)
                 total_agent_power_mwh = sum(float(ep.get('agent_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_power_mwh = sum(float(ep.get('baseline_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_off_power_mwh = sum(float(ep.get('baseline_power_consumption_off_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_agent_mean_price = (total_agent_cost / total_agent_power_mwh) if total_agent_power_mwh > 0 else 0.0
                 total_baseline_mean_price = (total_baseline_cost / total_baseline_power_mwh) if total_baseline_power_mwh > 0 else 0.0
                 total_baseline_off_mean_price = (total_baseline_off_cost / total_baseline_off_power_mwh) if total_baseline_off_power_mwh > 0 else 0.0
+                total_agent_completion_rate = (total_jobs_completed / total_jobs_submitted * 100) if total_jobs_submitted > 0 else 0.0
+                total_baseline_completion_rate = (total_baseline_completed / total_baseline_submitted * 100) if total_baseline_submitted > 0 else 0.0
+                total_savings_vs_baseline = total_baseline_cost - total_agent_cost
+                total_savings_vs_baseline_off = total_baseline_off_cost - total_agent_cost
+                total_agent_cost_per_1000_completed = safe_ratio(total_agent_cost * 1000.0, total_jobs_completed)
+                total_baseline_cost_per_1000_completed = safe_ratio(total_baseline_cost * 1000.0, total_baseline_completed)
+                # baseline_off is a cost variant of baseline scheduling, so it uses the same completed-job count.
+                total_baseline_off_cost_per_1000_completed = safe_ratio(total_baseline_off_cost * 1000.0, total_baseline_completed)
+                total_dropped_jobs_per_saved_euro = safe_ratio(total_jobs_dropped, total_savings_vs_baseline) if total_savings_vs_baseline > 0 else None
+                total_dropped_jobs_per_saved_euro_off = safe_ratio(total_jobs_dropped, total_savings_vs_baseline_off) if total_savings_vs_baseline_off > 0 else None
 
                 print(f"\n=== JOB PROCESSING METRICS ===")
                 print(f"\nAgent:")
-                print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_jobs_completed/total_jobs_submitted*100:.1f}%)")
+                print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_agent_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
                 print(f"  Total Cost: €{total_agent_cost:,.0f}")
 
                 print(f"\nBaseline:")
-                print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completed/total_baseline_submitted*100:.1f}%)")
+                print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_baseline_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_baseline_max_queue:.0f}")
                 print(f"  Baseline Total Cost: €{total_baseline_cost:,.0f}")
                 print(f"  Baseline_off Total Cost: €{total_baseline_off_cost:,.0f}")
+
+                print(f"\n=== COST PER 1,000 COMPLETED JOBS ===")
+                print(f"  Agent:        {fmt_optional(total_agent_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
+                print(f"  Baseline:     {fmt_optional(total_baseline_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
+                print(f"  Baseline_off: {fmt_optional(total_baseline_off_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
+
+                print(f"\n=== AGENT DROPPED JOBS PER SAVED EURO ===")
+                print(f"  Total Dropped Jobs (Agent): {total_jobs_dropped:,}")
+                print(f"  Vs Baseline:     {fmt_optional(total_dropped_jobs_per_saved_euro, 6)} jobs/€")
+                print(f"  Vs Baseline_off: {fmt_optional(total_dropped_jobs_per_saved_euro_off, 6)} jobs/€")
 
 
                 print(f"\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")

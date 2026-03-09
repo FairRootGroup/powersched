@@ -9,6 +9,11 @@ class MetricsTracker:
         """Effective mean price in €/MWh, weighted by consumed energy."""
         return (total_cost / total_power_mwh) if total_power_mwh > 0.0 else 0.0
 
+    @staticmethod
+    def _safe_ratio(numerator: float, denominator: float) -> float:
+        """Safe division; returns NaN when denominator is not positive."""
+        return (numerator / denominator) if denominator > 0.0 else float("nan")
+
     def __init__(self) -> None:
         """Initialize all metric counters."""
         self.reset_timeline_metrics()
@@ -158,6 +163,24 @@ class MetricsTracker:
         baseline_off_mean_price: float = self._effective_mean_price(
             self.episode_baseline_cost_off, self.episode_baseline_power_consumption_off_mwh
         )
+        agent_cost_per_1000_completed: float = self._safe_ratio(
+            self.episode_total_cost * 1000.0, float(self.episode_jobs_completed)
+        )
+        baseline_cost_per_1000_completed: float = self._safe_ratio(
+            self.episode_baseline_cost * 1000.0, float(self.episode_baseline_jobs_completed)
+        )
+        # baseline_off is a cost variant of baseline scheduling, so it uses the same completed-job count.
+        baseline_off_cost_per_1000_completed: float = self._safe_ratio(
+            self.episode_baseline_cost_off * 1000.0, float(self.episode_baseline_jobs_completed)
+        )
+        savings_vs_baseline: float = self.episode_baseline_cost - self.episode_total_cost
+        savings_vs_baseline_off: float = self.episode_baseline_cost_off - self.episode_total_cost
+        dropped_jobs_per_saved_euro: float = self._safe_ratio(
+            float(self.episode_jobs_dropped), savings_vs_baseline
+        ) if savings_vs_baseline > 0.0 else float("nan")
+        dropped_jobs_per_saved_euro_off: float = self._safe_ratio(
+            float(self.episode_jobs_dropped), savings_vs_baseline_off
+        ) if savings_vs_baseline_off > 0.0 else float("nan")
 
         episode_data: dict[str, float | int] = {
             'episode': current_episode,
@@ -170,10 +193,15 @@ class MetricsTracker:
             'agent_mean_price': agent_mean_price,
             'baseline_mean_price': baseline_mean_price,
             'baseline_off_mean_price': baseline_off_mean_price,
-            'savings_vs_baseline': self.episode_baseline_cost - self.episode_total_cost,
-            'savings_vs_baseline_off': self.episode_baseline_cost_off - self.episode_total_cost,
+            'savings_vs_baseline': savings_vs_baseline,
+            'savings_vs_baseline_off': savings_vs_baseline_off,
             'savings_pct_baseline': ((self.episode_baseline_cost - self.episode_total_cost) / self.episode_baseline_cost) * 100 if self.episode_baseline_cost > 0 else 0.0,
             'savings_pct_baseline_off': ((self.episode_baseline_cost_off - self.episode_total_cost) / self.episode_baseline_cost_off) * 100 if self.episode_baseline_cost_off > 0 else 0.0,
+            'agent_cost_per_1000_completed_jobs': agent_cost_per_1000_completed,
+            'baseline_cost_per_1000_completed_jobs': baseline_cost_per_1000_completed,
+            'baseline_off_cost_per_1000_completed_jobs': baseline_off_cost_per_1000_completed,
+            'agent_dropped_jobs_per_saved_euro': dropped_jobs_per_saved_euro,
+            'agent_dropped_jobs_per_saved_euro_off': dropped_jobs_per_saved_euro_off,
             'total_reward': self.episode_reward,
             # Agent job metrics
             'jobs_submitted': self.episode_jobs_submitted,
