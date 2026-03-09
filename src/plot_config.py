@@ -4,7 +4,6 @@ from dataclasses import dataclass
 @dataclass
 class PlotConfig:
     quick_plot: bool = False
-    plot_rewards: bool = False
     plot_once: bool = False
     plot_eff_reward: bool = True
     plot_price_reward: bool = True

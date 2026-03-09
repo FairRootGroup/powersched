@@ -5,8 +5,7 @@ import os
 import tempfile
 import numpy as np
 
-from src.plotter import plot_dashboard, plot_cumulative_savings, _compute_cumulative_savings
-from src.plot import plot as plot_simple, plot_cumulative_savings as plot_cumulative_savings_simple
+from src.plotter import plot_episode, plot_dashboard, plot_cumulative_savings, _compute_cumulative_savings
 from src.weights import Weights
 from src.metrics_tracker import MetricsTracker
 from src.plot_config import PlotConfig
@@ -86,7 +85,7 @@ class MockEnv:
             plot_total_reward=True,
         )
 
-        # Additional attributes for plot_simple (src/plot.py)
+        # Additional attributes for plot_episode
         self.next_plot_save = 0
         self.steps_per_iteration = 100
 
@@ -293,14 +292,14 @@ class TestPlotCumulativeSavings:
             assert "eval" in files[0]
 
 
-class TestPlotSimple:
-    """Tests for plot() function from src/plot.py."""
+class TestPlotEpisode:
+    """Tests for plot_episode() function from src/plotter.py."""
 
     def test_saves_file(self, output_dir):
         env = MockEnv(num_hours=48)
-        env.plots_dir = output_dir + "/"  # plot_simple expects trailing slash
+        env.plots_dir = output_dir + "/"  # plot_episode expects trailing slash in plots_dir
 
-        plot_simple(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=1)
+        plot_episode(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=1)
 
         files = [f for f in os.listdir(output_dir) if f.startswith("e0.7") and "cumulative" not in f]
         assert len(files) >= 1
@@ -311,7 +310,7 @@ class TestPlotSimple:
             env = MockEnv(num_hours=48)
             env.plots_dir = tmpdir + "/"
 
-            plot_simple(env, num_hours=48, max_nodes=335, save=False, show=False, suffix=1)
+            plot_episode(env, num_hours=48, max_nodes=335, save=False, show=False, suffix=1)
 
             files = os.listdir(tmpdir)
             assert len(files) == 0
@@ -326,60 +325,11 @@ class TestPlotSimple:
             plot_job_queue=False,
         )
 
-        plot_simple(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=2)
+        plot_episode(env, num_hours=48, max_nodes=335, save=True, show=False, suffix=2)
 
         files = [f for f in os.listdir(output_dir) if f.startswith("e0.7") and "cumulative" not in f]
         assert len(files) >= 1  # Still saves even with nothing plotted
 
-
-class TestPlotCumulativeSavingsSimple:
-    """Tests for plot_cumulative_savings() from src/plot.py."""
-
-    def test_saves_file(self, output_dir):
-        env = MockEnv()
-        costs = make_episode_costs(12)
-
-        result = plot_cumulative_savings_simple(
-            env, costs, session_dir=output_dir, months=6, save=True, show=False
-        )
-
-        assert result is not None
-        files = [f for f in os.listdir(output_dir) if "cumulative_savings" in f]
-        assert len(files) >= 1
-
-    def test_returns_stats(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            env = MockEnv()
-            costs = make_episode_costs(12)
-
-            result = plot_cumulative_savings_simple(
-                env, costs, session_dir=tmpdir, save=False, show=False
-            )
-
-            assert result is not None
-            assert "total_savings" in result
-            assert "avg_monthly_savings_pct" in result
-
-    def test_empty_costs(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            env = MockEnv()
-
-            result = plot_cumulative_savings_simple(
-                env, [], session_dir=tmpdir, save=True, show=False
-            )
-
-            assert result is None
-
-    def test_fewer_episodes_than_requested(self, output_dir):
-        env = MockEnv()
-        costs = make_episode_costs(4)  # Only 4 episodes, but request 12 months
-
-        result = plot_cumulative_savings_simple(
-            env, costs, session_dir=output_dir, months=12, save=True, show=False
-        )
-
-        # Should still work with available episodes
-        assert result is not None
 
 
 def get_output_dir():
@@ -408,16 +358,10 @@ def generate_visual_samples():
     plot_cumulative_savings(env, costs, session_dir=output_dir, save=True, show=False, suffix="sample_plotter")
     print("  - Cumulative savings plot (plotter.py) saved")
 
-    # Generate simple plot (src/plot.py) - note: suffix must be an integer
     env2 = MockEnv(num_hours=168)
     env2.plots_dir = output_dir + "/"
-    plot_simple(env2, num_hours=168, max_nodes=335, save=True, show=False, suffix=999)
-    print("  - Simple plot (plot.py) saved")
-
-    # Generate cumulative savings plot (src/plot.py)
-    costs2 = make_episode_costs(12)
-    plot_cumulative_savings_simple(env2, costs2, session_dir=output_dir, months=6, save=True, show=False)
-    print("  - Cumulative savings plot (plot.py) saved")
+    plot_episode(env2, num_hours=168, max_nodes=335, save=True, show=False, suffix=999)
+    print("  - Episode plot saved")
 
     print(f"\nPlots saved to: {output_dir}")
     for f in sorted(os.listdir(output_dir)):
@@ -455,20 +399,13 @@ def main():
     test_pcs.test_with_suffix()
     print("[OK] plot_cumulative_savings tests passed")
 
-    print("\nTesting plot (src/plot.py)...")
-    test_ps = TestPlotSimple()
+    print("\nTesting plot_episode (src/plotter.py)...")
+    test_ps = TestPlotEpisode()
     test_ps.test_saves_file(output_dir)
     test_ps.test_no_save()
     test_ps.test_with_plot_flags_disabled(output_dir)
-    print("[OK] plot tests passed")
+    print("[OK] plot_episode tests passed")
 
-    print("\nTesting plot_cumulative_savings (src/plot.py)...")
-    test_pcss = TestPlotCumulativeSavingsSimple()
-    test_pcss.test_saves_file(output_dir)
-    test_pcss.test_returns_stats()
-    test_pcss.test_empty_costs()
-    test_pcss.test_fewer_episodes_than_requested(output_dir)
-    print("[OK] plot_cumulative_savings (simple) tests passed")
 
     print("\n[OK] All plotter tests passed!")
 
