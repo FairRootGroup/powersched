@@ -1,0 +1,854 @@
+#!/usr/bin/env python3
+"""
+Sweep job-arrival-scale values in jobs exact-replay mode and analyze:
+1) job-arrival-scale -> agent occupancy (nodes)
+2) occupancy -> savings
+3) occupancy -> savings_off
+4) job-arrival-scale -> completion rate
+5) occupancy -> effective savings
+6) occupancy -> effective savings_off
+7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
+8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
+9) occupancy -> (baseline_off - agent) power / baseline_off
+
+For each scale, this script runs train.py in evaluation mode for one year
+(12 months = 24 episodes), parses per-episode metrics from stdout, computes
+mean/std, and fits optional polynomial trend lines.
+
+Runs both modes:
+- exact replay (aggregated): --jobs-exact-replay --jobs-exact-replay-aggregate --job-arrival-scale <scale>
+- sampling mode: --jobs --job-arrival-scale <scale>
+
+FAST DEBUG MODE:
+python analyze_arrivalscale_occupancy.py \
+  --jobs ./data/workload_statistics/jobs_2023.log \
+  --eval-months 1 --scales 0.8,1.0,1.2 --no-plot-dashboard
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+EPISODE_RE = re.compile(
+    r"Episode\s+(?P<episode>\d+):.*?"
+    r"Savings=€(?P<savings>-?[\d,]+(?:\.\d+)?)\/€(?P<savings_off>-?[\d,]+(?:\.\d+)?),.*?"
+    r"Power=(?P<agent_power>-?[\d.]+)\/(?P<baseline_power>-?[\d.]+)\/(?P<baseline_off_power>-?[\d.]+)\s*MWh.*?"
+    r"CostPer1kCompleted=(?P<agent_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\/"
+    r"(?P<baseline_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\/"
+    r"(?P<baseline_off_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\s*€/1k.*?"
+    r"Jobs=[\d,]+\/[\d,]+\s+\((?P<completion_rate>-?[\d.]+)%\),\s*"
+    r"AvgWait=(?P<avg_wait>-?[\d.]+)h,.*?"
+    r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%",
+    re.MULTILINE,
+)
+
+WAIT_SUMMARY_RE = re.compile(
+    r"=== JOB PROCESSING METRICS ===.*?"
+    r"Agent:.*?Average Wait Time:\s*(?P<agent_wait>-?[\d.]+)\s*hours.*?"
+    r"Baseline:.*?Average Wait Time:\s*(?P<baseline_wait>-?[\d.]+)\s*hours",
+    re.DOTALL,
+)
+
+
+@dataclass
+class ScaleRunStats:
+    replay_mode: str
+    job_arrival_scale: float
+    episodes: int
+    occupancy_mean: float
+    occupancy_std: float
+    savings_mean: float
+    savings_std: float
+    savings_off_mean: float
+    savings_off_std: float
+    completion_rate_mean: float
+    completion_rate_std: float
+    agent_avg_wait_hours: float
+    baseline_avg_wait_hours: float
+    wait_delta_hours: float
+    effective_savings_mean: float
+    effective_savings_std: float
+    effective_savings_off_mean: float
+    effective_savings_off_std: float
+    cost_per_1k_delta_pct_baseline_mean: float
+    cost_per_1k_delta_pct_baseline_std: float
+    cost_per_1k_delta_pct_baseline_off_mean: float
+    cost_per_1k_delta_pct_baseline_off_std: float
+    power_delta_pct_baseline_off_mean: float
+    power_delta_pct_baseline_off_std: float
+    annual_total_savings: float
+    annual_total_savings_off: float
+    command: list[str]
+    command_str: str
+    occupancy_samples: list[float] = field(default_factory=list)
+    savings_samples: list[float] = field(default_factory=list)
+    savings_off_samples: list[float] = field(default_factory=list)
+    completion_rate_samples: list[float] = field(default_factory=list)
+    effective_savings_samples: list[float] = field(default_factory=list)
+    effective_savings_off_samples: list[float] = field(default_factory=list)
+    cost_per_1k_delta_pct_baseline_samples: list[float] = field(default_factory=list)
+    cost_per_1k_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
+    power_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
+
+
+def _to_float(raw: str) -> float:
+    return float(raw.replace(",", ""))
+
+
+def _to_float_or_nan(raw: str | None) -> float:
+    if raw is None:
+        return float("nan")
+    val = raw.strip().lower()
+    if val in {"n/a", "nan"}:
+        return float("nan")
+    return _to_float(raw)
+
+
+def _diff_cumulative(values: list[float]) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+    return np.diff(np.concatenate(([0.0], arr)))
+
+
+def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    occupancy = []
+    cumulative_savings = []
+    cumulative_savings_off = []
+    completion_rate = []
+    avg_wait = []
+    agent_cost_1k = []
+    baseline_cost_1k = []
+    baseline_off_cost_1k = []
+    agent_power = []
+    baseline_off_power = []
+
+    for match in EPISODE_RE.finditer(stdout):
+        occupancy.append(_to_float(match.group("occupancy")))
+        cumulative_savings.append(_to_float(match.group("savings")))
+        cumulative_savings_off.append(_to_float(match.group("savings_off")))
+        completion_rate.append(_to_float(match.group("completion_rate")))
+        avg_wait.append(_to_float(match.group("avg_wait")))
+        agent_cost_1k.append(_to_float_or_nan(match.group("agent_cost_1k")))
+        baseline_cost_1k.append(_to_float_or_nan(match.group("baseline_cost_1k")))
+        baseline_off_cost_1k.append(_to_float_or_nan(match.group("baseline_off_cost_1k")))
+        agent_power.append(_to_float(match.group("agent_power")))
+        baseline_off_power.append(_to_float(match.group("baseline_off_power")))
+
+    if not occupancy:
+        raise RuntimeError(
+            "Could not parse episode metrics from train.py output. "
+            "Expected lines like 'Episode X: ... Savings=€.../€..., Power=..., CostPer1kCompleted=..., Agent Occupancy (Nodes)=...%'."
+        )
+
+    episode_savings = _diff_cumulative(cumulative_savings)
+    episode_savings_off = _diff_cumulative(cumulative_savings_off)
+    return (
+        np.asarray(occupancy, dtype=float),
+        episode_savings,
+        episode_savings_off,
+        np.asarray(completion_rate, dtype=float),
+        np.asarray(avg_wait, dtype=float),
+        np.asarray(agent_cost_1k, dtype=float),
+        np.asarray(baseline_cost_1k, dtype=float),
+        np.asarray(baseline_off_cost_1k, dtype=float),
+        np.asarray(agent_power, dtype=float),
+        np.asarray(baseline_off_power, dtype=float),
+    )
+
+
+def parse_wait_summary(stdout: str) -> tuple[float | None, float | None]:
+    match = WAIT_SUMMARY_RE.search(stdout)
+    if not match:
+        return None, None
+    return _to_float(match.group("agent_wait")), _to_float(match.group("baseline_wait"))
+
+
+def safe_divide(numer: np.ndarray, denom: float) -> np.ndarray:
+    if abs(denom) < 1e-12:
+        return np.full_like(numer, np.nan, dtype=float)
+    return numer / denom
+
+
+def safe_divide_arrays(numer: np.ndarray, denom: np.ndarray) -> np.ndarray:
+    numer_arr = np.asarray(numer, dtype=float)
+    denom_arr = np.asarray(denom, dtype=float)
+    out = np.full_like(numer_arr, np.nan, dtype=float)
+    finite = np.isfinite(numer_arr) & np.isfinite(denom_arr)
+    valid = finite & (np.abs(denom_arr) >= 1e-12)
+    out[valid] = numer_arr[valid] / denom_arr[valid]
+    return out
+
+
+def finite_mean_std(values: np.ndarray) -> tuple[float, float]:
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return float("nan"), float("nan")
+    vals = values[finite]
+    return float(np.mean(vals)), float(np.std(vals))
+
+
+def make_run_stats(
+    replay_mode: str,
+    job_arrival_scale: float,
+    command: list[str],
+    occupancy: np.ndarray,
+    savings: np.ndarray,
+    savings_off: np.ndarray,
+    completion_rate: np.ndarray,
+    agent_avg_wait_hours: float,
+    baseline_avg_wait_hours: float,
+    agent_cost_1k: np.ndarray,
+    baseline_cost_1k: np.ndarray,
+    baseline_off_cost_1k: np.ndarray,
+    agent_power: np.ndarray,
+    baseline_off_power: np.ndarray,
+) -> ScaleRunStats:
+    wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
+    effective_savings = safe_divide(savings * (completion_rate / 100) ** 2, wait_delta_hours + 1)
+    effective_savings_off = safe_divide(savings_off * (completion_rate / 100) ** 2, wait_delta_hours + 1)
+    effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
+    effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
+
+    cost_per_1k_delta_pct_baseline = safe_divide_arrays((baseline_cost_1k - agent_cost_1k) * 100.0, baseline_cost_1k)
+    cost_per_1k_delta_pct_baseline_off = safe_divide_arrays((baseline_off_cost_1k - agent_cost_1k) * 100.0, baseline_off_cost_1k)
+    power_delta_pct_baseline_off = safe_divide_arrays((baseline_off_power - agent_power) * 100.0, baseline_off_power)
+
+    cost_per_1k_delta_pct_baseline_mean, cost_per_1k_delta_pct_baseline_std = finite_mean_std(cost_per_1k_delta_pct_baseline)
+    cost_per_1k_delta_pct_baseline_off_mean, cost_per_1k_delta_pct_baseline_off_std = finite_mean_std(cost_per_1k_delta_pct_baseline_off)
+    power_delta_pct_baseline_off_mean, power_delta_pct_baseline_off_std = finite_mean_std(power_delta_pct_baseline_off)
+
+    return ScaleRunStats(
+        replay_mode=replay_mode,
+        job_arrival_scale=job_arrival_scale,
+        episodes=int(occupancy.size),
+        occupancy_mean=float(np.mean(occupancy)),
+        occupancy_std=float(np.std(occupancy)),
+        savings_mean=float(np.mean(savings)),
+        savings_std=float(np.std(savings)),
+        savings_off_mean=float(np.mean(savings_off)),
+        savings_off_std=float(np.std(savings_off)),
+        completion_rate_mean=float(np.mean(completion_rate)),
+        completion_rate_std=float(np.std(completion_rate)),
+        agent_avg_wait_hours=float(agent_avg_wait_hours),
+        baseline_avg_wait_hours=float(baseline_avg_wait_hours),
+        wait_delta_hours=float(wait_delta_hours),
+        effective_savings_mean=effective_savings_mean,
+        effective_savings_std=effective_savings_std,
+        effective_savings_off_mean=effective_savings_off_mean,
+        effective_savings_off_std=effective_savings_off_std,
+        cost_per_1k_delta_pct_baseline_mean=cost_per_1k_delta_pct_baseline_mean,
+        cost_per_1k_delta_pct_baseline_std=cost_per_1k_delta_pct_baseline_std,
+        cost_per_1k_delta_pct_baseline_off_mean=cost_per_1k_delta_pct_baseline_off_mean,
+        cost_per_1k_delta_pct_baseline_off_std=cost_per_1k_delta_pct_baseline_off_std,
+        power_delta_pct_baseline_off_mean=power_delta_pct_baseline_off_mean,
+        power_delta_pct_baseline_off_std=power_delta_pct_baseline_off_std,
+        annual_total_savings=float(np.sum(savings)),
+        annual_total_savings_off=float(np.sum(savings_off)),
+        command=command,
+        command_str=shlex.join(command),
+        occupancy_samples=occupancy.tolist(),
+        savings_samples=savings.tolist(),
+        savings_off_samples=savings_off.tolist(),
+        completion_rate_samples=completion_rate.tolist(),
+        effective_savings_samples=effective_savings.tolist(),
+        effective_savings_off_samples=effective_savings_off.tolist(),
+        cost_per_1k_delta_pct_baseline_samples=cost_per_1k_delta_pct_baseline.tolist(),
+        cost_per_1k_delta_pct_baseline_off_samples=cost_per_1k_delta_pct_baseline_off.tolist(),
+        power_delta_pct_baseline_off_samples=power_delta_pct_baseline_off.tolist(),
+    )
+
+
+def polyfit_curve(x: np.ndarray, y: np.ndarray, max_degree: int = 3) -> tuple[np.ndarray | None, int]:
+    finite = np.isfinite(x) & np.isfinite(y)
+    xf = x[finite]
+    yf = y[finite]
+    if xf.size < 2:
+        return None, 0
+    degree = min(max_degree, xf.size - 1)
+    coeffs = np.polyfit(xf, yf, degree)
+    return coeffs, degree
+
+
+def normalize_scale(value: float) -> float:
+    return float(f"{value:.6f}")
+
+
+def parse_float_list(raw: str) -> list[float]:
+    return [float(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def unique_scales_sorted(values: list[float]) -> list[float]:
+    return sorted({normalize_scale(float(v)) for v in values})
+
+
+def build_scale_grid(min_scale: float, max_scale: float, n: int) -> list[float]:
+    if n <= 1 or abs(max_scale - min_scale) < 1e-12:
+        return [normalize_scale(min_scale)]
+    vals = np.linspace(min_scale, max_scale, n)
+    return unique_scales_sorted([float(v) for v in vals])
+
+
+def select_scale_schedule(args: argparse.Namespace) -> list[float]:
+    if args.scales:
+        return unique_scales_sorted(parse_float_list(args.scales))
+    return build_scale_grid(args.min_scale, args.max_scale, args.num_points)
+
+
+def with_scale_one_first(scales: list[float]) -> list[float]:
+    one = normalize_scale(1.0)
+    return [one] + [s for s in scales if abs(s - one) > 1e-12]
+
+
+def format_scale_for_filename(scale: float) -> str:
+    return f"{scale:.6f}".rstrip("0").rstrip(".").replace(".", "p")
+
+
+def build_train_command(args: argparse.Namespace, job_arrival_scale: float, replay_mode: str) -> list[str]:
+    cmd = [
+        sys.executable,
+        "./train.py",
+        "--prices",
+        args.prices,
+        "--session",
+        args.session,
+        "--efficiency-weight",
+        str(args.efficiency_weight),
+        "--price-weight",
+        str(args.price_weight),
+        "--idle-weight",
+        str(args.idle_weight),
+        "--job-age-weight",
+        str(args.job_age_weight),
+        "--drop-weight",
+        str(args.drop_weight),
+        "--evaluate-savings",
+        "--eval-months",
+        str(args.eval_months),
+        "--model",
+        str(args.model),
+        "--jobs",
+        args.jobs,
+    ]
+    if replay_mode == "exact_replay_aggregate":
+        cmd.extend([
+            "--jobs-exact-replay",
+            "--jobs-exact-replay-aggregate",
+            "--job-arrival-scale",
+            f"{job_arrival_scale:.6f}",
+        ])
+    elif replay_mode == "sampling":
+        cmd.extend(["--job-arrival-scale", f"{job_arrival_scale:.6f}"])
+        if args.seed is not None:
+            cmd.extend(["--seed", str(args.seed)])
+    else:
+        raise ValueError(f"Unsupported replay_mode: {replay_mode}")
+    if args.plot_dashboard:
+        cmd.append("--plot-dashboard")
+    if args.dashboard_hours is not None:
+        cmd.extend(["--dashboard-hours", str(args.dashboard_hours)])
+    return cmd
+
+
+def os_tail(text: str, lines: int = 20) -> str:
+    parts = text.rstrip().splitlines()
+    if not parts:
+        return ""
+    return "\n".join(parts[-lines:])
+
+
+def run_scale_eval(
+    args: argparse.Namespace,
+    project_root: Path,
+    job_arrival_scale: float,
+    replay_mode: str,
+) -> tuple[ScaleRunStats, str]:
+    command = build_train_command(args, job_arrival_scale, replay_mode)
+    print(f"[run] mode={replay_mode}, scale={job_arrival_scale:.6f}: {shlex.join(command)}")
+    completed = subprocess.run(
+        command,
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    combined_output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
+    if args.echo_train_output:
+        print(combined_output)
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f"train.py failed for mode={replay_mode}, scale={job_arrival_scale:.6f} with code {completed.returncode}.\n"
+            f"Last output lines:\n{os_tail(combined_output, lines=40)}"
+        )
+
+    (
+        occupancy,
+        savings,
+        savings_off,
+        completion_rate,
+        avg_wait,
+        agent_cost_1k,
+        baseline_cost_1k,
+        baseline_off_cost_1k,
+        agent_power,
+        baseline_off_power,
+    ) = parse_episode_metrics(combined_output)
+
+    agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
+    if agent_wait_summary is None or baseline_wait_summary is None:
+        print(f"[warn] mode={replay_mode}, scale={job_arrival_scale:.6f}: could not parse run-level wait summary; effective savings may be NaN.")
+        agent_avg_wait_hours = float(np.mean(avg_wait))
+        baseline_avg_wait_hours = float(np.mean(avg_wait))
+    else:
+        agent_avg_wait_hours = float(agent_wait_summary)
+        baseline_avg_wait_hours = float(baseline_wait_summary)
+
+    stats = make_run_stats(
+        replay_mode,
+        job_arrival_scale,
+        command,
+        occupancy,
+        savings,
+        savings_off,
+        completion_rate,
+        agent_avg_wait_hours,
+        baseline_avg_wait_hours,
+        agent_cost_1k,
+        baseline_cost_1k,
+        baseline_off_cost_1k,
+        agent_power,
+        baseline_off_power,
+    )
+    print(
+        f"[ok ] mode={replay_mode}, scale={job_arrival_scale:.6f}: "
+        f"occupancy={stats.occupancy_mean:.2f}%±{stats.occupancy_std:.2f}, "
+        f"completion={stats.completion_rate_mean:.2f}%±{stats.completion_rate_std:.2f}, "
+        f"savings={stats.savings_mean:.0f}±{stats.savings_std:.0f}, "
+        f"savings_off={stats.savings_off_mean:.0f}±{stats.savings_off_std:.0f}, "
+        f"wait_delta={stats.wait_delta_hours:.3f}h"
+    )
+    return stats, combined_output
+
+
+def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
+    fieldnames = [
+        "replay_mode",
+        "job_arrival_scale",
+        "episodes",
+        "occupancy_mean_pct",
+        "occupancy_std_pct",
+        "completion_rate_mean_pct",
+        "completion_rate_std_pct",
+        "agent_avg_wait_hours",
+        "baseline_avg_wait_hours",
+        "wait_delta_hours",
+        "savings_mean_eur",
+        "savings_std_eur",
+        "savings_off_mean_eur",
+        "savings_off_std_eur",
+        "effective_savings_mean",
+        "effective_savings_std",
+        "effective_savings_off_mean",
+        "effective_savings_off_std",
+        "cost_per_1k_delta_pct_baseline_mean",
+        "cost_per_1k_delta_pct_baseline_std",
+        "cost_per_1k_delta_pct_baseline_off_mean",
+        "cost_per_1k_delta_pct_baseline_off_std",
+        "power_delta_pct_baseline_off_mean",
+        "power_delta_pct_baseline_off_std",
+        "annual_total_savings_eur",
+        "annual_total_savings_off_eur",
+    ]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for s in sorted(stats, key=lambda x: (x.replay_mode, x.job_arrival_scale)):
+            writer.writerow(
+                {
+                    "replay_mode": s.replay_mode,
+                    "job_arrival_scale": f"{s.job_arrival_scale:.6f}",
+                    "episodes": s.episodes,
+                    "occupancy_mean_pct": f"{s.occupancy_mean:.6f}",
+                    "occupancy_std_pct": f"{s.occupancy_std:.6f}",
+                    "completion_rate_mean_pct": f"{s.completion_rate_mean:.6f}",
+                    "completion_rate_std_pct": f"{s.completion_rate_std:.6f}",
+                    "agent_avg_wait_hours": f"{s.agent_avg_wait_hours:.6f}",
+                    "baseline_avg_wait_hours": f"{s.baseline_avg_wait_hours:.6f}",
+                    "wait_delta_hours": f"{s.wait_delta_hours:.6f}",
+                    "savings_mean_eur": f"{s.savings_mean:.6f}",
+                    "savings_std_eur": f"{s.savings_std:.6f}",
+                    "savings_off_mean_eur": f"{s.savings_off_mean:.6f}",
+                    "savings_off_std_eur": f"{s.savings_off_std:.6f}",
+                    "effective_savings_mean": f"{s.effective_savings_mean:.6f}",
+                    "effective_savings_std": f"{s.effective_savings_std:.6f}",
+                    "effective_savings_off_mean": f"{s.effective_savings_off_mean:.6f}",
+                    "effective_savings_off_std": f"{s.effective_savings_off_std:.6f}",
+                    "cost_per_1k_delta_pct_baseline_mean": f"{s.cost_per_1k_delta_pct_baseline_mean:.6f}",
+                    "cost_per_1k_delta_pct_baseline_std": f"{s.cost_per_1k_delta_pct_baseline_std:.6f}",
+                    "cost_per_1k_delta_pct_baseline_off_mean": f"{s.cost_per_1k_delta_pct_baseline_off_mean:.6f}",
+                    "cost_per_1k_delta_pct_baseline_off_std": f"{s.cost_per_1k_delta_pct_baseline_off_std:.6f}",
+                    "power_delta_pct_baseline_off_mean": f"{s.power_delta_pct_baseline_off_mean:.6f}",
+                    "power_delta_pct_baseline_off_std": f"{s.power_delta_pct_baseline_off_std:.6f}",
+                    "annual_total_savings_eur": f"{s.annual_total_savings:.6f}",
+                    "annual_total_savings_off_eur": f"{s.annual_total_savings_off:.6f}",
+                }
+            )
+
+
+def make_plot(path: Path, stats: list[ScaleRunStats], replay_mode: str, fit: bool = False) -> None:
+    ordered = sorted(stats, key=lambda x: x.job_arrival_scale)
+    if not ordered:
+        return
+
+    scales = np.array([s.job_arrival_scale for s in ordered], dtype=float)
+    occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
+    occ_std = np.array([s.occupancy_std for s in ordered], dtype=float)
+    sav_mean = np.array([s.savings_mean for s in ordered], dtype=float)
+    sav_std = np.array([s.savings_std for s in ordered], dtype=float)
+    sav_off_mean = np.array([s.savings_off_mean for s in ordered], dtype=float)
+    sav_off_std = np.array([s.savings_off_std for s in ordered], dtype=float)
+    completion_mean = np.array([s.completion_rate_mean for s in ordered], dtype=float)
+    completion_std = np.array([s.completion_rate_std for s in ordered], dtype=float)
+    eff_sav_mean = np.array([s.effective_savings_mean for s in ordered], dtype=float)
+    eff_sav_std = np.array([s.effective_savings_std for s in ordered], dtype=float)
+    eff_sav_off_mean = np.array([s.effective_savings_off_mean for s in ordered], dtype=float)
+    eff_sav_off_std = np.array([s.effective_savings_off_std for s in ordered], dtype=float)
+    cost_per_1k_delta_base_mean = np.array([s.cost_per_1k_delta_pct_baseline_mean for s in ordered], dtype=float)
+    cost_per_1k_delta_base_std = np.array([s.cost_per_1k_delta_pct_baseline_std for s in ordered], dtype=float)
+    cost_per_1k_delta_base_off_mean = np.array([s.cost_per_1k_delta_pct_baseline_off_mean for s in ordered], dtype=float)
+    cost_per_1k_delta_base_off_std = np.array([s.cost_per_1k_delta_pct_baseline_off_std for s in ordered], dtype=float)
+    power_delta_base_off_mean = np.array([s.power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
+    power_delta_base_off_std = np.array([s.power_delta_pct_baseline_off_std for s in ordered], dtype=float)
+
+    scale_min = float(np.min(scales))
+    scale_max = float(np.max(scales))
+    if scale_max <= scale_min:
+        scale_max = scale_min + 1.0
+    norm = matplotlib.colors.Normalize(vmin=scale_min, vmax=scale_max)
+    cmap = plt.get_cmap("turbo")
+    point_colors = cmap(norm(scales))
+
+    def _error_at(arr: np.ndarray | None, idx: int) -> float | None:
+        if arr is None:
+            return None
+        v = float(arr[idx])
+        return v if np.isfinite(v) else None
+
+    def plot_colored_points(
+        ax: plt.Axes,
+        x: np.ndarray,
+        y: np.ndarray,
+        xerr: np.ndarray | None = None,
+        yerr: np.ndarray | None = None,
+    ) -> None:
+        for i, (xi, yi, c) in enumerate(zip(x, y, point_colors)):
+            if not (np.isfinite(xi) and np.isfinite(yi)):
+                continue
+            ax.errorbar(
+                float(xi),
+                float(yi),
+                xerr=_error_at(xerr, i),
+                yerr=_error_at(yerr, i),
+                fmt="o",
+                markersize=6,
+                capsize=3,
+                color=c,
+                ecolor=c,
+                elinewidth=1.2,
+                alpha=0.95,
+            )
+
+    fig, axes = plt.subplots(3, 3, figsize=(20, 17), constrained_layout=True)
+    ax00, ax01, ax02 = axes[0]
+    ax10, ax11, ax12 = axes[1]
+    ax20, ax21, ax22 = axes[2]
+
+    # Panel 1: arrival scale vs occupancy.
+    plot_colored_points(ax00, scales, occ_mean, yerr=occ_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(scales, occ_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(scales)), float(np.max(scales)), 250)
+        ax00.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax00.set_title("Arrival Scale vs Occupancy/Episode")
+    ax00.set_xlabel("Job arrival scale")
+    ax00.set_ylabel("Agent Occupancy (Nodes, %) / Episode")
+    ax00.grid(alpha=0.3)
+    if coeffs is not None:
+        ax00.legend()
+
+    # Panel 2: occupancy vs savings.
+    plot_colored_points(ax01, occ_mean, sav_mean, xerr=occ_std, yerr=sav_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, sav_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(sav_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax01.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax01.set_title("Occupancy/Episode vs Savings/Episode")
+    ax01.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax01.set_ylabel("Savings vs Baseline (EUR / Episode)")
+    ax01.grid(alpha=0.3)
+    if coeffs is not None:
+        ax01.legend()
+
+    # Panel 3: occupancy vs savings_off.
+    plot_colored_points(ax02, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, sav_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(sav_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax02.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax02.set_title("Occupancy vs Savings_off/Episode")
+    ax02.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax02.set_ylabel("Savings vs Baseline_off (EUR / Episode)")
+    ax02.grid(alpha=0.3)
+    if coeffs is not None:
+        ax02.legend()
+
+    # Panel 4: arrival scale vs completion rate.
+    plot_colored_points(ax10, scales, completion_mean, yerr=completion_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(scales, completion_mean, max_degree=3)
+    if coeffs is not None:
+        x_fit = np.linspace(float(np.min(scales)), float(np.max(scales)), 250)
+        ax10.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax10.set_title("Arrival Scale vs Agent Completion Rate")
+    ax10.set_xlabel("Job arrival scale")
+    ax10.set_ylabel("Completion Rate (%)")
+    ax10.grid(alpha=0.3)
+    if coeffs is not None:
+        ax10.legend()
+
+    # Panel 5: occupancy vs effective savings.
+    plot_colored_points(ax11, occ_mean, eff_sav_mean, xerr=occ_std, yerr=eff_sav_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, eff_sav_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax11.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax11.set_title("Occupancy vs Effective Savings")
+    ax11.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax11.set_ylabel("effective_savings")
+    ax11.grid(alpha=0.3)
+    if coeffs is not None:
+        ax11.legend()
+
+    # Panel 6: occupancy vs effective savings_off.
+    plot_colored_points(ax12, occ_mean, eff_sav_off_mean, xerr=occ_std, yerr=eff_sav_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, eff_sav_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax12.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax12.set_title("Occupancy vs Effective Savings_off")
+    ax12.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax12.set_ylabel("effective_savings_off")
+    ax12.grid(alpha=0.3)
+    if coeffs is not None:
+        ax12.legend()
+
+    # Panel 7: occupancy vs cost_per_1k delta (%) vs baseline.
+    plot_colored_points(ax20, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax20.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax20.set_title("Occupancy vs Cost/1k Delta vs Baseline")
+    ax20.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax20.set_ylabel("(Baseline - Agent) / Baseline  [%]")
+    ax20.grid(alpha=0.3)
+    if coeffs is not None:
+        ax20.legend()
+
+    # Panel 8: occupancy vs cost_per_1k delta (%) vs baseline_off.
+    plot_colored_points(ax21, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax21.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax21.set_title("Occupancy vs Cost/1k Delta vs Baseline_off")
+    ax21.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax21.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
+    ax21.grid(alpha=0.3)
+    if coeffs is not None:
+        ax21.legend()
+
+    # Panel 9: occupancy vs power delta (%) vs baseline_off.
+    plot_colored_points(ax22, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std)
+    coeffs, deg = None, None
+    if fit:
+        coeffs, deg = polyfit_curve(occ_mean, power_delta_base_off_mean, max_degree=3)
+    if coeffs is not None:
+        finite = np.isfinite(occ_mean) & np.isfinite(power_delta_base_off_mean)
+        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
+        ax22.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+    ax22.set_title("Occupancy vs Power Delta vs Baseline_off")
+    ax22.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
+    ax22.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
+    ax22.grid(alpha=0.3)
+    if coeffs is not None:
+        ax22.legend()
+
+    sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), pad=0.02)
+    cbar.set_label("Job arrival scale (point color)")
+
+    fig.suptitle(f"Job-Arrival-Scale Sweep ({replay_mode})", fontsize=14)
+    fig.savefig(path, dpi=220)
+    plt.close(fig)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Compare --jobs exact replay aggregate vs --jobs sampling (--job-arrival-scale) and fit occupancy trend lines."
+    )
+
+    # Core train.py params.
+    parser.add_argument("--prices", default="./data/prices_2023.csv")
+    parser.add_argument("--jobs", required=True, help="Path forwarded to train.py --jobs")
+    parser.add_argument("--session", default="")
+    parser.add_argument("--efficiency-weight", type=float, default=0.6)
+    parser.add_argument("--price-weight", type=float, default=0.1)
+    parser.add_argument("--idle-weight", type=float, default=0.1)
+    parser.add_argument("--job-age-weight", type=float, default=0.2)
+    parser.add_argument("--drop-weight", type=float, default=0.0)
+    parser.add_argument("--eval-months", type=int, default=12)
+    parser.add_argument("--model", type=int, default=1000000)
+    parser.add_argument("--seed", type=int, default=None, help="Forwarded to train.py (sampling mode only).")
+
+    parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dashboard-hours", type=int, default=None)
+
+    # Scale sweep controls.
+    parser.add_argument(
+        "--scales",
+        type=str,
+        default="",
+        help="Explicit comma-separated --job-arrival-scale values. If set, min/max/num-points are ignored.",
+    )
+    parser.add_argument("--min-scale", type=float, default=0.5)
+    parser.add_argument("--max-scale", type=float, default=1.5)
+    parser.add_argument("--num-points", type=int, default=7)
+
+    parser.add_argument("--out-dir", type=str, default="")
+    parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
+    return parser
+
+
+def main() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.num_points < 2 and not args.scales:
+        parser.error("--num-points must be >= 2 when --scales is not provided")
+    if args.min_scale < 0.0:
+        parser.error("--min-scale must be >= 0")
+    if args.max_scale < args.min_scale:
+        parser.error("--max-scale must be >= --min-scale")
+
+    project_root = Path(__file__).resolve().parent
+    train_py = project_root / "train.py"
+    if not train_py.exists():
+        raise FileNotFoundError(f"Could not find train.py at: {train_py}")
+
+    jobs_path = Path(args.jobs).expanduser()
+    if not jobs_path.exists():
+        raise FileNotFoundError(f"Could not find jobs file: {jobs_path}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if args.out_dir:
+        out_dir = Path(args.out_dir).expanduser().resolve()
+    else:
+        out_dir = project_root / "analysis" / f"arrivalscale_occupancy_sweep_{timestamp}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    logs_dir = out_dir / "logs"
+    if args.save_logs:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+
+    selected_scales = select_scale_schedule(args)
+    # Always warm-start each mode at scale=1.0, then continue with requested sweep scales.
+    scales = with_scale_one_first(selected_scales)
+    mode_names = ["exact_replay_aggregate", "sampling"]
+
+    all_stats: list[ScaleRunStats] = []
+
+    for replay_mode in mode_names:
+        for scale in scales:
+            stats, raw_output = run_scale_eval(args, project_root, scale, replay_mode)
+            all_stats.append(stats)
+            if args.save_logs:
+                scale_part = format_scale_for_filename(scale)
+                log_path = logs_dir / f"{replay_mode}_scale_{scale_part}.log"
+                log_path.write_text(raw_output)
+
+    csv_path = out_dir / "summary.csv"
+    json_path = out_dir / "summary.json"
+    write_summary_csv(csv_path, all_stats)
+    with json_path.open("w") as f:
+        json.dump(
+            {
+                "created_at": datetime.now().isoformat(),
+                "selected_scales": selected_scales,
+                "scales": scales,
+                "modes": mode_names,
+                "args": vars(args),
+                "results": [asdict(s) for s in all_stats],
+            },
+            f,
+            indent=2,
+        )
+
+    plot_paths: list[Path] = []
+    for replay_mode in mode_names:
+        mode_stats = [s for s in all_stats if s.replay_mode == replay_mode]
+        plot_path = out_dir / f"trendlines_{replay_mode}.png"
+        make_plot(plot_path, mode_stats, replay_mode, fit=args.fit)
+        plot_paths.append(plot_path)
+
+    print("\nSweep complete.")
+    print(f"  Scales: {scales}")
+    print(f"  Modes: {mode_names}")
+    print(f"  CSV: {csv_path}")
+    print(f"  JSON: {json_path}")
+    for p in plot_paths:
+        print(f"  Plot: {p}")
+
+
+if __name__ == "__main__":
+    main()
