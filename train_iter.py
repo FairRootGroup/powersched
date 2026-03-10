@@ -7,6 +7,11 @@ import sys
 import time
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 
+
+def norm_path(x):
+    return None if (x is None or str(x).strip() == "") else x
+
+
 def generate_weight_combinations(step=0.1, fixed_weights=None):
     weights = np.linspace(0, 1, num=int(1/step) + 1, endpoint=True)
     combinations = []
@@ -241,10 +246,12 @@ def main():
         parser.error("--parallel must be at least 1")
     if args.job_arrival_scale < 0.0:
         parser.error("--job-arrival-scale must be >= 0.0")
-    if args.jobs_exact_replay and not args.jobs:
+    if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
     if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
         parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
+    if args.workload_gen and args.job_arrival_scale != 1.0:
+        parser.error("--job-arrival-scale is not supported with --workload-gen. Use workload generator arrival settings instead.")
 
     try:
         fixed_weights = parse_fixed_weights(args.fix_weights, args.fix_values)
