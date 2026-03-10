@@ -9,6 +9,7 @@ from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_su
 import re
 import glob
 import argparse
+import sys
 import pandas as pd
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
@@ -72,6 +73,13 @@ def main():
         parser.error("--jobs-exact-replay requires --jobs")
     if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
         parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
+    if args.workload_gen and args.job_arrival_scale != 1.0:
+        print(
+            "Warning: --job-arrival-scale is not allowed with --workload-gen; "
+            "resetting it to 1.0. Use workload generator arrival settings instead.",
+            file=sys.stderr,
+        )
+        args.job_arrival_scale = 1.0
 
     prices_file_path = args.prices
     job_durations_file_path = args.job_durations
@@ -145,7 +153,6 @@ def main():
                             steps_per_iteration=STEPS_PER_ITERATION,
                             evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen,
-                            carry_over_state=args.carry_over_state,
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
                             jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate)

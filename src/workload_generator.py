@@ -59,6 +59,7 @@ def generate_jobs(
     new_jobs_nodes = []
     new_jobs_cores = []
     new_jobs_count = 0
+    arrival_scale_applied_in_source = False
 
     if external_jobs and not workload_gen:
         if jobs_exact_replay:
@@ -87,7 +88,8 @@ def generate_jobs(
                     new_jobs_cores.append(cores_per_node)
         else:
             # Use pre-aggregated hourly templates for pattern-based replay.
-            jobs = jobs_sampler.sample_one_hourly(wrap=True)["hourly_jobs"]
+            sampled = jobs_sampler.sample_one_hourly(wrap=True)
+            jobs = sampled.get("hourly_jobs", [])
             if len(jobs) > 0:
                 for job in jobs:
                     instances = max(1, int(job.get('instances', 1)))
@@ -100,7 +102,12 @@ def generate_jobs(
         # Use hourly sampler for statistical sampling with aggregated jobs
         hour_of_day = (current_hour - 1) % 24
 
-        jobs = hourly_sampler.sample_aggregated(hour_of_day, rng=np_random)
+        jobs = hourly_sampler.sample_aggregated(
+            hour_of_day,
+            rng=np_random,
+            arrival_scale=job_arrival_scale,
+        )
+        arrival_scale_applied_in_source = True
 
         if len(jobs) > 0:
             for job in jobs:
@@ -131,8 +138,8 @@ def generate_jobs(
                 new_jobs_nodes.append(np_random.integers(MIN_NODES_PER_JOB, MAX_NODES_PER_JOB + 1))
                 new_jobs_cores.append(np_random.integers(MIN_CORES_PER_JOB, CORES_PER_NODE + 1))
 
-    # Global arrival scaling applied consistently across all workload sources.
-    if new_jobs_count > 0 and job_arrival_scale != 1.0:
+    # Global arrival scaling for sources that do not apply it internally.
+    if (not arrival_scale_applied_in_source) and new_jobs_count > 0 and job_arrival_scale != 1.0:
         if job_arrival_scale <= 0.0:
             return 0, [], [], []
 

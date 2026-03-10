@@ -273,7 +273,12 @@ class HourlySampler:
                       f"({tmpl['sub_hour_bins']} sub-hour bins, {tmpl['hourly_jobs']} hourly+ jobs)")
             print(f"  Total: {total_orig} jobs -> {total_templates} templates")
 
-    def sample_aggregated(self, hour_of_day: int, rng: np.random.Generator) -> list[dict[str, int]]:
+    def sample_aggregated(
+        self,
+        hour_of_day: int,
+        rng: np.random.Generator,
+        arrival_scale: float = 1.0,
+    ) -> list[dict[str, int]]:
         """
         Sample aggregated hourly jobs for a given hour of day.
 
@@ -283,6 +288,10 @@ class HourlySampler:
         Args:
             hour_of_day: Hour of day (0-23)
             rng: NumPy random generator
+            arrival_scale: Multiplier for sampled job count before template scaling.
+                - 1.0: unchanged
+                - >1.0: upsample arrivals
+                - 0.0..1.0: downsample arrivals
 
         Returns:
             list: List of job dictionaries with keys: nodes, cores_per_node, duration_hours
@@ -297,7 +306,19 @@ class HourlySampler:
         tmpl = self.hourly_templates[hour_of_day]
 
         # Sample number of jobs for this hour (can be 0)
-        num_jobs = rng.choice(dist["job_count"])
+        num_jobs = int(rng.choice(dist["job_count"]))
+
+        # Apply arrival scaling directly to the sampled count so true hourly
+        # statistical sampling can be controlled via --job-arrival-scale.
+        if num_jobs > 0 and arrival_scale != 1.0:
+            if arrival_scale <= 0.0:
+                return []
+            whole = int(math.floor(arrival_scale))
+            frac = float(arrival_scale - whole)
+            scaled_num_jobs = num_jobs * whole
+            if frac > 0.0:
+                scaled_num_jobs += int(rng.binomial(num_jobs, frac))
+            num_jobs = scaled_num_jobs
 
         if num_jobs <= 0 or len(tmpl["templates"]) == 0:
             return []

@@ -352,10 +352,13 @@ class DurationSampler:
                 # with appropriate scaling. Replay must create one instance per
                 # original job to preserve core-hours and concurrency.
                 duration_hours = math.ceil(agg_job['duration_minutes'] / 60)
+                # Keep replay templates within the simulated cluster limits.
+                nnodes = min(max(agg_job['nnodes'], 1), max_nodes_per_job)
+                cores_per_node_needed = min(max(agg_job['cores_per_node'], 1), cores_per_node)
 
                 hourly_job = {
-                    'nnodes': agg_job['nnodes'],
-                    'cores_per_node': agg_job['cores_per_node'],
+                    'nnodes': nnodes,
+                    'cores_per_node': cores_per_node_needed,
                     'duration_hours': duration_hours,
                     'original_job_count': agg_job['count'],
                     'instances': agg_job['count'],
