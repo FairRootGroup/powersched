@@ -322,6 +322,12 @@ def main():
                 total_baseline_off_cost_per_1000_completed = safe_ratio(total_baseline_off_cost * 1000.0, total_baseline_completed)
                 total_dropped_jobs_per_saved_euro = safe_ratio(total_jobs_dropped, total_savings_vs_baseline) if total_savings_vs_baseline > 0 else None
                 total_dropped_jobs_per_saved_euro_off = safe_ratio(total_jobs_dropped, total_savings_vs_baseline_off) if total_savings_vs_baseline_off > 0 else None
+                arrivals_per_hour_by_episode = [float(ep['jobs_submitted']) / float(EPISODE_HOURS) for ep in env.metrics.episode_costs]
+                mean_arrivals_per_hour = (sum(arrivals_per_hour_by_episode) / len(arrivals_per_hour_by_episode)) if arrivals_per_hour_by_episode else 0.0
+                arrivals_variance = (
+                    sum((x - mean_arrivals_per_hour) ** 2 for x in arrivals_per_hour_by_episode) / len(arrivals_per_hour_by_episode)
+                ) if arrivals_per_hour_by_episode else 0.0
+                std_arrivals_per_hour = arrivals_variance ** 0.5
 
                 print(f"\n=== JOB PROCESSING METRICS ===")
                 print(f"\nAgent:")
@@ -329,6 +335,7 @@ def main():
                 print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
                 print(f"  Total Cost: €{total_agent_cost:,.0f}")
+                print(f"  Job Arrivals/Hour (mean ± std): {mean_arrivals_per_hour:.2f} ± {std_arrivals_per_hour:.2f}")
 
                 print(f"\nBaseline:")
                 print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completion_rate:.1f}%)")
