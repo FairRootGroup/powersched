@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+from src.arrival_scale import validate_job_arrival_scale
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 
 
@@ -244,8 +245,10 @@ def main():
 
     if args.parallel < 1:
         parser.error("--parallel must be at least 1")
-    if args.job_arrival_scale < 0.0:
-        parser.error("--job-arrival-scale must be >= 0.0")
+    try:
+        args.job_arrival_scale = validate_job_arrival_scale(args.job_arrival_scale)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
     if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:

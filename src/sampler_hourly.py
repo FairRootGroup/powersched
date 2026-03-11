@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Any
 
 import numpy as np
+from src.arrival_scale import validate_job_arrival_scale
 
 
 class HourlySampler:
@@ -300,6 +301,7 @@ class HourlySampler:
         if not self.aggregation_initialized:
             raise RuntimeError("Aggregation not initialized. Call precalculate_hourly_templates() first.")
 
+        arrival_scale = validate_job_arrival_scale(arrival_scale)
         hour_of_day = hour_of_day % 24
 
         dist = self.hour_distributions[hour_of_day]

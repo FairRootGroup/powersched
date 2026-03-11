@@ -11,6 +11,8 @@ import glob
 import argparse
 import sys
 import pandas as pd
+from src.arrival_scale import validate_job_arrival_scale
+from src.evaluation_summary import build_episode_summary_line, mean_occupancy_pct
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
@@ -80,8 +82,10 @@ def main():
     parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
 
     args = parser.parse_args()
-    if args.job_arrival_scale < 0.0:
-        parser.error("--job-arrival-scale must be >= 0.0")
+    try:
+        args.job_arrival_scale = validate_job_arrival_scale(args.job_arrival_scale)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
     if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
@@ -243,36 +247,25 @@ def main():
                     print(f"Episode {episode + 1}, Step {step_count}, Action: {action}, Reward: {reward:.2f}, Total Reward: {episode_reward:.2f}, Total Cost: €{env.metrics.total_cost:.2f}")
                 done = terminated or truncated
 
-            savings_vs_baseline = env.metrics.baseline_cost - env.metrics.total_cost
-            savings_vs_baseline_off = env.metrics.baseline_cost_off - env.metrics.total_cost
-            completion_rate = (env.metrics.jobs_completed / env.metrics.jobs_submitted * 100) if env.metrics.jobs_submitted > 0 else 0
-            avg_wait = env.metrics.total_job_wait_time / env.metrics.jobs_completed if env.metrics.jobs_completed > 0 else 0
-            agent_power_mwh = env.metrics.episode_total_power_consumption_mwh
-            baseline_power_mwh = env.metrics.episode_baseline_power_consumption_mwh
-            baseline_power_off_mwh = env.metrics.episode_baseline_power_consumption_off_mwh
-            agent_mean_price = (env.metrics.episode_total_cost / agent_power_mwh) if agent_power_mwh > 0 else 0.0
-            baseline_mean_price = (env.metrics.episode_baseline_cost / baseline_power_mwh) if baseline_power_mwh > 0 else 0.0
-            baseline_off_mean_price = (env.metrics.episode_baseline_cost_off / baseline_power_off_mwh) if baseline_power_off_mwh > 0 else 0.0
-            agent_cost_per_1000_completed = safe_ratio(env.metrics.total_cost * 1000.0, env.metrics.jobs_completed)
-            baseline_cost_per_1000_completed = safe_ratio(env.metrics.baseline_cost * 1000.0, env.metrics.baseline_jobs_completed)
-            # baseline_off is a cost variant of baseline scheduling, so it uses the same completed-job count.
-            baseline_off_cost_per_1000_completed = safe_ratio(env.metrics.baseline_cost_off * 1000.0, env.metrics.baseline_jobs_completed)
-            dropped_jobs_per_saved_euro = safe_ratio(env.metrics.episode_jobs_dropped, savings_vs_baseline) if savings_vs_baseline > 0 else None
-            dropped_jobs_per_saved_euro_off = safe_ratio(env.metrics.episode_jobs_dropped, savings_vs_baseline_off) if savings_vs_baseline_off > 0 else None
-            print(f"  Episode {episode + 1}: "
-                f"Agent Cost=€{env.metrics.total_cost:.0f}, "
-                f"Baseline Cost=€{env.metrics.baseline_cost:.0f} | Baseline Off=€{env.metrics.baseline_cost_off:.0f}, "
-                f"Savings=€{savings_vs_baseline:.0f}/€{savings_vs_baseline_off:.0f}, "
-                f"Power={agent_power_mwh:.1f}/{baseline_power_mwh:.1f}/{baseline_power_off_mwh:.1f} MWh (agent/base/base_off), "
-                f"MeanPrice={agent_mean_price:.2f}/{baseline_mean_price:.2f}/{baseline_off_mean_price:.2f} €/MWh (agent/base/base_off), "
-                f"CostPer1kCompleted={fmt_optional(agent_cost_per_1000_completed, 1, thousands=True)}/{fmt_optional(baseline_cost_per_1000_completed, 1, thousands=True)}/{fmt_optional(baseline_off_cost_per_1000_completed, 1, thousands=True)} €/1k (agent/base/base_off), "
-                f"DroppedPerSavedEuro={fmt_optional(dropped_jobs_per_saved_euro, 6)}/{fmt_optional(dropped_jobs_per_saved_euro_off, 6)} jobs/€ (vs base/base_off), "
-                f"Jobs={env.metrics.jobs_completed}/{env.metrics.jobs_submitted} ({completion_rate:.0f}%), "
-                f"AvgWait={avg_wait:.1f}h, "
-                f"EpisodeMaxQueue={env.metrics.episode_max_queue_size_reached}, Dropped={env.metrics.episode_jobs_dropped}, "
-                f"MaxQueue={env.metrics.max_queue_size_reached}, "
-                f"Agent Occupancy (Cores)={env.metrics.episode_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_used_cores else 0 :.2f}%, Baseline Occupancy (Cores)={env.metrics.episode_baseline_used_cores[-1]*100/(CORES_PER_NODE*MAX_NODES) if env.metrics.episode_baseline_used_cores else 0 :.2f}%, "
-                f"Agent Occupancy (Nodes)={env.metrics.episode_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_used_nodes else 0 :.2f}%, Baseline Occupancy (Nodes)={env.metrics.episode_baseline_used_nodes[-1]*100/MAX_NODES if env.metrics.episode_baseline_used_nodes else 0 :.2f}% " )
+            if not env.metrics.episode_costs:
+                raise RuntimeError("Episode metrics were not recorded before evaluation summary output.")
+
+            episode_data = env.metrics.episode_costs[-1]
+            agent_occupancy_cores_pct = mean_occupancy_pct(env.metrics.episode_used_cores, CORES_PER_NODE * MAX_NODES)
+            baseline_occupancy_cores_pct = mean_occupancy_pct(env.metrics.episode_baseline_used_cores, CORES_PER_NODE * MAX_NODES)
+            agent_occupancy_nodes_pct = mean_occupancy_pct(env.metrics.episode_used_nodes, MAX_NODES)
+            baseline_occupancy_nodes_pct = mean_occupancy_pct(env.metrics.episode_baseline_used_nodes, MAX_NODES)
+            print(
+                build_episode_summary_line(
+                    episode_number=episode + 1,
+                    episode_data=episode_data,
+                    timeline_max_queue=env.metrics.max_queue_size_reached,
+                    agent_occupancy_cores_pct=agent_occupancy_cores_pct,
+                    baseline_occupancy_cores_pct=baseline_occupancy_cores_pct,
+                    agent_occupancy_nodes_pct=agent_occupancy_nodes_pct,
+                    baseline_occupancy_nodes_pct=baseline_occupancy_nodes_pct,
+                )
+            )
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
@@ -306,6 +299,7 @@ def main():
                 total_baseline_cost = sum(float(ep['baseline_cost']) for ep in env.metrics.episode_costs)
                 total_baseline_off_cost = sum(float(ep['baseline_cost_off']) for ep in env.metrics.episode_costs)
                 total_jobs_dropped = sum(int(ep.get('jobs_dropped', 0)) for ep in env.metrics.episode_costs)
+                total_baseline_jobs_dropped = sum(int(ep.get('baseline_jobs_dropped', 0)) for ep in env.metrics.episode_costs)
                 total_agent_power_mwh = sum(float(ep.get('agent_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_power_mwh = sum(float(ep.get('baseline_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_off_power_mwh = sum(float(ep.get('baseline_power_consumption_off_mwh', 0.0)) for ep in env.metrics.episode_costs)
@@ -351,6 +345,7 @@ def main():
 
                 print(f"\n=== AGENT DROPPED JOBS PER SAVED EURO ===")
                 print(f"  Total Dropped Jobs (Agent): {total_jobs_dropped:,}")
+                print(f"  Total Dropped Jobs (Baseline): {total_baseline_jobs_dropped:,}")
                 print(f"  Vs Baseline:     {fmt_optional(total_dropped_jobs_per_saved_euro, 6)} jobs/€")
                 print(f"  Vs Baseline_off: {fmt_optional(total_dropped_jobs_per_saved_euro_off, 6)} jobs/€")
 
