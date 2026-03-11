@@ -10,6 +10,9 @@ Sweep job-arrival-scale values in jobs exact-replay mode and analyze:
 7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
 8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
 9) occupancy -> (baseline_off - agent) power / baseline_off
+10) arrival-scale -> baseline and baseline_off occupancies
+11) arrival-scale -> mean jobs/hour (with std)
+12) arrival-scale -> dropped-jobs delta (agent - baseline)
 
 For each scale, this script runs train.py in evaluation mode for one year
 (12 months = 24 episodes), parses per-episode metrics from stdout, computes
@@ -37,6 +40,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import matplotlib
 matplotlib.use("Agg")
@@ -53,7 +57,9 @@ EPISODE_RE = re.compile(
     r"(?P<baseline_off_cost_1k>-?[\d,]+(?:\.\d+)?|n/a)\s*€/1k.*?"
     r"Jobs=[\d,]+\/[\d,]+\s+\((?P<completion_rate>-?[\d.]+)%\),\s*"
     r"AvgWait=(?P<avg_wait>-?[\d.]+)h,.*?"
-    r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%",
+    r"Dropped=(?P<agent_dropped>-?[\d,]+),.*?"
+    r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%,\s*"
+    r"Baseline Occupancy \(Nodes\)=\s*(?P<baseline_occupancy>-?[\d.]+)%",
     re.MULTILINE,
 )
 
@@ -64,6 +70,18 @@ WAIT_SUMMARY_RE = re.compile(
     re.DOTALL,
 )
 
+ARRIVALS_SUMMARY_RE = re.compile(
+    r"Job Arrivals/Hour \(mean\s*(?:±|\+/-)\s*std\):\s*(?P<mean>-?[\d.]+)\s*(?:±|\+/-)\s*(?P<std>-?[\d.]+)"
+)
+
+DROPPED_AGENT_SUMMARY_RE = re.compile(
+    r"Total Dropped Jobs \(Agent\):\s*(?P<agent>[\d,]+)"
+)
+
+DROPPED_BASELINE_SUMMARY_RE = re.compile(
+    r"Total Dropped Jobs \(Baseline\):\s*(?P<baseline>[\d,]+)"
+)
+
 
 @dataclass
 class ScaleRunStats:
@@ -72,6 +90,15 @@ class ScaleRunStats:
     episodes: int
     occupancy_mean: float
     occupancy_std: float
+    baseline_occupancy_mean: float
+    baseline_occupancy_std: float
+    baseline_off_occupancy_mean: float
+    baseline_off_occupancy_std: float
+    arrivals_per_hour_mean: float
+    arrivals_per_hour_std: float
+    dropped_jobs_agent_total: float
+    dropped_jobs_baseline_total: float
+    dropped_jobs_delta_total: float
     savings_mean: float
     savings_std: float
     savings_off_mean: float
@@ -96,6 +123,9 @@ class ScaleRunStats:
     command: list[str]
     command_str: str
     occupancy_samples: list[float] = field(default_factory=list)
+    baseline_occupancy_samples: list[float] = field(default_factory=list)
+    baseline_off_occupancy_samples: list[float] = field(default_factory=list)
+    dropped_jobs_agent_samples: list[float] = field(default_factory=list)
     savings_samples: list[float] = field(default_factory=list)
     savings_off_samples: list[float] = field(default_factory=list)
     completion_rate_samples: list[float] = field(default_factory=list)
@@ -126,8 +156,25 @@ def _diff_cumulative(values: list[float]) -> np.ndarray:
     return np.diff(np.concatenate(([0.0], arr)))
 
 
-def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def parse_episode_metrics(
+    stdout: str,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     occupancy = []
+    baseline_occupancy = []
+    agent_dropped = []
     cumulative_savings = []
     cumulative_savings_off = []
     completion_rate = []
@@ -140,6 +187,8 @@ def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
 
     for match in EPISODE_RE.finditer(stdout):
         occupancy.append(_to_float(match.group("occupancy")))
+        baseline_occupancy.append(_to_float(match.group("baseline_occupancy")))
+        agent_dropped.append(_to_float(match.group("agent_dropped")))
         cumulative_savings.append(_to_float(match.group("savings")))
         cumulative_savings_off.append(_to_float(match.group("savings_off")))
         completion_rate.append(_to_float(match.group("completion_rate")))
@@ -160,6 +209,8 @@ def parse_episode_metrics(stdout: str) -> tuple[np.ndarray, np.ndarray, np.ndarr
     episode_savings_off = _diff_cumulative(cumulative_savings_off)
     return (
         np.asarray(occupancy, dtype=float),
+        np.asarray(baseline_occupancy, dtype=float),
+        np.asarray(agent_dropped, dtype=float),
         episode_savings,
         episode_savings_off,
         np.asarray(completion_rate, dtype=float),
@@ -177,6 +228,21 @@ def parse_wait_summary(stdout: str) -> tuple[float | None, float | None]:
     if not match:
         return None, None
     return _to_float(match.group("agent_wait")), _to_float(match.group("baseline_wait"))
+
+
+def parse_arrivals_summary(stdout: str) -> tuple[float | None, float | None]:
+    match = ARRIVALS_SUMMARY_RE.search(stdout)
+    if not match:
+        return None, None
+    return _to_float(match.group("mean")), _to_float(match.group("std"))
+
+
+def parse_dropped_totals_summary(stdout: str) -> tuple[float | None, float | None]:
+    agent_match = DROPPED_AGENT_SUMMARY_RE.search(stdout)
+    baseline_match = DROPPED_BASELINE_SUMMARY_RE.search(stdout)
+    agent_total = _to_float(agent_match.group("agent")) if agent_match else None
+    baseline_total = _to_float(baseline_match.group("baseline")) if baseline_match else None
+    return agent_total, baseline_total
 
 
 def safe_divide(numer: np.ndarray, denom: float) -> np.ndarray:
@@ -208,6 +274,8 @@ def make_run_stats(
     job_arrival_scale: float,
     command: list[str],
     occupancy: np.ndarray,
+    baseline_occupancy: np.ndarray,
+    agent_dropped: np.ndarray,
     savings: np.ndarray,
     savings_off: np.ndarray,
     completion_rate: np.ndarray,
@@ -218,6 +286,10 @@ def make_run_stats(
     baseline_off_cost_1k: np.ndarray,
     agent_power: np.ndarray,
     baseline_off_power: np.ndarray,
+    arrivals_per_hour_mean: float,
+    arrivals_per_hour_std: float,
+    dropped_jobs_agent_total: float,
+    dropped_jobs_baseline_total: float,
 ) -> ScaleRunStats:
     wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
     effective_savings = safe_divide(savings * (completion_rate / 100) ** 2, wait_delta_hours + 1)
@@ -232,6 +304,8 @@ def make_run_stats(
     cost_per_1k_delta_pct_baseline_mean, cost_per_1k_delta_pct_baseline_std = finite_mean_std(cost_per_1k_delta_pct_baseline)
     cost_per_1k_delta_pct_baseline_off_mean, cost_per_1k_delta_pct_baseline_off_std = finite_mean_std(cost_per_1k_delta_pct_baseline_off)
     power_delta_pct_baseline_off_mean, power_delta_pct_baseline_off_std = finite_mean_std(power_delta_pct_baseline_off)
+    baseline_off_occupancy = baseline_occupancy.copy()
+    dropped_jobs_delta_total = dropped_jobs_agent_total - dropped_jobs_baseline_total
 
     return ScaleRunStats(
         replay_mode=replay_mode,
@@ -239,6 +313,15 @@ def make_run_stats(
         episodes=int(occupancy.size),
         occupancy_mean=float(np.mean(occupancy)),
         occupancy_std=float(np.std(occupancy)),
+        baseline_occupancy_mean=float(np.mean(baseline_occupancy)),
+        baseline_occupancy_std=float(np.std(baseline_occupancy)),
+        baseline_off_occupancy_mean=float(np.mean(baseline_off_occupancy)),
+        baseline_off_occupancy_std=float(np.std(baseline_off_occupancy)),
+        arrivals_per_hour_mean=float(arrivals_per_hour_mean),
+        arrivals_per_hour_std=float(arrivals_per_hour_std),
+        dropped_jobs_agent_total=float(dropped_jobs_agent_total),
+        dropped_jobs_baseline_total=float(dropped_jobs_baseline_total),
+        dropped_jobs_delta_total=float(dropped_jobs_delta_total),
         savings_mean=float(np.mean(savings)),
         savings_std=float(np.std(savings)),
         savings_off_mean=float(np.mean(savings_off)),
@@ -263,6 +346,9 @@ def make_run_stats(
         command=command,
         command_str=shlex.join(command),
         occupancy_samples=occupancy.tolist(),
+        baseline_occupancy_samples=baseline_occupancy.tolist(),
+        baseline_off_occupancy_samples=baseline_off_occupancy.tolist(),
+        dropped_jobs_agent_samples=agent_dropped.tolist(),
         savings_samples=savings.tolist(),
         savings_off_samples=savings_off.tolist(),
         completion_rate_samples=completion_rate.tolist(),
@@ -399,6 +485,8 @@ def run_scale_eval(
 
     (
         occupancy,
+        baseline_occupancy,
+        agent_dropped,
         savings,
         savings_off,
         completion_rate,
@@ -418,12 +506,26 @@ def run_scale_eval(
     else:
         agent_avg_wait_hours = float(agent_wait_summary)
         baseline_avg_wait_hours = float(baseline_wait_summary)
+    arrivals_per_hour_mean, arrivals_per_hour_std = parse_arrivals_summary(combined_output)
+    if arrivals_per_hour_mean is None or arrivals_per_hour_std is None:
+        print(f"[warn] mode={replay_mode}, scale={job_arrival_scale:.6f}: could not parse run-level arrivals/hour summary; values set to NaN.")
+        arrivals_per_hour_mean = float("nan")
+        arrivals_per_hour_std = float("nan")
+    dropped_jobs_agent_total, dropped_jobs_baseline_total = parse_dropped_totals_summary(combined_output)
+    if dropped_jobs_agent_total is None:
+        dropped_jobs_agent_total = float(np.sum(agent_dropped))
+        print(f"[warn] mode={replay_mode}, scale={job_arrival_scale:.6f}: could not parse run-level agent dropped total; using sum of episode Dropped= values.")
+    if dropped_jobs_baseline_total is None:
+        dropped_jobs_baseline_total = 0.0
+        print(f"[warn] mode={replay_mode}, scale={job_arrival_scale:.6f}: could not parse run-level baseline dropped total; defaulting to 0.")
 
     stats = make_run_stats(
         replay_mode,
         job_arrival_scale,
         command,
         occupancy,
+        baseline_occupancy,
+        agent_dropped,
         savings,
         savings_off,
         completion_rate,
@@ -434,10 +536,17 @@ def run_scale_eval(
         baseline_off_cost_1k,
         agent_power,
         baseline_off_power,
+        arrivals_per_hour_mean,
+        arrivals_per_hour_std,
+        dropped_jobs_agent_total,
+        dropped_jobs_baseline_total,
     )
     print(
         f"[ok ] mode={replay_mode}, scale={job_arrival_scale:.6f}: "
         f"occupancy={stats.occupancy_mean:.2f}%±{stats.occupancy_std:.2f}, "
+        f"baseline_occ={stats.baseline_occupancy_mean:.2f}%±{stats.baseline_occupancy_std:.2f}, "
+        f"arrivals/h={stats.arrivals_per_hour_mean:.2f}±{stats.arrivals_per_hour_std:.2f}, "
+        f"dropped_delta={stats.dropped_jobs_delta_total:.0f}, "
         f"completion={stats.completion_rate_mean:.2f}%±{stats.completion_rate_std:.2f}, "
         f"savings={stats.savings_mean:.0f}±{stats.savings_std:.0f}, "
         f"savings_off={stats.savings_off_mean:.0f}±{stats.savings_off_std:.0f}, "
@@ -453,6 +562,15 @@ def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
         "episodes",
         "occupancy_mean_pct",
         "occupancy_std_pct",
+        "baseline_occupancy_mean_pct",
+        "baseline_occupancy_std_pct",
+        "baseline_off_occupancy_mean_pct",
+        "baseline_off_occupancy_std_pct",
+        "arrivals_per_hour_mean",
+        "arrivals_per_hour_std",
+        "dropped_jobs_agent_total",
+        "dropped_jobs_baseline_total",
+        "dropped_jobs_delta_total",
         "completion_rate_mean_pct",
         "completion_rate_std_pct",
         "agent_avg_wait_hours",
@@ -486,6 +604,15 @@ def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
                     "episodes": s.episodes,
                     "occupancy_mean_pct": f"{s.occupancy_mean:.6f}",
                     "occupancy_std_pct": f"{s.occupancy_std:.6f}",
+                    "baseline_occupancy_mean_pct": f"{s.baseline_occupancy_mean:.6f}",
+                    "baseline_occupancy_std_pct": f"{s.baseline_occupancy_std:.6f}",
+                    "baseline_off_occupancy_mean_pct": f"{s.baseline_off_occupancy_mean:.6f}",
+                    "baseline_off_occupancy_std_pct": f"{s.baseline_off_occupancy_std:.6f}",
+                    "arrivals_per_hour_mean": f"{s.arrivals_per_hour_mean:.6f}",
+                    "arrivals_per_hour_std": f"{s.arrivals_per_hour_std:.6f}",
+                    "dropped_jobs_agent_total": f"{s.dropped_jobs_agent_total:.6f}",
+                    "dropped_jobs_baseline_total": f"{s.dropped_jobs_baseline_total:.6f}",
+                    "dropped_jobs_delta_total": f"{s.dropped_jobs_delta_total:.6f}",
                     "completion_rate_mean_pct": f"{s.completion_rate_mean:.6f}",
                     "completion_rate_std_pct": f"{s.completion_rate_std:.6f}",
                     "agent_avg_wait_hours": f"{s.agent_avg_wait_hours:.6f}",
@@ -511,7 +638,13 @@ def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
             )
 
 
-def make_plot(path: Path, stats: list[ScaleRunStats], replay_mode: str, fit: bool = False) -> None:
+def make_plot(
+    path: Path,
+    stats: list[ScaleRunStats],
+    replay_mode: str,
+    fit: bool = False,
+    individual_dir: Path | None = None,
+) -> None:
     ordered = sorted(stats, key=lambda x: x.job_arrival_scale)
     if not ordered:
         return
@@ -519,6 +652,13 @@ def make_plot(path: Path, stats: list[ScaleRunStats], replay_mode: str, fit: boo
     scales = np.array([s.job_arrival_scale for s in ordered], dtype=float)
     occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
     occ_std = np.array([s.occupancy_std for s in ordered], dtype=float)
+    baseline_occ_mean = np.array([s.baseline_occupancy_mean for s in ordered], dtype=float)
+    baseline_occ_std = np.array([s.baseline_occupancy_std for s in ordered], dtype=float)
+    baseline_off_occ_mean = np.array([s.baseline_off_occupancy_mean for s in ordered], dtype=float)
+    baseline_off_occ_std = np.array([s.baseline_off_occupancy_std for s in ordered], dtype=float)
+    arrivals_per_hour_mean = np.array([s.arrivals_per_hour_mean for s in ordered], dtype=float)
+    arrivals_per_hour_std = np.array([s.arrivals_per_hour_std for s in ordered], dtype=float)
+    dropped_jobs_delta_total = np.array([s.dropped_jobs_delta_total for s in ordered], dtype=float)
     sav_mean = np.array([s.savings_mean for s in ordered], dtype=float)
     sav_std = np.array([s.savings_std for s in ordered], dtype=float)
     sav_off_mean = np.array([s.savings_off_mean for s in ordered], dtype=float)
@@ -543,12 +683,27 @@ def make_plot(path: Path, stats: list[ScaleRunStats], replay_mode: str, fit: boo
     norm = matplotlib.colors.Normalize(vmin=scale_min, vmax=scale_max)
     cmap = plt.get_cmap("turbo")
     point_colors = cmap(norm(scales))
+    colorbar_label = "Job arrival scale (point color)"
 
     def _error_at(arr: np.ndarray | None, idx: int) -> float | None:
         if arr is None:
             return None
         v = float(arr[idx])
         return v if np.isfinite(v) else None
+
+    def _maybe_plot_fit(ax: plt.Axes, x: np.ndarray, y: np.ndarray) -> None:
+        coeffs = None
+        deg = 0
+        if fit:
+            coeffs, deg = polyfit_curve(x, y, max_degree=3)
+        if coeffs is None:
+            return
+        finite = np.isfinite(x) & np.isfinite(y)
+        if not np.any(finite):
+            return
+        x_fit = np.linspace(float(np.min(x[finite])), float(np.max(x[finite])), 250)
+        ax.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
+        ax.legend()
 
     def plot_colored_points(
         ax: plt.Axes,
@@ -574,161 +729,167 @@ def make_plot(path: Path, stats: list[ScaleRunStats], replay_mode: str, fit: boo
                 alpha=0.95,
             )
 
-    fig, axes = plt.subplots(3, 3, figsize=(20, 17), constrained_layout=True)
-    ax00, ax01, ax02 = axes[0]
-    ax10, ax11, ax12 = axes[1]
-    ax20, ax21, ax22 = axes[2]
+    def draw_baseline_occupancy_pair(ax: plt.Axes) -> None:
+        for i, (xv, c) in enumerate(zip(scales, point_colors)):
+            y_base = float(baseline_occ_mean[i])
+            y_base_off = float(baseline_off_occ_mean[i])
+            if np.isfinite(xv) and np.isfinite(y_base):
+                ax.errorbar(
+                    xv,
+                    y_base,
+                    yerr=_error_at(baseline_occ_std, i),
+                    fmt="o",
+                    markersize=6,
+                    capsize=3,
+                    color=c,
+                    ecolor=c,
+                    elinewidth=1.2,
+                    alpha=0.95,
+                )
+            if np.isfinite(xv) and np.isfinite(y_base_off):
+                ax.errorbar(
+                    xv,
+                    y_base_off,
+                    yerr=_error_at(baseline_off_occ_std, i),
+                    fmt="^",
+                    markersize=6,
+                    capsize=3,
+                    color=c,
+                    ecolor=c,
+                    elinewidth=1.2,
+                    alpha=0.95,
+                )
+        ax.scatter([], [], marker="o", color="black", label="Baseline")
+        ax.scatter([], [], marker="^", color="black", label="Baseline_off")
+        ax.legend()
 
-    # Panel 1: arrival scale vs occupancy.
-    plot_colored_points(ax00, scales, occ_mean, yerr=occ_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(scales, occ_mean, max_degree=3)
-    if coeffs is not None:
-        x_fit = np.linspace(float(np.min(scales)), float(np.max(scales)), 250)
-        ax00.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax00.set_title("Arrival Scale vs Occupancy/Episode")
-    ax00.set_xlabel("Job arrival scale")
-    ax00.set_ylabel("Agent Occupancy (Nodes, %) / Episode")
-    ax00.grid(alpha=0.3)
-    if coeffs is not None:
-        ax00.legend()
+    panel_specs: list[tuple[str, Callable[[plt.Axes], None]]] = []
 
-    # Panel 2: occupancy vs savings.
-    plot_colored_points(ax01, occ_mean, sav_mean, xerr=occ_std, yerr=sav_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, sav_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(sav_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax01.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax01.set_title("Occupancy/Episode vs Savings/Episode")
-    ax01.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax01.set_ylabel("Savings vs Baseline (EUR / Episode)")
-    ax01.grid(alpha=0.3)
-    if coeffs is not None:
-        ax01.legend()
+    def _panel(
+        slug: str,
+        title: str,
+        xlabel: str,
+        ylabel: str,
+        draw_body: Callable[[plt.Axes], None],
+    ) -> None:
+        def _draw(ax: plt.Axes) -> None:
+            draw_body(ax)
+            ax.set_title(title)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.grid(alpha=0.3)
+        panel_specs.append((slug, _draw))
 
-    # Panel 3: occupancy vs savings_off.
-    plot_colored_points(ax02, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, sav_off_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(sav_off_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax02.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax02.set_title("Occupancy vs Savings_off/Episode")
-    ax02.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax02.set_ylabel("Savings vs Baseline_off (EUR / Episode)")
-    ax02.grid(alpha=0.3)
-    if coeffs is not None:
-        ax02.legend()
+    _panel(
+        "01_scale_vs_agent_occupancy",
+        "Arrival Scale vs Occupancy/Episode",
+        "Job arrival scale",
+        "Agent Occupancy (Nodes, %) / Episode",
+        lambda ax: (plot_colored_points(ax, scales, occ_mean, yerr=occ_std), _maybe_plot_fit(ax, scales, occ_mean)),
+    )
+    _panel(
+        "02_occupancy_vs_savings",
+        "Occupancy/Episode vs Savings/Episode",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "Savings vs Baseline (EUR / Episode)",
+        lambda ax: (plot_colored_points(ax, occ_mean, sav_mean, xerr=occ_std, yerr=sav_std), _maybe_plot_fit(ax, occ_mean, sav_mean)),
+    )
+    _panel(
+        "03_occupancy_vs_savings_off",
+        "Occupancy vs Savings_off/Episode",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "Savings vs Baseline_off (EUR / Episode)",
+        lambda ax: (plot_colored_points(ax, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std), _maybe_plot_fit(ax, occ_mean, sav_off_mean)),
+    )
+    _panel(
+        "04_scale_vs_completion_rate",
+        "Arrival Scale vs Agent Completion Rate",
+        "Job arrival scale",
+        "Completion Rate (%)",
+        lambda ax: (plot_colored_points(ax, scales, completion_mean, yerr=completion_std), _maybe_plot_fit(ax, scales, completion_mean)),
+    )
+    _panel(
+        "05_occupancy_vs_effective_savings",
+        "Occupancy vs Effective Savings",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "effective_savings",
+        lambda ax: (plot_colored_points(ax, occ_mean, eff_sav_mean, xerr=occ_std, yerr=eff_sav_std), _maybe_plot_fit(ax, occ_mean, eff_sav_mean)),
+    )
+    _panel(
+        "06_occupancy_vs_effective_savings_off",
+        "Occupancy vs Effective Savings_off",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "effective_savings_off",
+        lambda ax: (plot_colored_points(ax, occ_mean, eff_sav_off_mean, xerr=occ_std, yerr=eff_sav_off_std), _maybe_plot_fit(ax, occ_mean, eff_sav_off_mean)),
+    )
+    _panel(
+        "07_occupancy_vs_cost_per_1k_delta_baseline",
+        "Occupancy vs Cost/1k Delta vs Baseline",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "(Baseline - Agent) / Baseline  [%]",
+        lambda ax: (plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std), _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_mean)),
+    )
+    _panel(
+        "08_occupancy_vs_cost_per_1k_delta_baseline_off",
+        "Occupancy vs Cost/1k Delta vs Baseline_off",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "(Baseline_off - Agent) / Baseline_off  [%]",
+        lambda ax: (plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_off_mean)),
+    )
+    _panel(
+        "09_occupancy_vs_power_delta_baseline_off",
+        "Occupancy vs Power Delta vs Baseline_off",
+        "Agent Occupancy (Nodes, %) / Episode",
+        "(Baseline_off - Agent) / Baseline_off  [%]",
+        lambda ax: (plot_colored_points(ax, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, power_delta_base_off_mean)),
+    )
+    _panel(
+        "10_scale_vs_baseline_occupancies",
+        "Arrival Scale vs Baseline Occupancies",
+        "Job arrival scale",
+        "Baseline Occupancy (Nodes, %) / Episode",
+        draw_baseline_occupancy_pair,
+    )
+    _panel(
+        "11_scale_vs_jobs_per_hour",
+        "Arrival Scale vs Job Arrivals/Hour",
+        "Job arrival scale",
+        "Job Arrivals/Hour (mean ± std)",
+        lambda ax: (plot_colored_points(ax, scales, arrivals_per_hour_mean, yerr=arrivals_per_hour_std), _maybe_plot_fit(ax, scales, arrivals_per_hour_mean)),
+    )
+    _panel(
+        "12_scale_vs_dropped_jobs_delta",
+        "Arrival Scale vs Dropped Jobs Delta",
+        "Job arrival scale",
+        "Dropped Jobs Delta (Agent - Baseline)",
+        lambda ax: (plot_colored_points(ax, scales, dropped_jobs_delta_total), _maybe_plot_fit(ax, scales, dropped_jobs_delta_total)),
+    )
 
-    # Panel 4: arrival scale vs completion rate.
-    plot_colored_points(ax10, scales, completion_mean, yerr=completion_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(scales, completion_mean, max_degree=3)
-    if coeffs is not None:
-        x_fit = np.linspace(float(np.min(scales)), float(np.max(scales)), 250)
-        ax10.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax10.set_title("Arrival Scale vs Agent Completion Rate")
-    ax10.set_xlabel("Job arrival scale")
-    ax10.set_ylabel("Completion Rate (%)")
-    ax10.grid(alpha=0.3)
-    if coeffs is not None:
-        ax10.legend()
-
-    # Panel 5: occupancy vs effective savings.
-    plot_colored_points(ax11, occ_mean, eff_sav_mean, xerr=occ_std, yerr=eff_sav_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, eff_sav_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax11.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax11.set_title("Occupancy vs Effective Savings")
-    ax11.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax11.set_ylabel("effective_savings")
-    ax11.grid(alpha=0.3)
-    if coeffs is not None:
-        ax11.legend()
-
-    # Panel 6: occupancy vs effective savings_off.
-    plot_colored_points(ax12, occ_mean, eff_sav_off_mean, xerr=occ_std, yerr=eff_sav_off_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, eff_sav_off_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(eff_sav_off_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax12.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax12.set_title("Occupancy vs Effective Savings_off")
-    ax12.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax12.set_ylabel("effective_savings_off")
-    ax12.grid(alpha=0.3)
-    if coeffs is not None:
-        ax12.legend()
-
-    # Panel 7: occupancy vs cost_per_1k delta (%) vs baseline.
-    plot_colored_points(ax20, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax20.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax20.set_title("Occupancy vs Cost/1k Delta vs Baseline")
-    ax20.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax20.set_ylabel("(Baseline - Agent) / Baseline  [%]")
-    ax20.grid(alpha=0.3)
-    if coeffs is not None:
-        ax20.legend()
-
-    # Panel 8: occupancy vs cost_per_1k delta (%) vs baseline_off.
-    plot_colored_points(ax21, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, cost_per_1k_delta_base_off_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(cost_per_1k_delta_base_off_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax21.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax21.set_title("Occupancy vs Cost/1k Delta vs Baseline_off")
-    ax21.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax21.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
-    ax21.grid(alpha=0.3)
-    if coeffs is not None:
-        ax21.legend()
-
-    # Panel 9: occupancy vs power delta (%) vs baseline_off.
-    plot_colored_points(ax22, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std)
-    coeffs, deg = None, None
-    if fit:
-        coeffs, deg = polyfit_curve(occ_mean, power_delta_base_off_mean, max_degree=3)
-    if coeffs is not None:
-        finite = np.isfinite(occ_mean) & np.isfinite(power_delta_base_off_mean)
-        x_fit = np.linspace(float(np.min(occ_mean[finite])), float(np.max(occ_mean[finite])), 250)
-        ax22.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
-    ax22.set_title("Occupancy vs Power Delta vs Baseline_off")
-    ax22.set_xlabel("Agent Occupancy (Nodes, %) / Episode")
-    ax22.set_ylabel("(Baseline_off - Agent) / Baseline_off  [%]")
-    ax22.grid(alpha=0.3)
-    if coeffs is not None:
-        ax22.legend()
+    fig, axes = plt.subplots(4, 3, figsize=(22, 22), constrained_layout=True)
+    for ax, (_, draw_fn) in zip(axes.ravel(), panel_specs):
+        draw_fn(ax)
 
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), pad=0.02)
-    cbar.set_label("Job arrival scale (point color)")
+    cbar.set_label(colorbar_label)
 
     fig.suptitle(f"Job-Arrival-Scale Sweep ({replay_mode})", fontsize=14)
     fig.savefig(path, dpi=220)
     plt.close(fig)
+
+    if individual_dir is not None:
+        individual_dir.mkdir(parents=True, exist_ok=True)
+        for slug, draw_fn in panel_specs:
+            panel_path = individual_dir / f"{slug}.png"
+            fig_i, ax_i = plt.subplots(1, 1, figsize=(8, 6), constrained_layout=True)
+            draw_fn(ax_i)
+            sm_i = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+            sm_i.set_array([])
+            cbar_i = fig_i.colorbar(sm_i, ax=ax_i, pad=0.02)
+            cbar_i.set_label(colorbar_label)
+            fig_i.savefig(panel_path, dpi=220)
+            plt.close(fig_i)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -835,11 +996,14 @@ def main() -> None:
         )
 
     plot_paths: list[Path] = []
+    individual_plot_dirs: list[Path] = []
     for replay_mode in mode_names:
         mode_stats = [s for s in all_stats if s.replay_mode == replay_mode]
         plot_path = out_dir / f"trendlines_{replay_mode}.png"
-        make_plot(plot_path, mode_stats, replay_mode, fit=args.fit)
+        individual_dir = out_dir / "plots_individual" / replay_mode
+        make_plot(plot_path, mode_stats, replay_mode, fit=args.fit, individual_dir=individual_dir)
         plot_paths.append(plot_path)
+        individual_plot_dirs.append(individual_dir)
 
     print("\nSweep complete.")
     print(f"  Scales: {scales}")
@@ -848,6 +1012,8 @@ def main() -> None:
     print(f"  JSON: {json_path}")
     for p in plot_paths:
         print(f"  Plot: {p}")
+    for p in individual_plot_dirs:
+        print(f"  Individual Plots: {p}")
 
 
 if __name__ == "__main__":

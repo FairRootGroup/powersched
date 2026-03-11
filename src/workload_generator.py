@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 import numpy as np
+from src.arrival_scale import validate_job_arrival_scale
 from src.config import (
     MAX_NEW_JOBS_PER_HOUR, MAX_JOB_DURATION, MIN_NODES_PER_JOB,
     MAX_NODES_PER_JOB, MIN_CORES_PER_JOB, CORES_PER_NODE
@@ -55,6 +56,7 @@ def generate_jobs(
     Returns:
         Tuple of (new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
     """
+    job_arrival_scale = validate_job_arrival_scale(job_arrival_scale)
     new_jobs_durations = []
     new_jobs_nodes = []
     new_jobs_cores = []
