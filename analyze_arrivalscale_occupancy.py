@@ -150,13 +150,6 @@ def _to_float_or_nan(raw: str | None) -> float:
     return _to_float(raw)
 
 
-def _diff_cumulative(values: list[float]) -> np.ndarray:
-    arr = np.asarray(values, dtype=float)
-    if arr.size == 0:
-        return arr
-    return np.diff(np.concatenate(([0.0], arr)))
-
-
 def parse_episode_metrics(
     stdout: str,
 ) -> tuple[
@@ -176,8 +169,8 @@ def parse_episode_metrics(
     occupancy = []
     baseline_occupancy = []
     agent_dropped = []
-    cumulative_savings = []
-    cumulative_savings_off = []
+    savings = []
+    savings_off = []
     completion_rate = []
     avg_wait = []
     agent_cost_1k = []
@@ -190,8 +183,8 @@ def parse_episode_metrics(
         occupancy.append(_to_float(match.group("occupancy")))
         baseline_occupancy.append(_to_float(match.group("baseline_occupancy")))
         agent_dropped.append(_to_float(match.group("agent_dropped")))
-        cumulative_savings.append(_to_float(match.group("savings")))
-        cumulative_savings_off.append(_to_float(match.group("savings_off")))
+        savings.append(_to_float(match.group("savings")))
+        savings_off.append(_to_float(match.group("savings_off")))
         completion_rate.append(_to_float(match.group("completion_rate")))
         avg_wait.append(_to_float(match.group("avg_wait")))
         agent_cost_1k.append(_to_float_or_nan(match.group("agent_cost_1k")))
@@ -206,14 +199,12 @@ def parse_episode_metrics(
             "Expected lines like 'Episode X: ... Savings=€.../€..., Power=..., CostPer1kCompleted=..., Agent Occupancy (Nodes)=...%'."
         )
 
-    episode_savings = _diff_cumulative(cumulative_savings)
-    episode_savings_off = _diff_cumulative(cumulative_savings_off)
     return (
         np.asarray(occupancy, dtype=float),
         np.asarray(baseline_occupancy, dtype=float),
         np.asarray(agent_dropped, dtype=float),
-        episode_savings,
-        episode_savings_off,
+        np.asarray(savings, dtype=float),
+        np.asarray(savings_off, dtype=float),
         np.asarray(completion_rate, dtype=float),
         np.asarray(avg_wait, dtype=float),
         np.asarray(agent_cost_1k, dtype=float),
