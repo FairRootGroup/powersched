@@ -47,6 +47,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from src.analysis_naming import build_analysis_dir_name
+from src.analysis_reporting import compute_savings_totals
 
 
 EPISODE_RE = re.compile(
@@ -119,8 +120,10 @@ class ScaleRunStats:
     cost_per_1k_delta_pct_baseline_off_std: float
     power_delta_pct_baseline_off_mean: float
     power_delta_pct_baseline_off_std: float
-    annual_total_savings: float
-    annual_total_savings_off: float
+    evaluation_savings: float
+    annualized_savings: float
+    evaluation_savings_off: float
+    annualized_savings_off: float
     command: list[str]
     command_str: str
     occupancy_samples: list[float] = field(default_factory=list)
@@ -264,6 +267,7 @@ def finite_mean_std(values: np.ndarray) -> tuple[float, float]:
 def make_run_stats(
     replay_mode: str,
     job_arrival_scale: float,
+    eval_months: int,
     command: list[str],
     occupancy: np.ndarray,
     baseline_occupancy: np.ndarray,
@@ -298,6 +302,8 @@ def make_run_stats(
     power_delta_pct_baseline_off_mean, power_delta_pct_baseline_off_std = finite_mean_std(power_delta_pct_baseline_off)
     baseline_off_occupancy = baseline_occupancy.copy()
     dropped_jobs_delta_total = dropped_jobs_agent_total - dropped_jobs_baseline_total
+    evaluation_savings, annualized_savings = compute_savings_totals(savings, eval_months)
+    evaluation_savings_off, annualized_savings_off = compute_savings_totals(savings_off, eval_months)
 
     return ScaleRunStats(
         replay_mode=replay_mode,
@@ -333,8 +339,10 @@ def make_run_stats(
         cost_per_1k_delta_pct_baseline_off_std=cost_per_1k_delta_pct_baseline_off_std,
         power_delta_pct_baseline_off_mean=power_delta_pct_baseline_off_mean,
         power_delta_pct_baseline_off_std=power_delta_pct_baseline_off_std,
-        annual_total_savings=float(np.sum(savings)),
-        annual_total_savings_off=float(np.sum(savings_off)),
+        evaluation_savings=evaluation_savings,
+        annualized_savings=annualized_savings,
+        evaluation_savings_off=evaluation_savings_off,
+        annualized_savings_off=annualized_savings_off,
         command=command,
         command_str=shlex.join(command),
         occupancy_samples=occupancy.tolist(),
@@ -514,6 +522,7 @@ def run_scale_eval(
     stats = make_run_stats(
         replay_mode,
         job_arrival_scale,
+        args.eval_months,
         command,
         occupancy,
         baseline_occupancy,
@@ -542,6 +551,8 @@ def run_scale_eval(
         f"completion={stats.completion_rate_mean:.2f}%±{stats.completion_rate_std:.2f}, "
         f"savings={stats.savings_mean:.0f}±{stats.savings_std:.0f}, "
         f"savings_off={stats.savings_off_mean:.0f}±{stats.savings_off_std:.0f}, "
+        f"eval_savings={stats.evaluation_savings:.0f}/{stats.evaluation_savings_off:.0f}, "
+        f"annualized_savings={stats.annualized_savings:.0f}/{stats.annualized_savings_off:.0f}, "
         f"wait_delta={stats.wait_delta_hours:.3f}h"
     )
     return stats, combined_output
@@ -582,8 +593,10 @@ def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
         "cost_per_1k_delta_pct_baseline_off_std",
         "power_delta_pct_baseline_off_mean",
         "power_delta_pct_baseline_off_std",
-        "annual_total_savings_eur",
-        "annual_total_savings_off_eur",
+        "evaluation_savings_eur",
+        "annualized_savings_eur",
+        "evaluation_savings_off_eur",
+        "annualized_savings_off_eur",
     ]
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -624,8 +637,10 @@ def write_summary_csv(path: Path, stats: list[ScaleRunStats]) -> None:
                     "cost_per_1k_delta_pct_baseline_off_std": f"{s.cost_per_1k_delta_pct_baseline_off_std:.6f}",
                     "power_delta_pct_baseline_off_mean": f"{s.power_delta_pct_baseline_off_mean:.6f}",
                     "power_delta_pct_baseline_off_std": f"{s.power_delta_pct_baseline_off_std:.6f}",
-                    "annual_total_savings_eur": f"{s.annual_total_savings:.6f}",
-                    "annual_total_savings_off_eur": f"{s.annual_total_savings_off:.6f}",
+                    "evaluation_savings_eur": f"{s.evaluation_savings:.6f}",
+                    "annualized_savings_eur": f"{s.annualized_savings:.6f}",
+                    "evaluation_savings_off_eur": f"{s.evaluation_savings_off:.6f}",
+                    "annualized_savings_off_eur": f"{s.annualized_savings_off:.6f}",
                 }
             )
 
@@ -929,6 +944,8 @@ def main() -> None:
 
     if args.num_points < 2 and not args.scales:
         parser.error("--num-points must be >= 2 when --scales is not provided")
+    if args.eval_months <= 0:
+        parser.error("--eval-months must be > 0")
     if args.min_scale < 0.0:
         parser.error("--min-scale must be >= 0")
     if args.max_scale < args.min_scale:
@@ -1009,6 +1026,7 @@ def main() -> None:
     print("\nSweep complete.")
     print(f"  Scales: {scales}")
     print(f"  Modes: {mode_names}")
+    print(f"  Evaluation months: {args.eval_months}")
     print(f"  CSV: {csv_path}")
     print(f"  JSON: {json_path}")
     for p in plot_paths:

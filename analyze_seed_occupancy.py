@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
-Sweep workload Poisson lambda values and analyze:
-1) lambda -> agent occupancy (nodes)
+Sweep random seeds in --hourly-jobs mode (fixed --job-arrival-scale 1.0) and analyze:
+1) seed -> agent occupancy (nodes)
 2) occupancy -> savings
 3) occupancy -> savings_off
-4) lambda -> completion rate
+4) seed -> completion rate
 5) occupancy -> effective savings
 6) occupancy -> effective savings_off
 7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
 8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
 9) occupancy -> (baseline_off - agent) power / baseline_off
-10) lambda -> baseline and baseline_off occupancies
-11) lambda -> mean jobs/hour (with std)
-12) lambda -> dropped-jobs delta (agent - baseline)
+10) seed -> baseline and baseline_off occupancies
+11) seed -> mean jobs/hour (with std)
+12) seed -> dropped-jobs delta (agent - baseline)
 
-For each lambda, this script runs train.py in evaluation mode for one year
+For each seed, this script runs train.py in evaluation mode for one year
 (12 months = 24 episodes), parses per-episode metrics from stdout, computes
-mean/std, and fits 3rd-order polynomial trend lines.
+mean/std, and fits optional polynomial trend lines.
 
-FAST DEBUG MODE: python analyze_lambda_occupancy.py --eval-months 1 --lambdas 1200,2000,3500 --no-plot-dashboard
+FAST DEBUG MODE:
+python analyze_hourlyjobs_seed_occupancy.py \
+  --hourly-jobs ./data/allusers-gpu-30.log \
+  --eval-months 1 --seeds 1,2,3 --no-plot-dashboard
 """
 
 from __future__ import annotations
@@ -26,7 +29,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
 import re
 import shlex
 import subprocess
@@ -43,6 +45,8 @@ import numpy as np
 from src.analysis_naming import build_analysis_dir_name
 from src.analysis_reporting import compute_savings_totals
 
+
+FIXED_JOB_ARRIVAL_SCALE = 1.0
 
 EPISODE_RE = re.compile(
     r"Episode\s+(?P<episode>\d+):.*?"
@@ -80,8 +84,8 @@ DROPPED_BASELINE_SUMMARY_RE = re.compile(
 
 
 @dataclass
-class LambdaRunStats:
-    lambda_value: int
+class SeedRunStats:
+    seed: int
     episodes: int
     occupancy_mean: float
     occupancy_std: float
@@ -192,7 +196,8 @@ def parse_episode_metrics(
     if not occupancy:
         raise RuntimeError(
             "Could not parse episode metrics from train.py output. "
-            "Expected lines like 'Episode X: ... Savings=€.../€..., Agent Occupancy (Nodes)=...%'."
+            "Expected lines like 'Episode X: ... Savings=EUR.../EUR..., Power=..., "
+            "CostPer1kCompleted=..., Agent Occupancy (Nodes)=...%'."
         )
 
     return (
@@ -258,7 +263,7 @@ def finite_mean_std(values: np.ndarray) -> tuple[float, float]:
 
 
 def make_run_stats(
-    lambda_value: int,
+    seed: int,
     eval_months: int,
     command: list[str],
     occupancy: np.ndarray,
@@ -278,10 +283,10 @@ def make_run_stats(
     arrivals_per_hour_std: float,
     dropped_jobs_agent_total: float,
     dropped_jobs_baseline_total: float,
-) -> LambdaRunStats:
+) -> SeedRunStats:
     wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
-    effective_savings = safe_divide(savings * (completion_rate/100)**2, wait_delta_hours+1)
-    effective_savings_off = safe_divide(savings_off * (completion_rate/100)**2, wait_delta_hours+1)
+    effective_savings = safe_divide(savings * (completion_rate / 100) ** 2, wait_delta_hours + 1)
+    effective_savings_off = safe_divide(savings_off * (completion_rate / 100) ** 2, wait_delta_hours + 1)
     effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
     effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
     cost_per_1k_delta_pct_baseline = safe_divide_arrays((baseline_cost_1k - agent_cost_1k) * 100.0, baseline_cost_1k)
@@ -294,8 +299,8 @@ def make_run_stats(
     dropped_jobs_delta_total = dropped_jobs_agent_total - dropped_jobs_baseline_total
     evaluation_savings, annualized_savings = compute_savings_totals(savings, eval_months)
     evaluation_savings_off, annualized_savings_off = compute_savings_totals(savings_off, eval_months)
-    return LambdaRunStats(
-        lambda_value=lambda_value,
+    return SeedRunStats(
+        seed=seed,
         episodes=int(occupancy.size),
         occupancy_mean=float(np.mean(occupancy)),
         occupancy_std=float(np.std(occupancy)),
@@ -363,18 +368,17 @@ def unique_ints_sorted(values: list[int]) -> list[int]:
     return sorted({int(v) for v in values})
 
 
-def geometric_int_space(low: int, high: int, n: int) -> list[int]:
-    if n <= 1 or low == high:
-        return [int(low)]
-    vals = np.geomspace(low, high, n)
-    return unique_ints_sorted([int(round(v)) for v in vals])
+def parse_int_list(raw: str) -> list[int]:
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
 
 
-def clamp_int(value: int, low: int, high: int) -> int:
-    return max(low, min(high, int(value)))
+def build_seed_schedule(args: argparse.Namespace) -> list[int]:
+    if args.seeds:
+        return unique_ints_sorted(parse_int_list(args.seeds))
+    return unique_ints_sorted(list(range(args.min_seed, args.max_seed + 1, args.seed_step)))
 
 
-def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str]:
+def build_train_command(args: argparse.Namespace, seed: int) -> list[str]:
     cmd = [
         sys.executable,
         "./train.py",
@@ -397,16 +401,12 @@ def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str
         str(args.eval_months),
         "--model",
         str(args.model),
-        "--workload-gen",
-        "poisson",
-        "--wg-poisson-lambdas4",
-        f"{lambda_value},{args.wg_duration_lambda},{args.wg_nodes_lambda},{args.wg_cores_lambda}",
-        "--wg-max-jobs-hour",
-        str(args.wg_max_jobs_hour),
-        "--wg-burst-small-prob",
-        str(args.wg_burst_small_prob),
-        "--wg-burst-heavy-prob",
-        str(args.wg_burst_heavy_prob),
+        "--hourly-jobs",
+        args.hourly_jobs,
+        "--job-arrival-scale",
+        f"{FIXED_JOB_ARRIVAL_SCALE:.1f}",
+        "--seed",
+        str(seed),
     ]
     if args.plot_dashboard:
         cmd.append("--plot-dashboard")
@@ -415,9 +415,16 @@ def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str
     return cmd
 
 
-def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: int) -> tuple[LambdaRunStats, str]:
-    command = build_train_command(args, lambda_value)
-    print(f"[run] lambda={lambda_value}: {shlex.join(command)}")
+def os_tail(text: str, lines: int = 20) -> str:
+    parts = text.rstrip().splitlines()
+    if not parts:
+        return ""
+    return "\n".join(parts[-lines:])
+
+
+def run_seed_eval(args: argparse.Namespace, project_root: Path, seed: int) -> tuple[SeedRunStats, str]:
+    command = build_train_command(args, seed)
+    print(f"[run] seed={seed}: {shlex.join(command)}")
     completed = subprocess.run(
         command,
         cwd=str(project_root),
@@ -431,7 +438,7 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         print(combined_output)
     if completed.returncode != 0:
         raise RuntimeError(
-            f"train.py failed for lambda={lambda_value} with code {completed.returncode}.\n"
+            f"train.py failed for seed={seed} with code {completed.returncode}.\n"
             f"Last output lines:\n{os_tail(combined_output, lines=40)}"
         )
 
@@ -451,26 +458,26 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
     ) = parse_episode_metrics(combined_output)
     agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
     if agent_wait_summary is None or baseline_wait_summary is None:
-        print(f"[warn] lambda={lambda_value}: could not parse run-level wait summary; effective savings may be NaN.")
+        print(f"[warn] seed={seed}: could not parse run-level wait summary; effective savings may be NaN.")
         agent_avg_wait_hours = float(np.mean(avg_wait))
-        baseline_avg_wait_hours = float(np.mean(avg_wait))
+        baseline_avg_wait_hours = float("nan")
     else:
         agent_avg_wait_hours = float(agent_wait_summary)
         baseline_avg_wait_hours = float(baseline_wait_summary)
     arrivals_per_hour_mean, arrivals_per_hour_std = parse_arrivals_summary(combined_output)
     if arrivals_per_hour_mean is None or arrivals_per_hour_std is None:
-        print(f"[warn] lambda={lambda_value}: could not parse run-level arrivals/hour summary; values set to NaN.")
+        print(f"[warn] seed={seed}: could not parse run-level arrivals/hour summary; values set to NaN.")
         arrivals_per_hour_mean = float("nan")
         arrivals_per_hour_std = float("nan")
     dropped_jobs_agent_total, dropped_jobs_baseline_total = parse_dropped_totals_summary(combined_output)
     if dropped_jobs_agent_total is None:
         dropped_jobs_agent_total = float(np.sum(agent_dropped))
-        print(f"[warn] lambda={lambda_value}: could not parse run-level agent dropped total; using sum of episode Dropped= values.")
+        print(f"[warn] seed={seed}: could not parse run-level agent dropped total; using sum of episode Dropped= values.")
     if dropped_jobs_baseline_total is None:
-        dropped_jobs_baseline_total = 0.0
-        print(f"[warn] lambda={lambda_value}: could not parse run-level baseline dropped total; defaulting to 0.")
+        dropped_jobs_baseline_total = float("nan")
+        print(f"[warn] seed={seed}: could not parse run-level baseline dropped total; defaulting to 0.")
     stats = make_run_stats(
-        lambda_value,
+        seed,
         args.eval_months,
         command,
         occupancy,
@@ -492,7 +499,7 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         dropped_jobs_baseline_total,
     )
     print(
-        f"[ok ] lambda={lambda_value}: "
+        f"[ok ] seed={seed}: "
         f"occupancy={stats.occupancy_mean:.2f}%±{stats.occupancy_std:.2f}, "
         f"baseline_occ={stats.baseline_occupancy_mean:.2f}%±{stats.baseline_occupancy_std:.2f}, "
         f"arrivals/h={stats.arrivals_per_hour_mean:.2f}±{stats.arrivals_per_hour_std:.2f}, "
@@ -507,101 +514,9 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
     return stats, combined_output
 
 
-def os_tail(text: str, lines: int = 20) -> str:
-    parts = text.rstrip().splitlines()
-    if not parts:
-        return ""
-    return "\n".join(parts[-lines:])
-
-
-def select_lambda_schedule(
-    args: argparse.Namespace,
-    evaluate: Callable[[int], LambdaRunStats],
-) -> list[int]:
-    """
-    Adaptive lambda selection when --lambdas is not provided:
-    1) Start at reference lambda (clamped to min/max).
-    2) Probe downward (divide by bracket_factor) until occupancy reaches
-       target_occupancy_min (+ tolerance) or bracket_steps is exhausted.
-    3) Probe upward (multiply by bracket_factor) until occupancy reaches
-       target_occupancy_max (- tolerance) or bracket_steps is exhausted.
-    4) Fill remaining points with log spacing between discovered low/high.
-    5) If log spacing collapses due to integer rounding, insert candidates
-       into the largest gaps until num_points is reached or no new values
-       can be inserted.
-    """
-    if args.lambdas:
-        explicit = unique_ints_sorted(
-            [clamp_int(v, args.min_lambda, args.max_lambda) for v in parse_int_list(args.lambdas)]
-        )
-        for lam in explicit:
-            evaluate(lam)
-        return explicit
-
-    ref = clamp_int(args.reference_lambda, args.min_lambda, args.max_lambda)
-    evaluate(ref)
-
-    # Probe low side.
-    low = ref
-    for _ in range(args.bracket_steps):
-        occ = evaluate(low).occupancy_mean
-        if occ <= args.target_occupancy_min + args.occupancy_tolerance:
-            break
-        nxt = clamp_int(int(round(low / args.bracket_factor)), args.min_lambda, args.max_lambda)
-        if nxt == low:
-            break
-        low = nxt
-        evaluate(low)
-
-    # Probe high side.
-    high = ref
-    for _ in range(args.bracket_steps):
-        occ = evaluate(high).occupancy_mean
-        if occ >= args.target_occupancy_max - args.occupancy_tolerance:
-            break
-        nxt = clamp_int(int(round(high * args.bracket_factor)), args.min_lambda, args.max_lambda)
-        if nxt == high:
-            break
-        high = nxt
-        evaluate(high)
-
-    # Fill remaining points log-spaced across discovered range.
-    discovered = unique_ints_sorted(list(evaluate.cache_keys()))
-    low_bound = min(discovered)
-    high_bound = max(discovered)
-    target_points = max(args.num_points, len(discovered))
-
-    for lam in geometric_int_space(low_bound, high_bound, target_points):
-        evaluate(lam)
-
-    # If geometric spacing collapsed to fewer unique integers, fill largest gaps.
-    while len(evaluate.cache_keys()) < target_points:
-        ordered = unique_ints_sorted(list(evaluate.cache_keys()))
-        if len(ordered) < 2:
-            break
-        gaps = sorted(
-            ((ordered[i + 1] - ordered[i], ordered[i], ordered[i + 1]) for i in range(len(ordered) - 1)),
-            reverse=True,
-        )
-        inserted = False
-        for _, a, b in gaps:
-            cand = int(round(math.sqrt(a * b)))
-            if cand in (a, b):
-                cand = (a + b) // 2
-            cand = clamp_int(cand, args.min_lambda, args.max_lambda)
-            if cand not in evaluate.cache_keys():
-                evaluate(cand)
-                inserted = True
-                break
-        if not inserted:
-            break
-
-    return unique_ints_sorted(list(evaluate.cache_keys()))
-
-
-def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None:
+def write_summary_csv(path: Path, stats_by_seed: list[SeedRunStats]) -> None:
     fieldnames = [
-        "lambda",
+        "seed",
         "episodes",
         "occupancy_mean_pct",
         "occupancy_std_pct",
@@ -641,10 +556,10 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for s in sorted(stats_by_lambda, key=lambda x: x.lambda_value):
+        for s in sorted(stats_by_seed, key=lambda x: x.seed):
             writer.writerow(
                 {
-                    "lambda": s.lambda_value,
+                    "seed": s.seed,
                     "episodes": s.episodes,
                     "occupancy_mean_pct": f"{s.occupancy_mean:.6f}",
                     "occupancy_std_pct": f"{s.occupancy_std:.6f}",
@@ -686,15 +601,15 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
 
 def make_plot(
     path: Path,
-    stats_by_lambda: list[LambdaRunStats],
+    stats_by_seed: list[SeedRunStats],
     fit: bool = False,
     individual_dir: Path | None = None,
 ) -> None:
-    ordered = sorted(stats_by_lambda, key=lambda x: x.lambda_value)
+    ordered = sorted(stats_by_seed, key=lambda x: x.seed)
     if not ordered:
         return
 
-    lambdas = np.array([s.lambda_value for s in ordered], dtype=float)
+    seeds = np.array([s.seed for s in ordered], dtype=float)
     occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
     occ_std = np.array([s.occupancy_std for s in ordered], dtype=float)
     baseline_occ_mean = np.array([s.baseline_occupancy_mean for s in ordered], dtype=float)
@@ -721,14 +636,14 @@ def make_plot(
     power_delta_base_off_mean = np.array([s.power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
     power_delta_base_off_std = np.array([s.power_delta_pct_baseline_off_std for s in ordered], dtype=float)
 
-    lam_min = float(np.min(lambdas))
-    lam_max = float(np.max(lambdas))
-    if lam_max <= lam_min:
-        lam_max = lam_min + 1.0
-    norm = matplotlib.colors.Normalize(vmin=lam_min, vmax=lam_max)
+    seed_min = float(np.min(seeds))
+    seed_max = float(np.max(seeds))
+    if seed_max <= seed_min:
+        seed_max = seed_min + 1.0
+    norm = matplotlib.colors.Normalize(vmin=seed_min, vmax=seed_max)
     cmap = plt.get_cmap("turbo")
-    point_colors = cmap(norm(lambdas))
-    colorbar_label = "Poisson lambda (point color)"
+    point_colors = cmap(norm(seeds))
+    colorbar_label = "Random seed (point color)"
 
     def _error_at(arr: np.ndarray | None, idx: int) -> float | None:
         if arr is None:
@@ -750,12 +665,17 @@ def make_plot(
         ax.plot(x_fit, np.polyval(coeffs, x_fit), color="black", lw=2, label=f"poly deg {deg}")
         ax.legend()
 
+    def _apply_seed_ticks(ax: plt.Axes) -> None:
+        if seeds.size <= 15:
+            ax.set_xticks(seeds.tolist())
+
     def plot_colored_points(
         ax: plt.Axes,
         x: np.ndarray,
         y: np.ndarray,
         xerr: np.ndarray | None = None,
         yerr: np.ndarray | None = None,
+        seed_x_axis: bool = False,
     ) -> None:
         for i, (xi, yi, c) in enumerate(zip(x, y, point_colors)):
             if not (np.isfinite(xi) and np.isfinite(yi)):
@@ -773,9 +693,11 @@ def make_plot(
                 elinewidth=1.2,
                 alpha=0.95,
             )
+        if seed_x_axis:
+            _apply_seed_ticks(ax)
 
     def draw_baseline_occupancy_pair(ax: plt.Axes) -> None:
-        for i, (xv, c) in enumerate(zip(lambdas, point_colors)):
+        for i, (xv, c) in enumerate(zip(seeds, point_colors)):
             y_base = float(baseline_occ_mean[i])
             y_base_off = float(baseline_off_occ_mean[i])
             if np.isfinite(xv) and np.isfinite(y_base):
@@ -804,6 +726,7 @@ def make_plot(
                     elinewidth=1.2,
                     alpha=0.95,
                 )
+        _apply_seed_ticks(ax)
         ax.scatter([], [], marker="o", color="black", label="Baseline")
         ax.scatter([], [], marker="^", color="black", label="Baseline_off")
         ax.legend()
@@ -826,11 +749,11 @@ def make_plot(
         panel_specs.append((slug, _draw))
 
     _panel(
-        "01_lambda_vs_agent_occupancy",
-        "Lambda vs Occupancy/Episode",
-        "Poisson lambda (arrivals)",
+        "01_seed_vs_agent_occupancy",
+        "Seed vs Occupancy/Episode",
+        "Random seed",
         "Agent Occupancy (Nodes, %) / Episode",
-        lambda ax: (plot_colored_points(ax, lambdas, occ_mean, yerr=occ_std), _maybe_plot_fit(ax, lambdas, occ_mean)),
+        lambda ax: (plot_colored_points(ax, seeds, occ_mean, yerr=occ_std, seed_x_axis=True), _maybe_plot_fit(ax, seeds, occ_mean)),
     )
     _panel(
         "02_occupancy_vs_savings",
@@ -847,11 +770,11 @@ def make_plot(
         lambda ax: (plot_colored_points(ax, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std), _maybe_plot_fit(ax, occ_mean, sav_off_mean)),
     )
     _panel(
-        "04_lambda_vs_completion_rate",
-        "Lambda vs Agent Completion Rate",
-        "Poisson lambda (arrivals)",
+        "04_seed_vs_completion_rate",
+        "Seed vs Agent Completion Rate",
+        "Random seed",
         "Completion Rate (%)",
-        lambda ax: (plot_colored_points(ax, lambdas, completion_mean, yerr=completion_std), _maybe_plot_fit(ax, lambdas, completion_mean)),
+        lambda ax: (plot_colored_points(ax, seeds, completion_mean, yerr=completion_std, seed_x_axis=True), _maybe_plot_fit(ax, seeds, completion_mean)),
     )
     _panel(
         "05_occupancy_vs_effective_savings",
@@ -889,25 +812,25 @@ def make_plot(
         lambda ax: (plot_colored_points(ax, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, power_delta_base_off_mean)),
     )
     _panel(
-        "10_lambda_vs_baseline_occupancies",
-        "Lambda vs Baseline Occupancies",
-        "Poisson lambda (arrivals)",
+        "10_seed_vs_baseline_occupancies",
+        "Seed vs Baseline Occupancies",
+        "Random seed",
         "Baseline Occupancy (Nodes, %) / Episode",
         draw_baseline_occupancy_pair,
     )
     _panel(
-        "11_lambda_vs_jobs_per_hour",
-        "Lambda vs Job Arrivals/Hour",
-        "Poisson lambda (arrivals)",
+        "11_seed_vs_jobs_per_hour",
+        "Seed vs Job Arrivals/Hour",
+        "Random seed",
         "Job Arrivals/Hour (mean ± std)",
-        lambda ax: (plot_colored_points(ax, lambdas, arrivals_per_hour_mean, yerr=arrivals_per_hour_std), _maybe_plot_fit(ax, lambdas, arrivals_per_hour_mean)),
+        lambda ax: (plot_colored_points(ax, seeds, arrivals_per_hour_mean, yerr=arrivals_per_hour_std, seed_x_axis=True), _maybe_plot_fit(ax, seeds, arrivals_per_hour_mean)),
     )
     _panel(
-        "12_lambda_vs_dropped_jobs_delta",
-        "Lambda vs Dropped Jobs Delta",
-        "Poisson lambda (arrivals)",
+        "12_seed_vs_dropped_jobs_delta",
+        "Seed vs Dropped Jobs Delta",
+        "Random seed",
         "Dropped Jobs Delta (Agent - Baseline)",
-        lambda ax: (plot_colored_points(ax, lambdas, dropped_jobs_delta_total), _maybe_plot_fit(ax, lambdas, dropped_jobs_delta_total)),
+        lambda ax: (plot_colored_points(ax, seeds, dropped_jobs_delta_total, seed_x_axis=True), _maybe_plot_fit(ax, seeds, dropped_jobs_delta_total)),
     )
 
     fig, axes = plt.subplots(4, 3, figsize=(22, 22), constrained_layout=True)
@@ -917,7 +840,11 @@ def make_plot(
     sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), pad=0.02)
+    if seeds.size <= 15:
+        cbar.set_ticks(seeds.tolist())
     cbar.set_label(colorbar_label)
+
+    fig.suptitle("Hourly-Jobs Seed Sweep", fontsize=14)
     fig.savefig(path, dpi=220)
     plt.close(fig)
 
@@ -930,22 +857,20 @@ def make_plot(
             sm_i = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
             sm_i.set_array([])
             cbar_i = fig_i.colorbar(sm_i, ax=ax_i, pad=0.02)
+            if seeds.size <= 15:
+                cbar_i.set_ticks(seeds.tolist())
             cbar_i.set_label(colorbar_label)
             fig_i.savefig(panel_path, dpi=220)
             plt.close(fig_i)
 
 
-def parse_int_list(raw: str) -> list[int]:
-    return [int(part.strip()) for part in raw.split(",") if part.strip()]
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Sweep Poisson lambdas and fit occupancy/savings trend lines."
+        description="Sweep random seeds in --hourly-jobs mode and fit occupancy/savings trend lines."
     )
 
-    # Core train.py params (default values mirror the command from the request).
     parser.add_argument("--prices", default="./data/prices_2023.csv")
+    parser.add_argument("--hourly-jobs", required=True, help="Path forwarded to train.py --hourly-jobs")
     parser.add_argument("--session", default="")
     parser.add_argument("--efficiency-weight", type=float, default=0.6)
     parser.add_argument("--price-weight", type=float, default=0.1)
@@ -958,24 +883,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dashboard-hours", type=int, default=None)
 
-    parser.add_argument("--wg-duration-lambda", type=float, default=0.3)
-    parser.add_argument("--wg-nodes-lambda", type=float, default=1.0)
-    parser.add_argument("--wg-cores-lambda", type=float, default=3.0)
-    parser.add_argument("--wg-max-jobs-hour", type=int, default=70000)
-    parser.add_argument("--wg-burst-small-prob", type=float, default=0.1329)
-    parser.add_argument("--wg-burst-heavy-prob", type=float, default=0.0043)
-
-    # Lambda sweep controls.
-    parser.add_argument("--lambdas", type=str, default="", help="Explicit comma-separated lambda list. If set, adaptive selection is disabled.")
-    parser.add_argument("--reference-lambda", type=int, default=2000)
-    parser.add_argument("--min-lambda", type=int, default=100)
-    parser.add_argument("--max-lambda", type=int, default=12000)
-    parser.add_argument("--num-points", type=int, default=7, help="Target number of lambda points for adaptive sweep.")
-    parser.add_argument("--bracket-steps", type=int, default=2, help="Low/high probing steps from reference lambda.")
-    parser.add_argument("--bracket-factor", type=float, default=2.0, help="Factor for high/low probing.")
-    parser.add_argument("--target-occupancy-min", type=float, default=20.0)
-    parser.add_argument("--target-occupancy-max", type=float, default=100.0)
-    parser.add_argument("--occupancy-tolerance", type=float, default=2.0)
+    parser.add_argument(
+        "--seeds",
+        type=str,
+        default="",
+        help="Explicit comma-separated seed list. If set, min/max/step are ignored.",
+    )
+    parser.add_argument("--min-seed", type=int, default=100)
+    parser.add_argument("--max-seed", type=int, default=700)
+    parser.add_argument("--seed-step", type=int, default=50)
 
     parser.add_argument("--out-dir", type=str, default="")
     parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
@@ -988,28 +904,30 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
-    if args.num_points < 2:
-        parser.error("--num-points must be >= 2")
+    
     if args.eval_months <= 0:
         parser.error("--eval-months must be > 0")
-    if args.min_lambda <= 0:
-        parser.error("--min-lambda must be > 0")
-    if args.max_lambda < args.min_lambda:
-        parser.error("--max-lambda must be >= --min-lambda")
-    if args.bracket_factor <= 1.0:
-        parser.error("--bracket-factor must be > 1")
+    if not args.seeds:
+        if args.seed_step <= 0:
+            parser.error("--seed-step must be > 0")
+        if args.max_seed < args.min_seed:
+            parser.error("--max-seed must be >= --min-seed")
 
     project_root = Path(__file__).resolve().parent
     train_py = project_root / "train.py"
     if not train_py.exists():
         raise FileNotFoundError(f"Could not find train.py at: {train_py}")
 
+    hourly_jobs_path = Path(args.hourly_jobs).expanduser()
+    if not hourly_jobs_path.exists():
+        raise FileNotFoundError(f"Could not find hourly jobs file: {hourly_jobs_path}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.out_dir:
         out_dir = Path(args.out_dir).expanduser().resolve()
     else:
         out_dir_name = build_analysis_dir_name(
-            prefix="lambda_occupancy_sweep",
+            prefix="hourlyjobs_seed_occupancy_sweep",
             timestamp=timestamp,
             model=args.model,
             efficiency_weight=args.efficiency_weight,
@@ -1023,46 +941,41 @@ def main() -> None:
     if args.save_logs:
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-    cache: dict[int, LambdaRunStats] = {}
+    selected_seeds = build_seed_schedule(args)
+    if not selected_seeds:
+        parser.error("No seeds selected; provide --seeds or a valid --min-seed/--max-seed range.")
+    all_stats: list[SeedRunStats] = []
 
-    def evaluate(lam: int) -> LambdaRunStats:
-        lam = clamp_int(lam, args.min_lambda, args.max_lambda)
-        if lam in cache:
-            return cache[lam]
-        stats, raw_output = run_lambda_eval(args, project_root, lam)
-        cache[lam] = stats
+    for seed in selected_seeds:
+        stats, raw_output = run_seed_eval(args, project_root, seed)
+        all_stats.append(stats)
         if args.save_logs:
-            log_path = logs_dir / f"lambda_{lam}.log"
+            log_path = logs_dir / f"seed_{seed}.log"
             log_path.write_text(raw_output)
-        return stats
-
-    # Attach cache reader for select_lambda_schedule().
-    evaluate.cache_keys = cache.keys  # type: ignore[attr-defined]
-
-    selected_lambdas = select_lambda_schedule(args, evaluate)
-    stats_ordered = [cache[l] for l in sorted(selected_lambdas)]
 
     csv_path = out_dir / "summary.csv"
     json_path = out_dir / "summary.json"
     plot_path = out_dir / "trendlines.png"
     individual_plots_dir = out_dir / "plots_individual"
 
-    write_summary_csv(csv_path, stats_ordered)
+    write_summary_csv(csv_path, all_stats)
     with json_path.open("w") as f:
         json.dump(
             {
                 "created_at": datetime.now().isoformat(),
-                "selected_lambdas": selected_lambdas,
+                "selected_seeds": selected_seeds,
+                "job_arrival_scale": FIXED_JOB_ARRIVAL_SCALE,
                 "args": vars(args),
-                "results": [asdict(s) for s in stats_ordered],
+                "results": [asdict(s) for s in all_stats],
             },
             f,
             indent=2,
         )
-    make_plot(plot_path, stats_ordered, fit=args.fit, individual_dir=individual_plots_dir)
+    make_plot(plot_path, all_stats, fit=args.fit, individual_dir=individual_plots_dir)
 
     print("\nSweep complete.")
-    print(f"  Lambdas: {selected_lambdas}")
+    print(f"  Seeds: {selected_seeds}")
+    print(f"  Job arrival scale: {FIXED_JOB_ARRIVAL_SCALE:.1f}")
     print(f"  Evaluation months: {args.eval_months}")
     print(f"  CSV: {csv_path}")
     print(f"  JSON: {json_path}")
