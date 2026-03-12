@@ -40,6 +40,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from src.analysis_naming import build_analysis_dir_name
 
 
 EPISODE_RE = re.compile(
@@ -999,7 +1000,16 @@ def main() -> None:
     if args.out_dir:
         out_dir = Path(args.out_dir).expanduser().resolve()
     else:
-        out_dir = project_root / "analysis" / f"lambda_occupancy_sweep_{timestamp}"
+        out_dir_name = build_analysis_dir_name(
+            prefix="lambda_occupancy_sweep",
+            timestamp=timestamp,
+            model=args.model,
+            efficiency_weight=args.efficiency_weight,
+            price_weight=args.price_weight,
+            idle_weight=args.idle_weight,
+            job_age_weight=args.job_age_weight,
+        )
+        out_dir = project_root / "analysis" / out_dir_name
     out_dir.mkdir(parents=True, exist_ok=True)
     logs_dir = out_dir / "logs"
     if args.save_logs:
