@@ -12,6 +12,7 @@ import argparse
 import sys
 import pandas as pd
 from src.arrival_scale import validate_job_arrival_scale
+from src.analysis_naming import build_model_weight_dir_name
 from src.evaluation_summary import build_episode_summary_line, mean_occupancy_pct
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
@@ -178,6 +179,7 @@ def main():
     # Check if there are any saved models in models_dir
     model_files = glob.glob(models_dir + "*.zip")
     latest_model_file = None
+    evaluation_plots_dir = None
     if model_files:
         # Sort the files by extracting the timestep number from the filename and converting it to an integer
         model_files.sort(key=lambda filename: int(re.match(r"(\d+)", os.path.basename(filename)).group()))
@@ -191,6 +193,18 @@ def main():
         else:
             latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
+        selected_model_id = int(os.path.basename(latest_model_file).split(".")[0])
+        evaluation_plots_dir = os.path.join(
+            f"sessions/{args.session}",
+            "plots-eval",
+            build_model_weight_dir_name(
+                model=selected_model_id,
+                efficiency_weight=weights.efficiency_weight,
+                price_weight=weights.price_weight,
+                idle_weight=weights.idle_weight,
+                job_age_weight=weights.job_age_weight,
+            ),
+        )
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:
         print(f"Starting a new model training...")
@@ -230,6 +244,11 @@ def main():
 
         print(f"=== EVALUATION MODE ===")
         print(f"Evaluation period: {args.eval_months} months ({args.eval_months * 2} episodes, Each episode = 2 weeks)")
+        if evaluation_plots_dir is None:
+            raise RuntimeError("Evaluation plots directory could not be determined for the selected model.")
+        os.makedirs(evaluation_plots_dir, exist_ok=True)
+        env.plots_dir = f"{evaluation_plots_dir}/"
+        print(f"Evaluation plots directory: {evaluation_plots_dir}")
 
         num_episodes = args.eval_months * 2 # 2 episodes per month
         for episode in range(num_episodes):
@@ -270,7 +289,7 @@ def main():
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
         # Generate cumulative savings plot
-        session_dir = f"sessions/{args.session}"
+        session_dir = evaluation_plots_dir
         try:
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
             plot_episode_summary(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human', suffix=f"eval_{args.eval_months}m")

@@ -41,3 +41,24 @@ def build_analysis_dir_name(
     )
     parts.append(timestamp)
     return "_".join(parts)
+
+
+def build_model_weight_dir_name(
+    model: int | None,
+    efficiency_weight: float,
+    price_weight: float,
+    idle_weight: float,
+    job_age_weight: float,
+) -> str:
+    parts = []
+    if model is not None:
+        parts.append(f"m{int(model)}")
+    parts.append(
+        build_weight_slug(
+            efficiency_weight=efficiency_weight,
+            price_weight=price_weight,
+            idle_weight=idle_weight,
+            job_age_weight=job_age_weight,
+        )
+    )
+    return "_".join(parts)
