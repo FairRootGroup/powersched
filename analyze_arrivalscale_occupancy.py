@@ -19,12 +19,13 @@ For each scale, this script runs train.py in evaluation mode for one year
 mean/std, and fits optional polynomial trend lines.
 
 Runs both modes:
-- exact replay (aggregated): --jobs-exact-replay --jobs-exact-replay-aggregate --job-arrival-scale <scale>
-- sampling mode: --jobs --job-arrival-scale <scale>
+- exact replay (aggregated): --jobs --jobs-exact-replay --jobs-exact-replay-aggregate --job-arrival-scale <scale>
+- sampling mode: --hourly-jobs --job-arrival-scale <scale>
 
 FAST DEBUG MODE:
 python analyze_arrivalscale_occupancy.py \
   --jobs ./data/workload_statistics/jobs_2023.log \
+  --hourly-jobs ./data/workload_statistics/jobs_2023.log \
   --eval-months 1 --scales 0.8,1.0,1.2 --no-plot-dashboard
 """
 
@@ -428,18 +429,24 @@ def build_train_command(args: argparse.Namespace, job_arrival_scale: float, repl
         str(args.eval_months),
         "--model",
         str(args.model),
-        "--jobs",
-        args.jobs,
     ]
     if replay_mode == "exact_replay_aggregate":
         cmd.extend([
+            "--jobs",
+            args.jobs,
             "--jobs-exact-replay",
             "--jobs-exact-replay-aggregate",
             "--job-arrival-scale",
             f"{job_arrival_scale:.6f}",
         ])
     elif replay_mode == "sampling":
-        cmd.extend(["--job-arrival-scale", f"{job_arrival_scale:.6f}"])
+        hourly_jobs = args.hourly_jobs or args.jobs
+        cmd.extend([
+            "--hourly-jobs",
+            hourly_jobs,
+            "--job-arrival-scale",
+            f"{job_arrival_scale:.6f}",
+        ])
         if args.seed is not None:
             cmd.extend(["--seed", str(args.seed)])
     else:
@@ -901,12 +908,17 @@ def make_plot(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Compare --jobs exact replay aggregate vs --jobs sampling (--job-arrival-scale) and fit occupancy trend lines."
+        description="Compare --jobs exact replay aggregate vs --hourly-jobs sampling (--job-arrival-scale) and fit occupancy trend lines."
     )
 
     # Core train.py params.
     parser.add_argument("--prices", default="./data/prices_2023.csv")
     parser.add_argument("--jobs", required=True, help="Path forwarded to train.py --jobs")
+    parser.add_argument(
+        "--hourly-jobs",
+        default="",
+        help="Path forwarded to train.py --hourly-jobs. Defaults to --jobs when omitted.",
+    )
     parser.add_argument("--session", default="")
     parser.add_argument("--efficiency-weight", type=float, default=0.6)
     parser.add_argument("--price-weight", type=float, default=0.1)
@@ -919,6 +931,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--dashboard-hours", type=int, default=None)
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="Run only exact replay aggregate mode when selected alone.",
+    )
+    parser.add_argument(
+        "--sampler",
+        action="store_true",
+        help="Run only hourly sampler mode when selected alone.",
+    )
 
     # Scale sweep controls.
     parser.add_argument(
@@ -959,6 +981,22 @@ def main() -> None:
     jobs_path = Path(args.jobs).expanduser()
     if not jobs_path.exists():
         raise FileNotFoundError(f"Could not find jobs file: {jobs_path}")
+    if args.replay or args.sampler:
+        mode_names = []
+        if args.replay:
+            mode_names.append("exact_replay_aggregate")
+        if args.sampler:
+            mode_names.append("sampling")
+    else:
+        mode_names = ["exact_replay_aggregate", "sampling"]
+
+    if "sampling" in mode_names:
+        if not args.hourly_jobs:
+            args.hourly_jobs = str(jobs_path)
+            print(f"[info] sampling mode will reuse --jobs as --hourly-jobs: {args.hourly_jobs}")
+        hourly_jobs_path = Path(args.hourly_jobs).expanduser()
+        if not hourly_jobs_path.exists():
+            raise FileNotFoundError(f"Could not find hourly jobs file: {hourly_jobs_path}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if args.out_dir:
@@ -983,7 +1021,6 @@ def main() -> None:
     selected_scales = select_scale_schedule(args)
     # Always warm-start each mode at scale=1.0, then continue with requested sweep scales.
     scales = with_scale_one_first(selected_scales)
-    mode_names = ["exact_replay_aggregate", "sampling"]
 
     all_stats: list[ScaleRunStats] = []
 
