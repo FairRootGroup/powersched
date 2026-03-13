@@ -459,7 +459,7 @@ def run_seed_eval(args: argparse.Namespace, project_root: Path, seed: int) -> tu
     agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
     if agent_wait_summary is None or baseline_wait_summary is None:
         print(f"[warn] seed={seed}: could not parse run-level wait summary; effective savings may be NaN.")
-        agent_avg_wait_hours = float(np.mean(avg_wait))
+        agent_avg_wait_hours = 0.0
         baseline_avg_wait_hours = float("nan")
     else:
         agent_avg_wait_hours = float(agent_wait_summary)
