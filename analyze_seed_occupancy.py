@@ -19,7 +19,7 @@ For each seed, this script runs train.py in evaluation mode for one year
 mean/std, and fits optional polynomial trend lines.
 
 FAST DEBUG MODE:
-python analyze_hourlyjobs_seed_occupancy.py \
+python analyze_seed_occupancy.py \
   --hourly-jobs ./data/allusers-gpu-30.log \
   --eval-months 1 --seeds 1,2,3 --no-plot-dashboard
 """
