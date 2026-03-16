@@ -115,6 +115,7 @@ def build_command(
     plot_dashboard=False,
     dashboard_hours=24 * 14,
     seed=None,
+    seed_sweep=False,
     evaluate_savings=False,
     eval_months=0,
     workloadgen_args=None,
@@ -143,6 +144,8 @@ def build_command(
         command += ["--plot-dashboard", "--dashboard-hours", str(dashboard_hours)]
     if seed is not None:
         command += ["--seed", str(seed)]
+    if seed_sweep:
+        command += ["--seed-sweep"]
     if evaluate_savings:
         command += ["--evaluate-savings", "--eval-months", str(eval_months)]
     if workloadgen_args:
@@ -152,7 +155,7 @@ def build_command(
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay, jobs_exact_replay_aggregate, plot_dashboard, dashboard_hours,
-                     seeds, evaluate_savings, eval_months, workloadgen_args):
+                     seeds, seed_sweep, evaluate_savings, eval_months, workloadgen_args):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
     failure_count = 0
@@ -183,7 +186,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
         command = build_command(
             efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay, jobs_exact_replay_aggregate,
-            plot_dashboard, dashboard_hours, seed,
+            plot_dashboard, dashboard_hours, seed, seed_sweep,
             evaluate_savings, eval_months,
             workloadgen_args,
         )
@@ -303,6 +306,7 @@ def main():
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
         seeds=seeds,
+        seed_sweep=(args.seeds is not None),
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,
         workloadgen_args=workloadgen_args,
