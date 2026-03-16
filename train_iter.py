@@ -152,14 +152,17 @@ def build_command(
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay, jobs_exact_replay_aggregate, plot_dashboard, dashboard_hours,
-                     seed, evaluate_savings, eval_months, workloadgen_args):
+                     seeds, evaluate_savings, eval_months, workloadgen_args):
     active = []  # list of (proc, label)
     current_env = os.environ.copy()
     failure_count = 0
+    multi_seed = len(seeds) > 1
 
-    for combo in combinations:
+    for combo, seed in itertools.product(combinations, seeds):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
         label = f"efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}"
+        if multi_seed:
+            label += f", seed={seed}"
 
         # Wait until a slot is free
         while len(active) >= max_parallel:
@@ -234,6 +237,7 @@ def main():
     parser.add_argument("--plot-dashboard", action="store_true", help="Forward to train.py to generate dashboard plots.")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Forward to train.py.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (forwarded to train.py)")
+    parser.add_argument("--seeds", type=str, default=None, help="Comma-separated list of seeds to iterate over (e.g. 42,123,456); overrides --seed")
     parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
     parser.add_argument("--evaluate-savings", action="store_true", help="Forward to train.py to evaluate savings compared to baseline.")
     parser.add_argument("--eval-months", type=int, default=6, help="Number of months to evaluate savings over (forwarded to train.py)")
@@ -261,6 +265,14 @@ def main():
     except ValueError as e:
         parser.error(str(e))
 
+    if args.seeds is not None:
+        try:
+            seeds = [int(s.strip()) for s in args.seeds.split(",")]
+        except ValueError:
+            parser.error("--seeds must be a comma-separated list of integers (e.g. 42,123,456)")
+    else:
+        seeds = [args.seed]  # may be None (no seed)
+
     combinations = generate_weight_combinations(step=args.step, fixed_weights=fixed_weights)
     workloadgen_args = build_workloadgen_cli_args(args)
 
@@ -269,11 +281,13 @@ def main():
         return
 
     print(f"Execution preview:")
-    for combo in combinations:
+    for combo, seed in itertools.product(combinations, seeds):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
-        print(f"    efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}")
+        seed_str = f", seed={seed}" if len(seeds) > 1 else ""
+        print(f"    efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}{seed_str}")
 
-    print(f"Running {len(combinations)} combinations with up to {args.parallel} parallel processes")
+    total_runs = len(combinations) * len(seeds)
+    print(f"Running {total_runs} combinations with up to {args.parallel} parallel processes")
     failures = run_all_parallel(
         combinations,
         max_parallel=args.parallel,
@@ -288,7 +302,7 @@ def main():
         jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate,
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
-        seed=args.seed,
+        seeds=seeds,
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,
         workloadgen_args=workloadgen_args,
