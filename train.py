@@ -80,7 +80,9 @@ def main():
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
+    parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
     parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
+    parser.add_argument("--seed-path", default="", help="Path if models are saved by seed (forwarded to train.py) - only used by analyze_seed_occupancy.py, ignored otherwise.")
 
     args = parser.parse_args()
     try:
@@ -127,10 +129,13 @@ def main():
     )
 
     weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_a{weights.job_age_weight}_d{weights.drop_weight}"
+    session_root = f"sessions/{args.session}"
+    if args.seed_sweep and args.seed is not None:
+        session_root = f"{session_root}/seed_{args.seed}"
 
-    models_dir = f"sessions/{args.session}/models/{weights_prefix}/"
-    log_dir = f"sessions/{args.session}/logs/{weights_prefix}/"
-    plots_dir = f"sessions/{args.session}/plots/"
+    models_dir = f"{session_root}/models/{weights_prefix}/"
+    log_dir = f"{session_root}/logs/{weights_prefix}/"
+    plots_dir = f"{session_root}/plots/"
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
@@ -174,6 +179,8 @@ def main():
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
                             jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate)
+    env.session_dir = session_root
+    env.plots_dir = plots_dir
     env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir
@@ -194,8 +201,13 @@ def main():
             latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
         selected_model_id = int(os.path.basename(latest_model_file).split(".")[0])
+
+        seed_suffix = ""
+        if args.seed_path != "":
+            seed_suffix = "_train" + args.seed_path + "_evalseed_" + str(args.seed)
+
         evaluation_plots_dir = os.path.join(
-            f"sessions/{args.session}",
+            session_root,
             "plots-eval",
             build_model_weight_dir_name(
                 model=selected_model_id,
@@ -203,7 +215,7 @@ def main():
                 price_weight=weights.price_weight,
                 idle_weight=weights.idle_weight,
                 job_age_weight=weights.job_age_weight,
-            ),
+            ) + seed_suffix,
         )
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:
