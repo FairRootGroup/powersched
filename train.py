@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
     parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
     parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
+    parser.add_argument("--seed-path", default="", help="Path if models are saved by seed (forwarded to train.py) - only used by analyze_seed_occupancy.py, ignored otherwise.")
 
     args = parser.parse_args()
     try:
@@ -200,6 +201,11 @@ def main():
             latest_model_file = model_files[-1]  # Get the last file after sorting, which should be the one with the most timesteps
         print(f"Found a saved model: {latest_model_file}")
         selected_model_id = int(os.path.basename(latest_model_file).split(".")[0])
+
+        seed_suffix = ""
+        if args.seed_path != "":
+            seed_suffix = "_train" + args.seed_path + "_evalseed_" + str(args.seed)
+
         evaluation_plots_dir = os.path.join(
             session_root,
             "plots-eval",
@@ -209,7 +215,7 @@ def main():
                 price_weight=weights.price_weight,
                 idle_weight=weights.idle_weight,
                 job_age_weight=weights.job_age_weight,
-            ),
+            ) + seed_suffix,
         )
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:

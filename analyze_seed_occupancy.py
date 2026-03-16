@@ -407,6 +407,8 @@ def build_train_command(args: argparse.Namespace, seed: int) -> list[str]:
         f"{FIXED_JOB_ARRIVAL_SCALE:.1f}",
         "--seed",
         str(seed),
+        "--seed-path",
+        args.seed_path
     ]
     if args.plot_dashboard:
         cmd.append("--plot-dashboard")
@@ -897,6 +899,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
+    parser.add_argument("--seed-path", default="",help="Path if models are saved by seed (forwarded to train.py)")
     return parser
 
 
@@ -926,8 +929,11 @@ def main() -> None:
     if args.out_dir:
         out_dir = Path(args.out_dir).expanduser().resolve()
     else:
+        prefix="hourlyjobs_seed_occupancy_sweep"
+        if args.seed_path != "":
+            prefix += "_train" + args.seed_path
         out_dir_name = build_analysis_dir_name(
-            prefix="hourlyjobs_seed_occupancy_sweep",
+            prefix=prefix,
             timestamp=timestamp,
             model=args.model,
             efficiency_weight=args.efficiency_weight,
@@ -945,6 +951,9 @@ def main() -> None:
     if not selected_seeds:
         parser.error("No seeds selected; provide --seeds or a valid --min-seed/--max-seed range.")
     all_stats: list[SeedRunStats] = []
+
+    if args.seed_path != "":
+        args.session = f"{args.session}/{args.seed_path}"
 
     for seed in selected_seeds:
         stats, raw_output = run_seed_eval(args, project_root, seed)
