@@ -80,6 +80,7 @@ def main():
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
+    parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
     parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
 
     args = parser.parse_args()
@@ -127,10 +128,13 @@ def main():
     )
 
     weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_a{weights.job_age_weight}_d{weights.drop_weight}"
+    session_root = f"sessions/{args.session}"
+    if args.seed_sweep and args.seed is not None:
+        session_root = f"{session_root}/seed_{args.seed}"
 
-    models_dir = f"sessions/{args.session}/models/{weights_prefix}/"
-    log_dir = f"sessions/{args.session}/logs/{weights_prefix}/"
-    plots_dir = f"sessions/{args.session}/plots/"
+    models_dir = f"{session_root}/models/{weights_prefix}/"
+    log_dir = f"{session_root}/logs/{weights_prefix}/"
+    plots_dir = f"{session_root}/plots/"
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
@@ -174,6 +178,8 @@ def main():
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
                             jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate)
+    env.session_dir = session_root
+    env.plots_dir = plots_dir
     env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir
@@ -195,7 +201,7 @@ def main():
         print(f"Found a saved model: {latest_model_file}")
         selected_model_id = int(os.path.basename(latest_model_file).split(".")[0])
         evaluation_plots_dir = os.path.join(
-            f"sessions/{args.session}",
+            session_root,
             "plots-eval",
             build_model_weight_dir_name(
                 model=selected_model_id,
