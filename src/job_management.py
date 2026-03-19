@@ -73,20 +73,29 @@ def validate_next_empty(job_queue_2d: np.ndarray, next_empty: int) -> None:
         assert np.all(job_queue_2d[:next_empty, 0] != 0), "hole before next_empty_slot"
 
 
-def process_ongoing_jobs(nodes: np.ndarray, cores_available: np.ndarray, running_jobs: dict[int, dict[str, Any]]) -> list[int]:
+def process_ongoing_jobs(
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        metrics: MetricsTracker | None = None,
+        is_baseline: bool = False,
+) -> list[int]:
     """
     Process ongoing jobs: decrement their duration, complete finished jobs,
-    and release resources.
+    release resources, and optionally record completion metrics.
 
     Args:
         nodes: Array of node states
         cores_available: Array of available cores per node
         running_jobs: Dictionary of currently running jobs
+        metrics: Optional metrics tracker to update when jobs finish
+        is_baseline: Whether finished jobs belong to the baseline simulation
 
     Returns:
         List of completed job IDs
     """
     completed_jobs = []
+    completed_wait_time = 0
 
     for job_id, job_data in running_jobs.items():
         job_data['duration'] -= 1
@@ -94,6 +103,7 @@ def process_ongoing_jobs(nodes: np.ndarray, cores_available: np.ndarray, running
         # Check if job is completed
         if job_data['duration'] <= 0:
             completed_jobs.append(job_id)
+            completed_wait_time += int(job_data.get('wait_time', 0))
             # Release resources
             for node_idx, cores_used in job_data['allocation']:
                 cores_available[node_idx] += cores_used
@@ -101,6 +111,19 @@ def process_ongoing_jobs(nodes: np.ndarray, cores_available: np.ndarray, running
     # Remove completed jobs
     for job_id in completed_jobs:
         del running_jobs[job_id]
+
+    if metrics is not None and completed_jobs:
+        completed_count = len(completed_jobs)
+        if is_baseline:
+            metrics.baseline_jobs_completed += completed_count
+            metrics.baseline_total_job_wait_time += completed_wait_time
+            metrics.episode_baseline_jobs_completed += completed_count
+            metrics.episode_baseline_total_job_wait_time += completed_wait_time
+        else:
+            metrics.jobs_completed += completed_count
+            metrics.total_job_wait_time += completed_wait_time
+            metrics.episode_jobs_completed += completed_count
+            metrics.episode_total_job_wait_time += completed_wait_time
 
     # Update node times based on remaining jobs
     # Reset all nodes first
@@ -229,6 +252,7 @@ def assign_jobs_to_available_nodes(
             running_jobs[next_job_id] = {
                 "duration": job_duration,
                 "allocation": job_allocation,
+                "wait_time": int(job_age),
             }
             next_job_id += 1
 
@@ -238,18 +262,6 @@ def assign_jobs_to_available_nodes(
             # Update next_empty_slot if we cleared a slot before it
             if job_idx < next_empty_slot:
                 next_empty_slot = job_idx
-
-            # Track job completion and wait time
-            if is_baseline:
-                metrics.baseline_jobs_completed += 1
-                metrics.baseline_total_job_wait_time += job_age
-                metrics.episode_baseline_jobs_completed += 1
-                metrics.episode_baseline_total_job_wait_time += job_age
-            else:
-                metrics.jobs_completed += 1
-                metrics.total_job_wait_time += job_age
-                metrics.episode_jobs_completed += 1
-                metrics.episode_total_job_wait_time += job_age
 
             num_processed_jobs += 1
             continue
