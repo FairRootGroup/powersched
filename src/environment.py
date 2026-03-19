@@ -322,7 +322,13 @@ class ComputeClusterEnv(gym.Env):
 
         # Decrement booked time for nodes and complete running jobs
         self.env_print("[1] Processing ongoing jobs...")
-        completed_jobs = process_ongoing_jobs(self.state['nodes'], self.cores_available, self.running_jobs)
+        completed_jobs = process_ongoing_jobs(
+            self.state['nodes'],
+            self.cores_available,
+            self.running_jobs,
+            self.metrics,
+            is_baseline=False,
+        )
         self.env_print(f"{len(completed_jobs)} jobs completed: [{' '.join(['#' + str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else ''}]")
 
         # Age helper queues (jobs waiting outside the fixed queue)
