@@ -120,14 +120,27 @@ def baseline_step(
 
     baseline_state['job_queue'] = job_queue_2d.flatten()
 
-    baseline_cost = power_cost(num_used_nodes, num_idle_nodes, current_price)
+    baseline_cost = power_cost(baseline_state['nodes'], baseline_cores_available, current_price)
     env_print(f"    > baseline_cost: €{baseline_cost:.4f} | used nodes: {num_used_nodes}, idle nodes: {num_idle_nodes}")
-    baseline_cost_off = power_cost(num_used_nodes, 0, current_price)
+    baseline_cost_off = power_cost(
+        baseline_state['nodes'],
+        baseline_cores_available,
+        current_price,
+        include_idle_nodes=False,
+    )
     env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
-    baseline_power_mwh = power_consumption_mwh(num_used_nodes, num_idle_nodes)
-    baseline_power_off_mwh = power_consumption_mwh(num_used_nodes, 0)
+    baseline_power_mwh = power_consumption_mwh(baseline_state['nodes'], baseline_cores_available)
+    baseline_power_off_mwh = power_consumption_mwh(
+        baseline_state['nodes'],
+        baseline_cores_available,
+        include_idle_nodes=False,
+    )
 
     num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(baseline_cores_available)
+    
+    baseline_cost = baseline_power_mwh * current_price
+    baseline_cost_off = baseline_power_off_mwh * current_price
+
     return (
         baseline_cost,
         baseline_cost_off,
