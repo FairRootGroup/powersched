@@ -480,13 +480,17 @@ class ComputeClusterEnv(gym.Env):
         step_reward, step_cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
             num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d,
-            num_unprocessed_jobs, self.weights, num_dropped_this_step, self.env_print
+            num_unprocessed_jobs, self.weights, num_dropped_this_step, self.env_print,
+            nodes=self.state['nodes'], cores_available=self.cores_available,
         )
 
+        
         self.metrics.episode_reward += step_reward
+        step_power_mwh = power_consumption_mwh(self.state['nodes'], self.cores_available)
+        
+        step_cost = step_power_mwh * current_price
         self.metrics.total_cost += step_cost
         self.metrics.episode_total_cost += step_cost
-        step_power_mwh = power_consumption_mwh(num_used_nodes, num_idle_nodes)
         self.metrics.total_power_consumption_mwh += step_power_mwh
         self.metrics.episode_total_power_consumption_mwh += step_power_mwh
 
