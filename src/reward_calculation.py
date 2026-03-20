@@ -5,45 +5,47 @@ from collections.abc import Callable
 import numpy as np
 
 from src.config import (
-    COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE,
+    COST_IDLE_MW, COST_USED_MW, CORES_PER_NODE, PENALTY_IDLE_NODE,
     PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, WEEK_HOURS
 )
 from src.prices import Prices
 from src.weights import Weights
 
 
-def power_cost(num_used_nodes: int, num_idle_nodes: int, current_price: float) -> float:
+def power_cost(num_on_nodes: int, cores_used: int, current_price: float) -> float:
     """
     Calculate power cost based on node usage and current electricity price.
 
+    Proportional model: all on-nodes draw idle power, plus additional compute
+    power scaled linearly by actual core utilization.
+    Formula: (COST_IDLE_MW * num_on + (COST_USED_MW - COST_IDLE_MW) * cores_used/CORES_PER_NODE) * price
+
     Args:
-        num_used_nodes: Number of nodes with jobs running
-        num_idle_nodes: Number of idle (on but unused) nodes
+        num_on_nodes: Number of nodes that are on (used + idle)
+        cores_used: Total number of cores actively running jobs
         current_price: Current electricity price
 
     Returns:
         Total power cost
     """
-    idle_cost = COST_IDLE_MW * current_price * num_idle_nodes
-    usage_cost = COST_USED_MW * current_price * num_used_nodes
-    total_cost = idle_cost + usage_cost
-    return total_cost
+    return (COST_IDLE_MW * num_on_nodes + (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)) * current_price
 
 
-def power_consumption_mwh(num_used_nodes: int, num_idle_nodes: int) -> float:
+def power_consumption_mwh(num_on_nodes: int, cores_used: int) -> float:
     """
     Calculate energy consumption for one environment step.
 
     One environment step equals one hour, so this is both average MW and MWh/step.
+    Uses the same proportional model as power_cost.
 
     Args:
-        num_used_nodes: Number of nodes with jobs running
-        num_idle_nodes: Number of idle (on but unused) nodes
+        num_on_nodes: Number of nodes that are on (used + idle)
+        cores_used: Total number of cores actively running jobs
 
     Returns:
         Energy consumption in MWh for this step
     """
-    return COST_IDLE_MW * num_idle_nodes + COST_USED_MW * num_used_nodes
+    return COST_IDLE_MW * num_on_nodes + (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)
 
 
 class RewardCalculator:
@@ -80,9 +82,9 @@ class RewardCalculator:
 
     def _compute_bounds(self) -> None:
         """Compute min/max bounds for reward normalization."""
-        # Efficiency bounds
-        cost_for_min_efficiency = power_cost(0, MAX_NODES, self.prices.MAX_PRICE)
-        cost_for_max_efficiency = power_cost(MAX_NODES, 0, self.prices.MIN_PRICE)
+        # Efficiency bounds (for legacy _reward_efficiency_normalized only)
+        cost_for_min_efficiency = power_cost(MAX_NODES, 0, self.prices.MAX_PRICE)
+        cost_for_max_efficiency = power_cost(MAX_NODES, MAX_NODES * CORES_PER_NODE, self.prices.MIN_PRICE)
 
         self._min_efficiency_reward = self._reward_efficiency(0, cost_for_min_efficiency)
         self._max_efficiency_reward = max(1.0, self._reward_efficiency(MAX_NODES, cost_for_max_efficiency))
@@ -230,16 +232,18 @@ class RewardCalculator:
         normalized_penalty = -current_penalty
         return float(np.clip(normalized_penalty, -1, 0))
 
-    def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:
-        '''Redefine meaning of "efficiency". Use purely as "energy efficiency", aka: How much of the energy (in MW) which is currently needed, gets used for work.
-        NOTE: Original efficiency function was doing 3 things at once. 1. Handled Blackout logic, with (2.) penalty-ish reward delay for unprocessed jobs, while blackout.
-        But this log1p function would start to become "harsh" only for a very high number of unprocessed. This rewarded shutting everything off.
-        3. rewarded used/cost, but cost was defined in units of price. Price reward should handle this solely, otherwise double counting.
-        Hence, here new efficiency definition.'''
-        total_work = num_used_nodes * COST_USED_MW + num_idle_nodes * COST_IDLE_MW
-        if total_work <= 0.0:
+    def _reward_energy_efficiency_normalized(self, num_on_nodes: int, cores_used: int) -> float:
+        '''Energy efficiency: fraction of total power draw that goes to actual computation.
+
+        Proportional model: total power = COST_IDLE_MW * num_on + compute_delta * cores/CORES_PER_NODE.
+        Compute power = compute_delta * cores/CORES_PER_NODE (the portion above idle baseline).
+        Efficiency = compute_power / total_power, scaled to [-1, 1].
+        '''
+        compute_power = (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)
+        total_power = COST_IDLE_MW * num_on_nodes + compute_power
+        if total_power <= 0.0:
             return 0.0  # nothing on => no "efficiency" signal
-        return 2*(float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))) - 1.0 # scale to [-1, 1] so that it can be weighted in either direction without exceeding bounds.
+        return 2 * float(np.clip(compute_power / total_power, 0.0, 1.0)) - 1.0  # scale to [-1, 1]
 
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
@@ -260,7 +264,7 @@ class RewardCalculator:
         penalty = np.exp(-ratio * SATURATION_FACTOR) - 1.0
         return float(np.clip(penalty, -1.0, 0.0))
 
-    def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
+    def calculate(self, num_used_nodes: int, num_idle_nodes: int, num_used_cores: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, _num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - _num_processed_jobs legacy; num_node_changes reserved for future node-change penalty
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None]) -> tuple[float, float, float, float, float, float]:
@@ -286,8 +290,9 @@ class RewardCalculator:
                       idle_penalty_norm, job_age_penalty_norm)
         """
         # 0. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
-        total_cost = power_cost(num_used_nodes, num_idle_nodes, current_price)
-        efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes) + self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
+        num_on_nodes = num_used_nodes + num_idle_nodes
+        total_cost = power_cost(num_on_nodes, num_used_cores, current_price)
+        efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_on_nodes, num_used_cores) + self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
         # 2. Increase reward if current price is favorable and currently used nodes are high.

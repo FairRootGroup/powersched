@@ -1,6 +1,5 @@
 """Metrics tracking and episode recording for the PowerSched environment."""
 
-from src.config import COST_IDLE_MW, COST_USED_MW, CORES_PER_NODE, MAX_NODES
 
 
 class MetricsTracker:
@@ -178,33 +177,6 @@ class MetricsTracker:
         savings_vs_baseline: float = self.episode_baseline_cost - self.episode_total_cost
         savings_vs_baseline_off: float = self.episode_baseline_cost_off - self.episode_total_cost
 
-        # Proportional (per-core) power: idle_base for all on-nodes + compute delta scaled by core utilization.
-        # Formula per step: COST_IDLE_MW * num_on + (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)
-        _compute_delta_mw = COST_USED_MW - COST_IDLE_MW
-        agent_prop_power_mwh: float = sum(
-            COST_IDLE_MW * on + _compute_delta_mw * (cores / CORES_PER_NODE)
-            for on, cores in zip(self.episode_on_nodes, self.episode_used_cores)
-        )
-        # Baseline always has all MAX_NODES on
-        baseline_prop_power_mwh: float = sum(
-            COST_IDLE_MW * MAX_NODES + _compute_delta_mw * (cores / CORES_PER_NODE)
-            for cores in self.episode_baseline_used_cores
-        )
-        # Baseline_off: only used nodes are on (no idle nodes)
-        baseline_off_prop_power_mwh: float = sum(
-            COST_IDLE_MW * used + _compute_delta_mw * (cores / CORES_PER_NODE)
-            for used, cores in zip(self.episode_baseline_used_nodes, self.episode_baseline_used_cores)
-        )
-        # Proportional cost: same as prop power but multiplied by price at each step
-        agent_prop_cost: float = sum(
-            (COST_IDLE_MW * on + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
-            for on, cores, price in zip(self.episode_on_nodes, self.episode_used_cores, self.episode_price_stats)
-        )
-        baseline_off_prop_cost: float = sum(
-            (COST_IDLE_MW * used + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
-            for used, cores, price in zip(self.episode_baseline_used_nodes, self.episode_baseline_used_cores, self.episode_price_stats)
-        )
-        savings_prop_cost_vs_baseline_off: float = baseline_off_prop_cost - agent_prop_cost
         dropped_jobs_per_saved_euro: float = self._safe_ratio(
             float(self.episode_jobs_dropped), savings_vs_baseline
         ) if savings_vs_baseline > 0.0 else float("nan")
@@ -220,10 +192,6 @@ class MetricsTracker:
             'agent_power_consumption_mwh': self.episode_total_power_consumption_mwh,
             'baseline_power_consumption_mwh': self.episode_baseline_power_consumption_mwh,
             'baseline_power_consumption_off_mwh': self.episode_baseline_power_consumption_off_mwh,
-            'agent_prop_power_mwh': agent_prop_power_mwh,
-            'baseline_prop_power_mwh': baseline_prop_power_mwh,
-            'baseline_off_prop_power_mwh': baseline_off_prop_power_mwh,
-            'savings_prop_cost_vs_baseline_off': savings_prop_cost_vs_baseline_off,
             'agent_mean_price': agent_mean_price,
             'baseline_mean_price': baseline_mean_price,
             'baseline_off_mean_price': baseline_off_mean_price,

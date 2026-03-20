@@ -64,8 +64,8 @@ def build_episode_summary_line(
         f"Baseline Occupancy (Cores)={baseline_occupancy_cores_pct:.2f}%, "
         f"Agent Occupancy (Nodes)={agent_occupancy_nodes_pct:.2f}%, "
         f"Baseline Occupancy (Nodes)={baseline_occupancy_nodes_pct:.2f}%, "
-        f"PropPower={float(episode_data['agent_prop_power_mwh']):.1f}/"
-        f"{float(episode_data['baseline_prop_power_mwh']):.1f}/"
-        f"{float(episode_data['baseline_off_prop_power_mwh']):.1f} MWh "
+        f"Power={float(episode_data['agent_power_consumption_mwh']):.1f}/"
+        f"{float(episode_data['baseline_power_consumption_mwh']):.1f}/"
+        f"{float(episode_data['baseline_power_consumption_off_mwh']):.1f} MWh "
         f"(agent/base/base_off)"
     )

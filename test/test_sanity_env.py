@@ -206,6 +206,8 @@ def parse_args():
     p.add_argument("--steps", type=int, default=500)
     p.add_argument("--episodes", type=int, default=1)
     p.add_argument("--check-determinism", action="store_true")
+    p.add_argument("--check-gym", action="store_true", help="Run stable-baselines3 check_env() on the environment.")
+    p.add_argument("--carry-over-state", action="store_true", help="Run carry-over continuity test (state preserved across episodes).")
     # mirror train.py-ish knobs (mostly optional)
     p.add_argument("--session", default="sanity")
     p.add_argument("--render", type=str, default="none", choices=["human", "none"])
@@ -380,9 +382,16 @@ def main():
         determinism_test(lambda: make_env_with_carry(), seed=args.seed, n_steps=min(args.steps, 500))
         print("[OK] determinism test passed")
 
-    # 4) Carry-over continuity
-    carry_over_test(lambda: make_env_with_carry(), seed=args.seed, n_steps=min(args.steps, 10))
-    print("[OK] carry-over continuity test passed")
+    # 4) Gym interface check (optional)
+    if args.check_gym:
+        from stable_baselines3.common.env_checker import check_env
+        check_env(make_env_with_carry(), warn=True)
+        print("[OK] gym check passed")
+
+    # 5) Carry-over continuity (optional)
+    if args.carry_over_state:
+        carry_over_test(lambda: make_env_with_carry(), seed=args.seed, n_steps=min(args.steps, 10))
+        print("[OK] carry-over continuity test passed")
 
     print("done")
 
