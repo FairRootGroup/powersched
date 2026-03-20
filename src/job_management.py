@@ -113,6 +113,9 @@ def process_ongoing_jobs(nodes: np.ndarray, cores_available: np.ndarray, running
 
     if completed_jobs:
         completed_count = len(completed_jobs)
+        # episode_jobs_completed can exceed episode_jobs_submitted: jobs submitted
+        # in the previous episode and carried over in running_jobs complete here.
+        # This is expected — it reflects the continuous simulation and is informative.
         if is_baseline:
             metrics.baseline_jobs_completed += completed_count
             metrics.baseline_total_job_wait_time += completed_wait_time
