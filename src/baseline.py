@@ -61,13 +61,11 @@ def baseline_step(
     """
     job_queue_2d = baseline_state['job_queue'].reshape(-1, 4)
 
-    process_ongoing_jobs(baseline_state['nodes'], baseline_cores_available, baseline_running_jobs)
+    process_ongoing_jobs(baseline_state['nodes'], baseline_cores_available, baseline_running_jobs, metrics, is_baseline=True)
 
     # Age helper queue and fill real queue before new arrivals
     age_backlog_queue(baseline_backlog_queue, metrics, _is_baseline=True)
-    baseline_next_empty_slot, _ = fill_queue_from_backlog(
-        job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot
-    )
+    baseline_next_empty_slot, _ = fill_queue_from_backlog(job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot)
 
     _new_baseline_jobs, baseline_next_empty_slot, baseline_backlog_dropped = add_new_jobs(
         job_queue_2d, new_jobs_count, new_jobs_durations,
