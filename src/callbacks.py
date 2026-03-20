@@ -1,4 +1,4 @@
-from src.config import EPISODE_HOURS, MAX_QUEUE_SIZE
+from src.config import EPISODE_HOURS, MAX_QUEUE_SIZE, COST_IDLE_MW, COST_USED_MW, CORES_PER_NODE, MAX_NODES
 from stable_baselines3.common.callbacks import BaseCallback
 
 
@@ -57,6 +57,34 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/baseline_max_backlog_size", env.metrics.episode_baseline_max_backlog_size_reached)
             self.logger.record("metrics/baseline_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
             self.logger.record("metrics/baseline_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
+
+            # Proportional (per-core) power metrics
+            _delta = COST_USED_MW - COST_IDLE_MW
+            agent_prop_power = sum(
+                COST_IDLE_MW * on + _delta * (cores / CORES_PER_NODE)
+                for on, cores in zip(env.metrics.episode_on_nodes, env.metrics.episode_used_cores)
+            )
+            baseline_prop_power = sum(
+                COST_IDLE_MW * MAX_NODES + _delta * (cores / CORES_PER_NODE)
+                for cores in env.metrics.episode_baseline_used_cores
+            )
+            baseline_off_prop_power = sum(
+                COST_IDLE_MW * used + _delta * (cores / CORES_PER_NODE)
+                for used, cores in zip(env.metrics.episode_baseline_used_nodes, env.metrics.episode_baseline_used_cores)
+            )
+            self.logger.record("metrics/prop_power_mwh", agent_prop_power)
+            self.logger.record("metrics/baseline_prop_power_mwh", baseline_prop_power)
+            self.logger.record("metrics/baseline_off_prop_power_mwh", baseline_off_prop_power)
+            self.logger.record("metrics/savings_prop_power_vs_baseline_off", baseline_off_prop_power - agent_prop_power)
+            agent_prop_cost = sum(
+                (COST_IDLE_MW * on + _delta * (cores / CORES_PER_NODE)) * price
+                for on, cores, price in zip(env.metrics.episode_on_nodes, env.metrics.episode_used_cores, env.metrics.episode_price_stats)
+            )
+            baseline_off_prop_cost = sum(
+                (COST_IDLE_MW * used + _delta * (cores / CORES_PER_NODE)) * price
+                for used, cores, price in zip(env.metrics.episode_baseline_used_nodes, env.metrics.episode_baseline_used_cores, env.metrics.episode_price_stats)
+            )
+            self.logger.record("metrics/savings_prop_cost_vs_baseline_off", baseline_off_prop_cost - agent_prop_cost)
 
         return True
 
