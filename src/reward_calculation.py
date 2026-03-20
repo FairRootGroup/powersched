@@ -39,6 +39,18 @@ def _power_consumption_from_state_mwh(
     return float(np.sum(node_power_mw))
 
 
+def _used_cores_from_state(nodes: np.ndarray, cores_available: np.ndarray) -> float:
+    """Calculate the total number of used cores across all powered nodes."""
+    on_mask = nodes >= 0
+    if not np.any(on_mask):
+        return 0.0
+
+    used_cores = np.zeros_like(cores_available, dtype=float)
+    used_cores[on_mask] = CORES_PER_NODE - cores_available[on_mask]
+    used_cores = np.clip(used_cores, 0.0, float(CORES_PER_NODE))
+    return float(np.sum(used_cores))
+
+
 def power_cost(
         nodes_or_num_used: np.ndarray | int,
         cores_or_num_idle: np.ndarray | int,
@@ -99,6 +111,8 @@ def power_consumption_mwh(
 class RewardCalculator:
         
     """Calculates rewards with pre-computed normalization bounds."""
+    EFFICIENCY_TARGET_RATIO = 0.70
+    EFFICIENCY_GAIN = 5.0
     # Faster response so price signal reacts on the same horizon as node-efficiency actions.
     # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
     PRICE_ADVANTAGE_GAIN = 4.0
@@ -291,6 +305,74 @@ class RewardCalculator:
             return 0.0  # nothing on => no "efficiency" signal
         return 2*(float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))) - 1.0 # scale to [-1, 1] so that it can be weighted in either direction without exceeding bounds.
 
+    def _reward_energy_efficiency_utilization_normalized(
+            self,
+            nodes: np.ndarray,
+            cores_available: np.ndarray,
+    ) -> float:
+        """
+        Utilization-aware efficiency reward based on delivered core-hours per MWh.
+
+        Theoretical optimum under the current affine power model is achieved when every
+        powered node is fully utilized, i.e. 96 cores at 450 W.
+        """
+        step_power_mwh = power_consumption_mwh(nodes, cores_available)
+        if step_power_mwh <= 0.0:
+            return 0.0
+
+        used_cores = _used_cores_from_state(nodes, cores_available)
+        if used_cores <= 0.0:
+            efficiency_ratio = 0.0
+        else:
+            efficiency_raw = used_cores / step_power_mwh  # core-hours per MWh for this 1h step
+            efficiency_max = float(CORES_PER_NODE) / COST_USED_MW
+            efficiency_ratio = float(np.clip(efficiency_raw / efficiency_max, 0.0, 1.0))
+
+        return float(np.tanh(self.EFFICIENCY_GAIN * (efficiency_ratio - self.EFFICIENCY_TARGET_RATIO)))
+
+    def _reward_price_utilization(
+            self,
+            current_price: float,
+            average_future_price: float,
+            used_cores: float,
+    ) -> float:
+        """
+        Price-timing reward scaled by useful work volume, measured as equivalent fully used nodes.
+
+        This keeps price timing independent from packing quality: the same total used cores
+        receive the same price incentive whether packed densely or spread out.
+        """
+        if used_cores <= 0.0:
+            return 0.0
+
+        context_avg = self._price_context_average(average_future_price)
+        price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
+        relative_advantage = (context_avg - current_price) / price_span
+
+        advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
+        equivalent_used_nodes = used_cores / float(CORES_PER_NODE)
+        tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
+        load_component = 1.0 - np.exp(-equivalent_used_nodes / tau)
+        raw_reward = advantage_component * load_component
+
+        if current_price < 0.0:
+            negative_strength = 1.0 - np.exp(-abs(current_price) / self.NEGATIVE_PRICE_TAU)
+            negative_load_component = 1.0 - np.exp(-equivalent_used_nodes / self.NEGATIVE_PRICE_NODE_TAU)
+            overdrive = negative_load_component * negative_strength
+
+            if self.NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE:
+                reward = np.tanh(raw_reward) + self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = min(reward, self.NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD)
+            else:
+                raw_reward += self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = np.tanh(raw_reward)
+
+            reward = max(reward, self.NEGATIVE_PRICE_OVERDRIVE_FLOOR * overdrive)
+        else:
+            reward = np.tanh(raw_reward)
+
+        return float(reward)
+
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
         Reward/penalty for full blackout (all nodes off).
@@ -341,15 +423,20 @@ class RewardCalculator:
         # 0. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
         if nodes is not None and cores_available is not None:
             total_cost = power_cost(nodes, cores_available, current_price)
+            used_cores = _used_cores_from_state(nodes, cores_available)
+            efficiency_reward_norm = self._reward_energy_efficiency_utilization_normalized(nodes, cores_available)
+            price_reward = self._reward_price_utilization(current_price, average_future_price, used_cores)
         else:
             total_cost = power_cost(num_used_nodes, num_idle_nodes, current_price)
-        efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes) + self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
+            efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes)
+            price_reward = self._reward_price(
+                current_price, average_future_price, num_used_nodes
+            )
+
+        efficiency_reward_norm += self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
-        # 2. Increase reward if current price is favorable and currently used nodes are high.
-        price_reward = self._reward_price(
-            current_price, average_future_price, num_used_nodes
-        )
+        # 2. Increase reward if current price is favorable and currently useful work is high.
         price_reward_weighted = weights.price_weight * price_reward
 
         # 3. penalize delayed jobs, more if they are older. but only if there are turned off nodes
