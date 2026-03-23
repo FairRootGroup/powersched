@@ -24,7 +24,8 @@ from src.config import (
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
-    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue
+    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue,
+    age_job_queue,
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator, power_consumption_mwh
@@ -326,6 +327,11 @@ class ComputeClusterEnv(gym.Env):
         )
         self.env_print(f"{len(completed_jobs)} jobs completed: [{' '.join(['#' + str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else ''}]")
 
+        # Age jobs already waiting before admitting this step's new arrivals.
+        self.next_empty_slot, queue_aged_dropped = age_job_queue(job_queue_2d, self.next_empty_slot)
+        if queue_aged_dropped > 0:
+            queue_backlog_mutated = True
+
         # Age helper queues (jobs waiting outside the fixed queue)
         backlog_aged_dropped = age_backlog_queue(self.backlog_queue, self.metrics, _is_baseline=False)
         if backlog_aged_dropped > 0:
@@ -356,8 +362,8 @@ class ComputeClusterEnv(gym.Env):
         if len(new_jobs) > 0:
             queue_backlog_mutated = True
         if backlog_dropped > 0:
-            self.metrics.jobs_dropped += backlog_dropped
-            self.metrics.episode_jobs_dropped += backlog_dropped
+            self.metrics.jobs_rejected_queue_full += backlog_dropped
+            self.metrics.episode_jobs_rejected_queue_full += backlog_dropped
         self.metrics.jobs_submitted += new_jobs_count
         self.metrics.episode_jobs_submitted += new_jobs_count
 
@@ -376,7 +382,7 @@ class ComputeClusterEnv(gym.Env):
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        num_dropped_this_step = backlog_dropped
+        num_dropped_this_step = queue_aged_dropped + backlog_aged_dropped + backlog_dropped
         num_launched_jobs, self.next_empty_slot, queue_dropped, self.next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
             self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
@@ -495,7 +501,9 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.episode_idle_penalties.append(idle_penalty_norm * 100)
         self.metrics.episode_rewards.append(step_reward)
-
+        self.metrics.jobs_dropped += num_dropped_this_step
+        self.metrics.episode_jobs_dropped += num_dropped_this_step
+        
         # print stats
         self.env_print(f"[6] End of step stats...")
         self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
@@ -543,6 +551,7 @@ class ComputeClusterEnv(gym.Env):
             "num_unprocessed_jobs": num_unprocessed_jobs,
             "num_on_nodes": num_on_nodes,
             "episode_jobs_dropped": self.metrics.episode_jobs_dropped,
+            "episode_jobs_lost_total": self.metrics.episode_jobs_dropped,
         }
 
         return self.state, step_reward, terminated, truncated, info

@@ -446,7 +446,7 @@ def plot_episode_summary(env: ComputeClusterEnv, episode_costs: list[dict[str, f
     avg_wait = np.array([ep.get("avg_wait_time", 0.0) for ep in episode_costs], dtype=float)
     completion = np.array([ep.get("completion_rate", 0.0) for ep in episode_costs], dtype=float)
     max_queue = np.array([ep.get("max_queue_size", 0.0) for ep in episode_costs], dtype=float)
-    dropped = np.array([ep.get("jobs_dropped", 0.0) for ep in episode_costs], dtype=float)
+    dropped = np.array([ep.get("jobs_lost_total", ep.get("jobs_dropped", 0.0)) for ep in episode_costs], dtype=float)
 
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 6))
 
@@ -473,15 +473,15 @@ def plot_episode_summary(env: ComputeClusterEnv, episode_costs: list[dict[str, f
     labels = [line.get_label() for line in lines]
     ax2.legend(lines, labels, loc="upper left", fontsize=9)
 
-    # Max queue + dropped jobs
+    # Max queue + lost jobs
     ax3.plot(eps, max_queue, label="Max queue (jobs)", linewidth=2)
     ax3.set_xlabel("Episode")
     ax3.set_ylabel("Max queue (jobs)")
     ax3.grid(True, alpha=0.3)
 
     ax3b = ax3.twinx()
-    ax3b.plot(eps, dropped, label="Dropped jobs", linewidth=2, linestyle="--")
-    ax3b.set_ylabel("Dropped jobs")
+    ax3b.plot(eps, dropped, label="Lost jobs", linewidth=2, linestyle="--")
+    ax3b.set_ylabel("Lost jobs")
 
     lines = ax3.get_lines() + ax3b.get_lines()
     labels = [line.get_label() for line in lines]

@@ -44,6 +44,9 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/max_queue_size", env.metrics.episode_max_queue_size_reached)
             self.logger.record("metrics/max_backlog_size", env.metrics.episode_max_backlog_size_reached)
             self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
+            self.logger.record("metrics/jobs_lost_total", env.metrics.episode_jobs_dropped)
+            loss_rate = (env.metrics.episode_jobs_dropped / env.metrics.episode_jobs_submitted * 100 if env.metrics.episode_jobs_submitted > 0 else 0.0)
+            self.logger.record("metrics/loss_rate", loss_rate)
             self.logger.record("metrics/jobs_rejected_queue_full", env.metrics.episode_jobs_rejected_queue_full)
 
             # Job metrics (baseline)
@@ -56,6 +59,9 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/baseline_max_queue_size", env.metrics.episode_baseline_max_queue_size_reached)
             self.logger.record("metrics/baseline_max_backlog_size", env.metrics.episode_baseline_max_backlog_size_reached)
             self.logger.record("metrics/baseline_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
+            self.logger.record("metrics/baseline_jobs_lost_total", env.metrics.episode_baseline_jobs_dropped)
+            baseline_loss_rate = (env.metrics.episode_baseline_jobs_dropped / env.metrics.episode_baseline_jobs_submitted * 100 if env.metrics.episode_baseline_jobs_submitted > 0 else 0.0)
+            self.logger.record("metrics/baseline_loss_rate", baseline_loss_rate)
             self.logger.record("metrics/baseline_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
 
             # Proportional (per-core) power metrics
