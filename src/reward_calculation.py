@@ -367,9 +367,10 @@ class RewardCalculator:
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
-        # 5. penalty for lost jobs (aged out or rejected because queue/backlog was full)
-        drop_penalty = self._penalty_drop(num_dropped_this_step)
-        drop_penalty_weighted = weights.drop_weight * drop_penalty
+        # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
+        drop_penalty_weighted = 0
+        if num_dropped_this_step > 0:
+            drop_penalty_weighted = -1.0 - 0.25 * min(num_dropped_this_step - 1, 1000)  # harsher penalty for losing many jobs, capped at -251.0 for 1000+ jobs
 
         reward = (
             efficiency_reward_weighted

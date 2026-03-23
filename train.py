@@ -325,9 +325,22 @@ def main():
                 total_agent_power_mwh = sum(float(ep.get('agent_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_power_mwh = sum(float(ep.get('baseline_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_off_power_mwh = sum(float(ep.get('baseline_power_consumption_off_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_agent_prop_power_mwh = sum(float(ep.get('agent_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_prop_power_mwh = sum(float(ep.get('baseline_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_off_prop_power_mwh = sum(float(ep.get('baseline_off_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
+                total_agent_prop_cost = sum(float(ep.get('agent_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_prop_cost = sum(float(ep.get('baseline_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
+                total_baseline_off_prop_cost = sum(float(ep.get('baseline_off_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
+                total_savings_prop_cost_vs_baseline = total_baseline_prop_cost - total_agent_prop_cost
+                total_savings_prop_cost_vs_baseline_off = total_baseline_off_prop_cost - total_agent_prop_cost
                 total_agent_mean_price = (total_agent_cost / total_agent_power_mwh) if total_agent_power_mwh > 0 else 0.0
                 total_baseline_mean_price = (total_baseline_cost / total_baseline_power_mwh) if total_baseline_power_mwh > 0 else 0.0
                 total_baseline_off_mean_price = (total_baseline_off_cost / total_baseline_off_power_mwh) if total_baseline_off_power_mwh > 0 else 0.0
+                total_agent_prop_mean_price = (total_agent_prop_cost / total_agent_prop_power_mwh) if total_agent_prop_power_mwh > 0 else 0.0
+                total_baseline_prop_mean_price = (total_baseline_prop_cost / total_baseline_prop_power_mwh) if total_baseline_prop_power_mwh > 0 else 0.0
+                total_baseline_off_prop_mean_price = (total_baseline_off_prop_cost / total_baseline_off_prop_power_mwh) if total_baseline_off_prop_power_mwh > 0 else 0.0
+                prop_savings_pct_vs_baseline = safe_ratio(total_savings_prop_cost_vs_baseline * 100.0, total_baseline_prop_cost)
+                prop_savings_pct_vs_baseline_off = safe_ratio(total_savings_prop_cost_vs_baseline_off * 100.0, total_baseline_off_prop_cost)
                 total_agent_completion_rate = (total_jobs_completed / total_jobs_submitted * 100) if total_jobs_submitted > 0 else 0.0
                 total_baseline_completion_rate = (total_baseline_completed / total_baseline_submitted * 100) if total_baseline_submitted > 0 else 0.0
                 total_savings_vs_baseline = total_baseline_cost - total_agent_cost
@@ -365,7 +378,7 @@ def main():
                 print(f"  Baseline:     {fmt_optional(total_baseline_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
                 print(f"  Baseline_off: {fmt_optional(total_baseline_off_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
 
-                print("\n=== AGENT LOST JOBS PER SAVED EURO ===")
+                print(f"\n=== AGENT LOST JOBS PER SAVED EURO ===")
                 print(f"  Total Lost Jobs (Agent): {total_jobs_dropped:,}")
                 print(f"  Total Lost Jobs (Baseline): {total_baseline_jobs_dropped:,}")
                 print(f"  Vs Baseline:     {fmt_optional(total_dropped_jobs_per_saved_euro, 6)} jobs/€")

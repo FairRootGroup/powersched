@@ -505,7 +505,7 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_rewards.append(step_reward)
         self.metrics.jobs_dropped += num_dropped_this_step
         self.metrics.episode_jobs_dropped += num_dropped_this_step
-
+        
         # print stats
         self.env_print(f"[6] End of step stats...")
         self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
