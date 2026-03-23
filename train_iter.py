@@ -153,13 +153,31 @@ def build_command(
     return command
 
 
+def make_log_dir(session):
+    if session:
+        log_dir = os.path.join("sessions", session, "proc_logs")
+    else:
+        log_dir = os.path.join("proc_logs", str(int(time.time())))
+    os.makedirs(log_dir, exist_ok=True)
+    return log_dir
+
+
+def label_to_filename(label):
+    return label.replace(", ", "_").replace("=", "") + ".log"
+
+
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay, jobs_exact_replay_aggregate, plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, workloadgen_args):
-    active = []  # list of (proc, label)
+    active = []  # list of (proc, label, log_fh)
     current_env = os.environ.copy()
     failure_count = 0
     multi_seed = len(seeds) > 1
+    log_dir = make_log_dir(session)
+    total = len(combinations) * len(seeds)
+    completed = 0
+
+    print(f"[run] logs -> {log_dir}/")
 
     for combo, seed in itertools.product(combinations, seeds):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
@@ -170,15 +188,17 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
         # Wait until a slot is free
         while len(active) >= max_parallel:
             still_running = []
-            for proc, lbl in active:
+            for proc, lbl, fh in active:
                 if proc.poll() is None:
-                    still_running.append((proc, lbl))
+                    still_running.append((proc, lbl, fh))
                 else:
+                    fh.close()
+                    completed += 1
                     rc = proc.returncode
                     if rc != 0:
                         failure_count += 1
-                    status = "done" if rc == 0 else f"error (rc={rc})"
-                    print(f"[run] {status}: {lbl}")
+                    status = "done" if rc == 0 else f"FAILED (rc={rc})"
+                    print(f"[run] [{completed}/{total}] {status}: {lbl}")
             active = still_running
             if len(active) >= max_parallel:
                 time.sleep(1)
@@ -190,18 +210,22 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
             evaluate_savings, eval_months,
             workloadgen_args,
         )
-        print(f"[run] starting: {label}")
-        proc = subprocess.Popen(command, env=current_env)
-        active.append((proc, label))
+        log_path = os.path.join(log_dir, label_to_filename(label))
+        log_fh = open(log_path, "w")
+        print(f"[run] starting ({completed + len(active) + 1}/{total}): {label}")
+        proc = subprocess.Popen(command, env=current_env, stdout=log_fh, stderr=subprocess.STDOUT)
+        active.append((proc, label, log_fh))
 
     # Wait for all remaining processes
-    for proc, label in active:
+    for proc, label, fh in active:
         proc.wait()
+        fh.close()
+        completed += 1
         rc = proc.returncode
         if rc != 0:
             failure_count += 1
-        status = "done" if rc == 0 else f"error (rc={rc})"
-        print(f"[run] {status}: {label}")
+        status = "done" if rc == 0 else f"FAILED (rc={rc})"
+        print(f"[run] [{completed}/{total}] {status}: {label}")
 
     return failure_count
 
