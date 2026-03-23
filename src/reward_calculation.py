@@ -71,6 +71,9 @@ class RewardCalculator:
     # Drop penalty: tanh saturation curve. TAU=20: 1 drop≈-0.05, 10 drops≈-0.46, 50 drops≈-1.0.
     DROP_PENALTY_TAU = 20.0
 
+
+    ALLOW_DROP_PENALTY = True  # whether to include penalties for dropped jobs in the reward calculation
+
     def __init__(self, prices: Prices) -> None:
         """
         Initialize reward calculator with normalization bounds.
@@ -369,7 +372,7 @@ class RewardCalculator:
 
         # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
         drop_penalty_weighted = 0
-        if num_dropped_this_step > 0:
+        if self.ALLOW_DROP_PENALTY and num_dropped_this_step > 0:
             drop_penalty_weighted = -1.0 - 0.25 * min(num_dropped_this_step - 1, 1000)  # harsher penalty for losing many jobs, capped at -251.0 for 1000+ jobs
 
         reward = (
