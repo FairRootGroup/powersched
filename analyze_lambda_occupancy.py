@@ -2,14 +2,14 @@
 """
 Sweep workload Poisson lambda values and analyze:
 1) lambda -> agent occupancy (nodes)
-2) occupancy -> savings
-3) occupancy -> savings_off
+2) occupancy -> proportional savings
+3) occupancy -> proportional savings_off
 4) lambda -> completion rate
-5) occupancy -> effective savings
-6) occupancy -> effective savings_off
+5) occupancy -> proportional effective savings
+6) occupancy -> proportional effective savings_off
 7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
 8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
-9) occupancy -> (baseline_off - agent) power / baseline_off
+9) occupancy -> (baseline_off - agent) proportional power / baseline_off
 10) lambda -> baseline and baseline_off occupancies
 11) lambda -> mean jobs/hour (with std)
 12) lambda -> dropped-jobs delta (agent - baseline)
@@ -55,7 +55,10 @@ EPISODE_RE = re.compile(
     r"AvgWait=(?P<avg_wait>-?[\d.]+)h,.*?"
     r"(?:Dropped|Lost)=(?P<agent_dropped>-?[\d,]+),.*?"
     r"Agent Occupancy \(Nodes\)=\s*(?P<occupancy>-?[\d.]+)%,\s*"
-    r"Baseline Occupancy \(Nodes\)=\s*(?P<baseline_occupancy>-?[\d.]+)%",
+    r"Baseline Occupancy \(Nodes\)=\s*(?P<baseline_occupancy>-?[\d.]+)%"
+    r"(?:.*?"
+    r"PropPower=(?P<agent_prop_power>-?[\d.]+)\/(?P<baseline_prop_power>-?[\d.]+)\/(?P<baseline_off_prop_power>-?[\d.]+)\s*MWh.*?"
+    r"PropSavings=€(?P<prop_savings>-?[\d,]+(?:\.\d+)?)\/€(?P<prop_savings_off>-?[\d,]+(?:\.\d+)?))?",
     re.MULTILINE,
 )
 
@@ -98,6 +101,10 @@ class LambdaRunStats:
     savings_std: float
     savings_off_mean: float
     savings_off_std: float
+    prop_savings_mean: float
+    prop_savings_std: float
+    prop_savings_off_mean: float
+    prop_savings_off_std: float
     completion_rate_mean: float
     completion_rate_std: float
     agent_avg_wait_hours: float
@@ -107,16 +114,26 @@ class LambdaRunStats:
     effective_savings_std: float
     effective_savings_off_mean: float
     effective_savings_off_std: float
+    prop_effective_savings_mean: float
+    prop_effective_savings_std: float
+    prop_effective_savings_off_mean: float
+    prop_effective_savings_off_std: float
     cost_per_1k_delta_pct_baseline_mean: float
     cost_per_1k_delta_pct_baseline_std: float
     cost_per_1k_delta_pct_baseline_off_mean: float
     cost_per_1k_delta_pct_baseline_off_std: float
     power_delta_pct_baseline_off_mean: float
     power_delta_pct_baseline_off_std: float
+    prop_power_delta_pct_baseline_off_mean: float
+    prop_power_delta_pct_baseline_off_std: float
     evaluation_savings: float
     annualized_savings: float
     evaluation_savings_off: float
     annualized_savings_off: float
+    prop_evaluation_savings: float
+    prop_annualized_savings: float
+    prop_evaluation_savings_off: float
+    prop_annualized_savings_off: float
     command: list[str]
     command_str: str
     occupancy_samples: list[float] = field(default_factory=list)
@@ -125,12 +142,17 @@ class LambdaRunStats:
     dropped_jobs_agent_samples: list[float] = field(default_factory=list)
     savings_samples: list[float] = field(default_factory=list)
     savings_off_samples: list[float] = field(default_factory=list)
+    prop_savings_samples: list[float] = field(default_factory=list)
+    prop_savings_off_samples: list[float] = field(default_factory=list)
     completion_rate_samples: list[float] = field(default_factory=list)
     effective_savings_samples: list[float] = field(default_factory=list)
     effective_savings_off_samples: list[float] = field(default_factory=list)
+    prop_effective_savings_samples: list[float] = field(default_factory=list)
+    prop_effective_savings_off_samples: list[float] = field(default_factory=list)
     cost_per_1k_delta_pct_baseline_samples: list[float] = field(default_factory=list)
     cost_per_1k_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
     power_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
+    prop_power_delta_pct_baseline_off_samples: list[float] = field(default_factory=list)
 
 
 def _to_float(raw: str) -> float:
@@ -161,6 +183,10 @@ def parse_episode_metrics(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]:
     occupancy = []
     baseline_occupancy = []
@@ -174,25 +200,44 @@ def parse_episode_metrics(
     baseline_off_cost_1k = []
     agent_power = []
     baseline_off_power = []
+    prop_savings = []
+    prop_savings_off = []
+    agent_prop_power = []
+    baseline_off_prop_power = []
 
     for match in EPISODE_RE.finditer(stdout):
+        flat_savings = _to_float(match.group("savings"))
+        flat_savings_off = _to_float(match.group("savings_off"))
+        flat_agent_power = _to_float(match.group("agent_power"))
+        flat_baseline_off_power = _to_float(match.group("baseline_off_power"))
+        parsed_prop_savings = _to_float_or_nan(match.group("prop_savings"))
+        parsed_prop_savings_off = _to_float_or_nan(match.group("prop_savings_off"))
+        parsed_agent_prop_power = _to_float_or_nan(match.group("agent_prop_power"))
+        parsed_baseline_off_prop_power = _to_float_or_nan(match.group("baseline_off_prop_power"))
         occupancy.append(_to_float(match.group("occupancy")))
         baseline_occupancy.append(_to_float(match.group("baseline_occupancy")))
         agent_dropped.append(_to_float(match.group("agent_dropped")))
-        savings.append(_to_float(match.group("savings")))
-        savings_off.append(_to_float(match.group("savings_off")))
+        savings.append(flat_savings)
+        savings_off.append(flat_savings_off)
         completion_rate.append(_to_float(match.group("completion_rate")))
         avg_wait.append(_to_float(match.group("avg_wait")))
         agent_cost_1k.append(_to_float_or_nan(match.group("agent_cost_1k")))
         baseline_cost_1k.append(_to_float_or_nan(match.group("baseline_cost_1k")))
         baseline_off_cost_1k.append(_to_float_or_nan(match.group("baseline_off_cost_1k")))
-        agent_power.append(_to_float(match.group("agent_power")))
-        baseline_off_power.append(_to_float(match.group("baseline_off_power")))
+        agent_power.append(flat_agent_power)
+        baseline_off_power.append(flat_baseline_off_power)
+        prop_savings.append(parsed_prop_savings if np.isfinite(parsed_prop_savings) else flat_savings)
+        prop_savings_off.append(parsed_prop_savings_off if np.isfinite(parsed_prop_savings_off) else flat_savings_off)
+        agent_prop_power.append(parsed_agent_prop_power if np.isfinite(parsed_agent_prop_power) else flat_agent_power)
+        baseline_off_prop_power.append(
+            parsed_baseline_off_prop_power if np.isfinite(parsed_baseline_off_prop_power) else flat_baseline_off_power
+        )
 
     if not occupancy:
         raise RuntimeError(
             "Could not parse episode metrics from train.py output. "
-            "Expected lines like 'Episode X: ... Savings=€.../€..., Agent Occupancy (Nodes)=...%'."
+            "Expected lines like 'Episode X: ... Savings=€.../€..., Power=..., CostPer1kCompleted=..., "
+            "Agent Occupancy (Nodes)=...%, PropPower=..., PropSavings=€.../€...'."
         )
 
     return (
@@ -208,6 +253,10 @@ def parse_episode_metrics(
         np.asarray(baseline_off_cost_1k, dtype=float),
         np.asarray(agent_power, dtype=float),
         np.asarray(baseline_off_power, dtype=float),
+        np.asarray(prop_savings, dtype=float),
+        np.asarray(prop_savings_off, dtype=float),
+        np.asarray(agent_prop_power, dtype=float),
+        np.asarray(baseline_off_prop_power, dtype=float),
     )
 
 
@@ -274,6 +323,10 @@ def make_run_stats(
     baseline_off_cost_1k: np.ndarray,
     agent_power: np.ndarray,
     baseline_off_power: np.ndarray,
+    prop_savings: np.ndarray,
+    prop_savings_off: np.ndarray,
+    agent_prop_power: np.ndarray,
+    baseline_off_prop_power: np.ndarray,
     arrivals_per_hour_mean: float,
     arrivals_per_hour_std: float,
     dropped_jobs_agent_total: float,
@@ -282,18 +335,31 @@ def make_run_stats(
     wait_delta_hours = agent_avg_wait_hours - baseline_avg_wait_hours
     effective_savings = safe_divide(savings * (completion_rate/100)**2, wait_delta_hours+1)
     effective_savings_off = safe_divide(savings_off * (completion_rate/100)**2, wait_delta_hours+1)
+    prop_effective_savings = safe_divide(prop_savings * (completion_rate / 100) ** 2, wait_delta_hours + 1)
+    prop_effective_savings_off = safe_divide(prop_savings_off * (completion_rate / 100) ** 2, wait_delta_hours + 1)
     effective_savings_mean, effective_savings_std = finite_mean_std(effective_savings)
     effective_savings_off_mean, effective_savings_off_std = finite_mean_std(effective_savings_off)
+    prop_effective_savings_mean, prop_effective_savings_std = finite_mean_std(prop_effective_savings)
+    prop_effective_savings_off_mean, prop_effective_savings_off_std = finite_mean_std(prop_effective_savings_off)
     cost_per_1k_delta_pct_baseline = safe_divide_arrays((baseline_cost_1k - agent_cost_1k) * 100.0, baseline_cost_1k)
     cost_per_1k_delta_pct_baseline_off = safe_divide_arrays((baseline_off_cost_1k - agent_cost_1k) * 100.0, baseline_off_cost_1k)
     power_delta_pct_baseline_off = safe_divide_arrays((baseline_off_power - agent_power) * 100.0, baseline_off_power)
+    prop_power_delta_pct_baseline_off = safe_divide_arrays(
+        (baseline_off_prop_power - agent_prop_power) * 100.0,
+        baseline_off_prop_power,
+    )
     cost_per_1k_delta_pct_baseline_mean, cost_per_1k_delta_pct_baseline_std = finite_mean_std(cost_per_1k_delta_pct_baseline)
     cost_per_1k_delta_pct_baseline_off_mean, cost_per_1k_delta_pct_baseline_off_std = finite_mean_std(cost_per_1k_delta_pct_baseline_off)
     power_delta_pct_baseline_off_mean, power_delta_pct_baseline_off_std = finite_mean_std(power_delta_pct_baseline_off)
+    prop_power_delta_pct_baseline_off_mean, prop_power_delta_pct_baseline_off_std = finite_mean_std(
+        prop_power_delta_pct_baseline_off
+    )
     baseline_off_occupancy = baseline_occupancy.copy()
     dropped_jobs_delta_total = dropped_jobs_agent_total - dropped_jobs_baseline_total
     evaluation_savings, annualized_savings = compute_savings_totals(savings, eval_months)
     evaluation_savings_off, annualized_savings_off = compute_savings_totals(savings_off, eval_months)
+    prop_evaluation_savings, prop_annualized_savings = compute_savings_totals(prop_savings, eval_months)
+    prop_evaluation_savings_off, prop_annualized_savings_off = compute_savings_totals(prop_savings_off, eval_months)
     return LambdaRunStats(
         lambda_value=lambda_value,
         episodes=int(occupancy.size),
@@ -312,6 +378,10 @@ def make_run_stats(
         savings_std=float(np.std(savings)),
         savings_off_mean=float(np.mean(savings_off)),
         savings_off_std=float(np.std(savings_off)),
+        prop_savings_mean=float(np.mean(prop_savings)),
+        prop_savings_std=float(np.std(prop_savings)),
+        prop_savings_off_mean=float(np.mean(prop_savings_off)),
+        prop_savings_off_std=float(np.std(prop_savings_off)),
         completion_rate_mean=float(np.mean(completion_rate)),
         completion_rate_std=float(np.std(completion_rate)),
         agent_avg_wait_hours=float(agent_avg_wait_hours),
@@ -321,16 +391,26 @@ def make_run_stats(
         effective_savings_std=effective_savings_std,
         effective_savings_off_mean=effective_savings_off_mean,
         effective_savings_off_std=effective_savings_off_std,
+        prop_effective_savings_mean=prop_effective_savings_mean,
+        prop_effective_savings_std=prop_effective_savings_std,
+        prop_effective_savings_off_mean=prop_effective_savings_off_mean,
+        prop_effective_savings_off_std=prop_effective_savings_off_std,
         cost_per_1k_delta_pct_baseline_mean=cost_per_1k_delta_pct_baseline_mean,
         cost_per_1k_delta_pct_baseline_std=cost_per_1k_delta_pct_baseline_std,
         cost_per_1k_delta_pct_baseline_off_mean=cost_per_1k_delta_pct_baseline_off_mean,
         cost_per_1k_delta_pct_baseline_off_std=cost_per_1k_delta_pct_baseline_off_std,
         power_delta_pct_baseline_off_mean=power_delta_pct_baseline_off_mean,
         power_delta_pct_baseline_off_std=power_delta_pct_baseline_off_std,
+        prop_power_delta_pct_baseline_off_mean=prop_power_delta_pct_baseline_off_mean,
+        prop_power_delta_pct_baseline_off_std=prop_power_delta_pct_baseline_off_std,
         evaluation_savings=evaluation_savings,
         annualized_savings=annualized_savings,
         evaluation_savings_off=evaluation_savings_off,
         annualized_savings_off=annualized_savings_off,
+        prop_evaluation_savings=prop_evaluation_savings,
+        prop_annualized_savings=prop_annualized_savings,
+        prop_evaluation_savings_off=prop_evaluation_savings_off,
+        prop_annualized_savings_off=prop_annualized_savings_off,
         command=command,
         command_str=shlex.join(command),
         occupancy_samples=occupancy.tolist(),
@@ -339,12 +419,17 @@ def make_run_stats(
         dropped_jobs_agent_samples=agent_dropped.tolist(),
         savings_samples=savings.tolist(),
         savings_off_samples=savings_off.tolist(),
+        prop_savings_samples=prop_savings.tolist(),
+        prop_savings_off_samples=prop_savings_off.tolist(),
         completion_rate_samples=completion_rate.tolist(),
         effective_savings_samples=effective_savings.tolist(),
         effective_savings_off_samples=effective_savings_off.tolist(),
+        prop_effective_savings_samples=prop_effective_savings.tolist(),
+        prop_effective_savings_off_samples=prop_effective_savings_off.tolist(),
         cost_per_1k_delta_pct_baseline_samples=cost_per_1k_delta_pct_baseline.tolist(),
         cost_per_1k_delta_pct_baseline_off_samples=cost_per_1k_delta_pct_baseline_off.tolist(),
         power_delta_pct_baseline_off_samples=power_delta_pct_baseline_off.tolist(),
+        prop_power_delta_pct_baseline_off_samples=prop_power_delta_pct_baseline_off.tolist(),
     )
 
 
@@ -448,6 +533,10 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         baseline_off_cost_1k,
         agent_power,
         baseline_off_power,
+        prop_savings,
+        prop_savings_off,
+        agent_prop_power,
+        baseline_off_prop_power,
     ) = parse_episode_metrics(combined_output)
     agent_wait_summary, baseline_wait_summary = parse_wait_summary(combined_output)
     if agent_wait_summary is None or baseline_wait_summary is None:
@@ -486,6 +575,10 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         baseline_off_cost_1k,
         agent_power,
         baseline_off_power,
+        prop_savings,
+        prop_savings_off,
+        agent_prop_power,
+        baseline_off_prop_power,
         arrivals_per_hour_mean,
         arrivals_per_hour_std,
         dropped_jobs_agent_total,
@@ -498,10 +591,10 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
         f"arrivals/h={stats.arrivals_per_hour_mean:.2f}±{stats.arrivals_per_hour_std:.2f}, "
         f"dropped_delta={stats.dropped_jobs_delta_total:.0f}, "
         f"completion={stats.completion_rate_mean:.2f}%±{stats.completion_rate_std:.2f}, "
-        f"savings={stats.savings_mean:.0f}±{stats.savings_std:.0f}, "
-        f"savings_off={stats.savings_off_mean:.0f}±{stats.savings_off_std:.0f}, "
-        f"eval_savings={stats.evaluation_savings:.0f}/{stats.evaluation_savings_off:.0f}, "
-        f"annualized_savings={stats.annualized_savings:.0f}/{stats.annualized_savings_off:.0f}, "
+        f"prop_savings={stats.prop_savings_mean:.0f}±{stats.prop_savings_std:.0f}, "
+        f"prop_savings_off={stats.prop_savings_off_mean:.0f}±{stats.prop_savings_off_std:.0f}, "
+        f"prop_eval_savings={stats.prop_evaluation_savings:.0f}/{stats.prop_evaluation_savings_off:.0f}, "
+        f"prop_annualized_savings={stats.prop_annualized_savings:.0f}/{stats.prop_annualized_savings_off:.0f}, "
         f"wait_delta={stats.wait_delta_hours:.3f}h"
     )
     return stats, combined_output
@@ -623,20 +716,34 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
         "savings_std_eur",
         "savings_off_mean_eur",
         "savings_off_std_eur",
+        "prop_savings_mean_eur",
+        "prop_savings_std_eur",
+        "prop_savings_off_mean_eur",
+        "prop_savings_off_std_eur",
         "effective_savings_mean",
         "effective_savings_std",
         "effective_savings_off_mean",
         "effective_savings_off_std",
+        "prop_effective_savings_mean",
+        "prop_effective_savings_std",
+        "prop_effective_savings_off_mean",
+        "prop_effective_savings_off_std",
         "cost_per_1k_delta_pct_baseline_mean",
         "cost_per_1k_delta_pct_baseline_std",
         "cost_per_1k_delta_pct_baseline_off_mean",
         "cost_per_1k_delta_pct_baseline_off_std",
         "power_delta_pct_baseline_off_mean",
         "power_delta_pct_baseline_off_std",
+        "prop_power_delta_pct_baseline_off_mean",
+        "prop_power_delta_pct_baseline_off_std",
         "evaluation_savings_eur",
         "annualized_savings_eur",
         "evaluation_savings_off_eur",
         "annualized_savings_off_eur",
+        "prop_evaluation_savings_eur",
+        "prop_annualized_savings_eur",
+        "prop_evaluation_savings_off_eur",
+        "prop_annualized_savings_off_eur",
     ]
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -666,20 +773,34 @@ def write_summary_csv(path: Path, stats_by_lambda: list[LambdaRunStats]) -> None
                     "savings_std_eur": f"{s.savings_std:.6f}",
                     "savings_off_mean_eur": f"{s.savings_off_mean:.6f}",
                     "savings_off_std_eur": f"{s.savings_off_std:.6f}",
+                    "prop_savings_mean_eur": f"{s.prop_savings_mean:.6f}",
+                    "prop_savings_std_eur": f"{s.prop_savings_std:.6f}",
+                    "prop_savings_off_mean_eur": f"{s.prop_savings_off_mean:.6f}",
+                    "prop_savings_off_std_eur": f"{s.prop_savings_off_std:.6f}",
                     "effective_savings_mean": f"{s.effective_savings_mean:.6f}",
                     "effective_savings_std": f"{s.effective_savings_std:.6f}",
                     "effective_savings_off_mean": f"{s.effective_savings_off_mean:.6f}",
                     "effective_savings_off_std": f"{s.effective_savings_off_std:.6f}",
+                    "prop_effective_savings_mean": f"{s.prop_effective_savings_mean:.6f}",
+                    "prop_effective_savings_std": f"{s.prop_effective_savings_std:.6f}",
+                    "prop_effective_savings_off_mean": f"{s.prop_effective_savings_off_mean:.6f}",
+                    "prop_effective_savings_off_std": f"{s.prop_effective_savings_off_std:.6f}",
                     "cost_per_1k_delta_pct_baseline_mean": f"{s.cost_per_1k_delta_pct_baseline_mean:.6f}",
                     "cost_per_1k_delta_pct_baseline_std": f"{s.cost_per_1k_delta_pct_baseline_std:.6f}",
                     "cost_per_1k_delta_pct_baseline_off_mean": f"{s.cost_per_1k_delta_pct_baseline_off_mean:.6f}",
                     "cost_per_1k_delta_pct_baseline_off_std": f"{s.cost_per_1k_delta_pct_baseline_off_std:.6f}",
                     "power_delta_pct_baseline_off_mean": f"{s.power_delta_pct_baseline_off_mean:.6f}",
                     "power_delta_pct_baseline_off_std": f"{s.power_delta_pct_baseline_off_std:.6f}",
+                    "prop_power_delta_pct_baseline_off_mean": f"{s.prop_power_delta_pct_baseline_off_mean:.6f}",
+                    "prop_power_delta_pct_baseline_off_std": f"{s.prop_power_delta_pct_baseline_off_std:.6f}",
                     "evaluation_savings_eur": f"{s.evaluation_savings:.6f}",
                     "annualized_savings_eur": f"{s.annualized_savings:.6f}",
                     "evaluation_savings_off_eur": f"{s.evaluation_savings_off:.6f}",
                     "annualized_savings_off_eur": f"{s.annualized_savings_off:.6f}",
+                    "prop_evaluation_savings_eur": f"{s.prop_evaluation_savings:.6f}",
+                    "prop_annualized_savings_eur": f"{s.prop_annualized_savings:.6f}",
+                    "prop_evaluation_savings_off_eur": f"{s.prop_evaluation_savings_off:.6f}",
+                    "prop_annualized_savings_off_eur": f"{s.prop_annualized_savings_off:.6f}",
                 }
             )
 
@@ -708,18 +829,28 @@ def make_plot(
     sav_std = np.array([s.savings_std for s in ordered], dtype=float)
     sav_off_mean = np.array([s.savings_off_mean for s in ordered], dtype=float)
     sav_off_std = np.array([s.savings_off_std for s in ordered], dtype=float)
+    prop_sav_mean = np.array([s.prop_savings_mean for s in ordered], dtype=float)
+    prop_sav_std = np.array([s.prop_savings_std for s in ordered], dtype=float)
+    prop_sav_off_mean = np.array([s.prop_savings_off_mean for s in ordered], dtype=float)
+    prop_sav_off_std = np.array([s.prop_savings_off_std for s in ordered], dtype=float)
     completion_mean = np.array([s.completion_rate_mean for s in ordered], dtype=float)
     completion_std = np.array([s.completion_rate_std for s in ordered], dtype=float)
     eff_sav_mean = np.array([s.effective_savings_mean for s in ordered], dtype=float)
     eff_sav_std = np.array([s.effective_savings_std for s in ordered], dtype=float)
     eff_sav_off_mean = np.array([s.effective_savings_off_mean for s in ordered], dtype=float)
     eff_sav_off_std = np.array([s.effective_savings_off_std for s in ordered], dtype=float)
+    prop_eff_sav_mean = np.array([s.prop_effective_savings_mean for s in ordered], dtype=float)
+    prop_eff_sav_std = np.array([s.prop_effective_savings_std for s in ordered], dtype=float)
+    prop_eff_sav_off_mean = np.array([s.prop_effective_savings_off_mean for s in ordered], dtype=float)
+    prop_eff_sav_off_std = np.array([s.prop_effective_savings_off_std for s in ordered], dtype=float)
     cost_per_1k_delta_base_mean = np.array([s.cost_per_1k_delta_pct_baseline_mean for s in ordered], dtype=float)
     cost_per_1k_delta_base_std = np.array([s.cost_per_1k_delta_pct_baseline_std for s in ordered], dtype=float)
     cost_per_1k_delta_base_off_mean = np.array([s.cost_per_1k_delta_pct_baseline_off_mean for s in ordered], dtype=float)
     cost_per_1k_delta_base_off_std = np.array([s.cost_per_1k_delta_pct_baseline_off_std for s in ordered], dtype=float)
     power_delta_base_off_mean = np.array([s.power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
     power_delta_base_off_std = np.array([s.power_delta_pct_baseline_off_std for s in ordered], dtype=float)
+    prop_power_delta_base_off_mean = np.array([s.prop_power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
+    prop_power_delta_base_off_std = np.array([s.prop_power_delta_pct_baseline_off_std for s in ordered], dtype=float)
 
     lam_min = float(np.min(lambdas))
     lam_max = float(np.max(lambdas))
@@ -833,18 +964,24 @@ def make_plot(
         lambda ax: (plot_colored_points(ax, lambdas, occ_mean, yerr=occ_std), _maybe_plot_fit(ax, lambdas, occ_mean)),
     )
     _panel(
-        "02_occupancy_vs_savings",
-        "Occupancy/Episode vs Savings/Episode",
+        "02_occupancy_vs_prop_savings",
+        "Occupancy/Episode vs Proportional Savings/Episode",
         "Agent Occupancy (Nodes, %) / Episode",
-        "Savings vs Baseline (EUR / Episode)",
-        lambda ax: (plot_colored_points(ax, occ_mean, sav_mean, xerr=occ_std, yerr=sav_std), _maybe_plot_fit(ax, occ_mean, sav_mean)),
+        "Prop Savings vs Baseline (EUR / Episode)",
+        lambda ax: (
+            plot_colored_points(ax, occ_mean, prop_sav_mean, xerr=occ_std, yerr=prop_sav_std),
+            _maybe_plot_fit(ax, occ_mean, prop_sav_mean),
+        ),
     )
     _panel(
-        "03_occupancy_vs_savings_off",
-        "Occupancy vs Savings_off/Episode",
+        "03_occupancy_vs_prop_savings_off",
+        "Occupancy vs Proportional Savings_off/Episode",
         "Agent Occupancy (Nodes, %) / Episode",
-        "Savings vs Baseline_off (EUR / Episode)",
-        lambda ax: (plot_colored_points(ax, occ_mean, sav_off_mean, xerr=occ_std, yerr=sav_off_std), _maybe_plot_fit(ax, occ_mean, sav_off_mean)),
+        "Prop Savings vs Baseline_off (EUR / Episode)",
+        lambda ax: (
+            plot_colored_points(ax, occ_mean, prop_sav_off_mean, xerr=occ_std, yerr=prop_sav_off_std),
+            _maybe_plot_fit(ax, occ_mean, prop_sav_off_mean),
+        ),
     )
     _panel(
         "04_lambda_vs_completion_rate",
@@ -854,18 +991,24 @@ def make_plot(
         lambda ax: (plot_colored_points(ax, lambdas, completion_mean, yerr=completion_std), _maybe_plot_fit(ax, lambdas, completion_mean)),
     )
     _panel(
-        "05_occupancy_vs_effective_savings",
-        "Occupancy vs Effective Savings",
+        "05_occupancy_vs_prop_effective_savings",
+        "Occupancy vs Proportional Effective Savings",
         "Agent Occupancy (Nodes, %) / Episode",
-        "effective_savings",
-        lambda ax: (plot_colored_points(ax, occ_mean, eff_sav_mean, xerr=occ_std, yerr=eff_sav_std), _maybe_plot_fit(ax, occ_mean, eff_sav_mean)),
+        "prop_effective_savings",
+        lambda ax: (
+            plot_colored_points(ax, occ_mean, prop_eff_sav_mean, xerr=occ_std, yerr=prop_eff_sav_std),
+            _maybe_plot_fit(ax, occ_mean, prop_eff_sav_mean),
+        ),
     )
     _panel(
-        "06_occupancy_vs_effective_savings_off",
-        "Occupancy vs Effective Savings_off",
+        "06_occupancy_vs_prop_effective_savings_off",
+        "Occupancy vs Proportional Effective Savings_off",
         "Agent Occupancy (Nodes, %) / Episode",
-        "effective_savings_off",
-        lambda ax: (plot_colored_points(ax, occ_mean, eff_sav_off_mean, xerr=occ_std, yerr=eff_sav_off_std), _maybe_plot_fit(ax, occ_mean, eff_sav_off_mean)),
+        "prop_effective_savings_off",
+        lambda ax: (
+            plot_colored_points(ax, occ_mean, prop_eff_sav_off_mean, xerr=occ_std, yerr=prop_eff_sav_off_std),
+            _maybe_plot_fit(ax, occ_mean, prop_eff_sav_off_mean),
+        ),
     )
     _panel(
         "07_occupancy_vs_cost_per_1k_delta_baseline",
@@ -882,11 +1025,20 @@ def make_plot(
         lambda ax: (plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_off_mean)),
     )
     _panel(
-        "09_occupancy_vs_power_delta_baseline_off",
-        "Occupancy vs Power Delta vs Baseline_off",
+        "09_occupancy_vs_prop_power_delta_baseline_off",
+        "Occupancy vs Prop Power Delta vs Baseline_off",
         "Agent Occupancy (Nodes, %) / Episode",
-        "(Baseline_off - Agent) / Baseline_off  [%]",
-        lambda ax: (plot_colored_points(ax, occ_mean, power_delta_base_off_mean, xerr=occ_std, yerr=power_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, power_delta_base_off_mean)),
+        "Prop Power Delta vs Baseline_off (%)",
+        lambda ax: (
+            plot_colored_points(
+                ax,
+                occ_mean,
+                prop_power_delta_base_off_mean,
+                xerr=occ_std,
+                yerr=prop_power_delta_base_off_std,
+            ),
+            _maybe_plot_fit(ax, occ_mean, prop_power_delta_base_off_mean),
+        ),
     )
     _panel(
         "10_lambda_vs_baseline_occupancies",
