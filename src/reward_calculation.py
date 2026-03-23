@@ -364,6 +364,8 @@ class RewardCalculator:
         drop_penalty = min(0, PENALTY_DROPPED_JOB * num_dropped_this_step)
         drop_penalty_weighted = weights.drop_weight * drop_penalty
 
+        if num_dropped_this_step > 5:
+            drop_penalty_weighted = -1
 
         reward = (
             efficiency_reward_weighted
