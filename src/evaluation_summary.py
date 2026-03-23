@@ -58,7 +58,7 @@ def build_episode_summary_line(
         f"({float(episode_data['completion_rate']):.0f}%), "
         f"AvgWait={float(episode_data['avg_wait_time']):.1f}h, "
         f"EpisodeMaxQueue={int(episode_data['max_queue_size'])}, "
-        f"Dropped={int(episode_data['jobs_dropped'])}, "
+        f"Lost={int(episode_data.get('jobs_lost_total', episode_data['jobs_dropped']))}, "
         f"TimelineMaxQueue={timeline_max_queue}, "
         f"Agent Occupancy (Cores)={agent_occupancy_cores_pct:.2f}%, "
         f"Baseline Occupancy (Cores)={baseline_occupancy_cores_pct:.2f}%, "
@@ -67,5 +67,8 @@ def build_episode_summary_line(
         f"PropPower={float(episode_data['agent_prop_power_mwh']):.1f}/"
         f"{float(episode_data['baseline_prop_power_mwh']):.1f}/"
         f"{float(episode_data['baseline_off_prop_power_mwh']):.1f} MWh "
-        f"(agent/base/base_off)"
+        f"(agent/base/base_off), "
+        f"PropSavings=€{float(episode_data['savings_prop_cost_vs_baseline']):.0f}/"
+        f"€{float(episode_data['savings_prop_cost_vs_baseline_off']):.0f} "
+        f"(vs base/base_off)"
     )

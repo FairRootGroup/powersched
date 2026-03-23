@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 from src.config import (
-    MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE
+    MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE, MAX_JOB_AGE
 )
 from src.metrics_tracker import MetricsTracker
 
@@ -13,10 +13,9 @@ from src.metrics_tracker import MetricsTracker
 def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseline: bool = False) -> int:
     """
     Age jobs waiting in the backlog queue.
-    NOTE: dropping based on MAX_JOB_AGE is temporarily disabled via an `if False` hotfix,
-    so jobs are always kept even if job[1] > MAX_JOB_AGE.
-    TODO: re-enable drops by removing the `if False` guard and using `job[1] > MAX_JOB_AGE`;
-    metrics updates are already in the disabled branch.
+
+    Returns the number of jobs dropped for exceeding ``MAX_JOB_AGE``.
+    Callers are responsible for updating any drop counters exactly once.
     """
     if not backlog_queue:
         return 0
@@ -25,23 +24,38 @@ def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseli
     kept = []
     for job in backlog_queue:
         job[1] += 1
-        # TEMP HOTFIX: disable age-based dropping (keep logic for later).
-        # if False and job[1] > MAX_JOB_AGE:
-        #     dropped += 1
-        #     if _is_baseline:
-        #         _metrics.baseline_jobs_dropped += 1
-        #         _metrics.baseline_dropped_this_episode += 1
-        #         _metrics.episode_baseline_jobs_dropped += 1
-        #     else:
-        #         _metrics.jobs_dropped += 1
-        #         _metrics.dropped_this_episode += 1
-        #         _metrics.episode_jobs_dropped += 1
-        # else:
-        kept.append(job)
+        if job[1] > MAX_JOB_AGE:
+            dropped += 1
+        else:
+            kept.append(job)
 
     backlog_queue.clear()
     backlog_queue.extend(kept)
     return dropped
+
+
+def age_job_queue(job_queue_2d: np.ndarray, next_empty_slot: int) -> tuple[int, int]:
+    """
+    Age jobs already waiting in the main queue once for the current step.
+
+    Returns the updated ``next_empty_slot`` together with the number of jobs
+    dropped for exceeding ``MAX_JOB_AGE``.
+    """
+    dropped = 0
+
+    for job_idx, job in enumerate(job_queue_2d):
+        job_duration = job[0]
+        if job_duration <= 0:
+            continue
+
+        job_queue_2d[job_idx][1] += 1
+        if job_queue_2d[job_idx][1] > MAX_JOB_AGE:
+            job_queue_2d[job_idx] = [0, 0, 0, 0]
+            if job_idx < next_empty_slot:
+                next_empty_slot = job_idx
+            dropped += 1
+
+    return next_empty_slot, dropped
 
 
 def fill_queue_from_backlog(job_queue_2d: np.ndarray, backlog_queue: deque, next_empty_slot: int) -> tuple[int, int]:
@@ -221,11 +235,12 @@ def assign_jobs_to_available_nodes(
         running_jobs: Dictionary of currently running jobs
         next_empty_slot: Index of next empty slot in queue
         next_job_id: Next available job ID
-        metrics: MetricsTracker object to update with job completion metrics
+        metrics: MetricsTracker object to update with completion/wait-time metrics
         is_baseline: Whether this is baseline simulation
 
     Returns:
-        Tuple of (num_processed_jobs, updated next_empty_slot, num_dropped, updated next_job_id)
+        Tuple of (num_processed_jobs, updated next_empty_slot, num_dropped, updated next_job_id).
+        Callers are responsible for recording ``num_dropped`` exactly once.
     """
     num_processed_jobs = 0
     num_dropped = 0
@@ -265,27 +280,5 @@ def assign_jobs_to_available_nodes(
 
             num_processed_jobs += 1
             continue
-
-        # Not enough resources -> job waits and ages (or gets dropped)
-        new_age = job_age + 1
-
-        # TEMP HOTFIX: disable age-based dropping (keep logic for later).
-        #if False and new_age > MAX_JOB_AGE:
-        #    # Clear job from queue
-        #    job_queue_2d[job_idx] = [0, 0, 0, 0]
-        #
-        #    # Update next_empty_slot if we cleared a slot before it
-        #    if job_idx < next_empty_slot:
-        #        next_empty_slot = job_idx
-        #    num_dropped += 1
-        #
-        #    if is_baseline:
-        #        metrics.baseline_jobs_dropped += 1
-        #        metrics.episode_baseline_jobs_dropped += 1
-        #    else:
-        #        metrics.jobs_dropped += 1
-        #        metrics.episode_jobs_dropped += 1
-        #else:
-        job_queue_2d[job_idx][1] = new_age
 
     return num_processed_jobs, next_empty_slot, num_dropped, next_job_id

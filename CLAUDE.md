@@ -164,7 +164,7 @@ The system uses weighted reward components:
 - `--price-weight` (default 0.2): Weight for electricity price optimization
 - `--idle-weight` (default 0.1): Penalty weight for idle nodes
 - `--job-age-weight` (default 0.0): Penalty weight for job waiting time
-- `--drop-weight` (default 0.0): Penalty weight for dropped jobs (exceeding MAX_JOB_AGE)
+- `--drop-weight` (default 0.0): Penalty weight for lost jobs (age expiry or queue-full rejection)
 
 **Workload generator options** (pass `--workload-gen` to enable; replaces historical log samplers):
 - `--workload-gen`: Arrival mode — `flat`, `poisson`, or `uniform` (default: disabled)

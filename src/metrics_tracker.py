@@ -156,6 +156,8 @@ class MetricsTracker:
             if self.episode_baseline_jobs_submitted
             else 0.0
         )
+        loss_rate = drop_rate
+        baseline_loss_rate = baseline_drop_rate
         agent_mean_price: float = self._effective_mean_price(
             self.episode_total_cost, self.episode_total_power_consumption_mwh
         )
@@ -200,10 +202,15 @@ class MetricsTracker:
             (COST_IDLE_MW * on + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
             for on, cores, price in zip(self.episode_on_nodes, self.episode_used_cores, self.episode_price_stats)
         )
+        baseline_prop_cost: float = sum(
+            (COST_IDLE_MW * MAX_NODES + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
+            for cores, price in zip(self.episode_baseline_used_cores, self.episode_price_stats)
+        )
         baseline_off_prop_cost: float = sum(
             (COST_IDLE_MW * used + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
             for used, cores, price in zip(self.episode_baseline_used_nodes, self.episode_baseline_used_cores, self.episode_price_stats)
         )
+        savings_prop_cost_vs_baseline: float = baseline_prop_cost - agent_prop_cost
         savings_prop_cost_vs_baseline_off: float = baseline_off_prop_cost - agent_prop_cost
         dropped_jobs_per_saved_euro: float = self._safe_ratio(
             float(self.episode_jobs_dropped), savings_vs_baseline
@@ -223,6 +230,10 @@ class MetricsTracker:
             'agent_prop_power_mwh': agent_prop_power_mwh,
             'baseline_prop_power_mwh': baseline_prop_power_mwh,
             'baseline_off_prop_power_mwh': baseline_off_prop_power_mwh,
+            'agent_prop_cost': agent_prop_cost,
+            'baseline_prop_cost': baseline_prop_cost,
+            'baseline_off_prop_cost': baseline_off_prop_cost,
+            'savings_prop_cost_vs_baseline': savings_prop_cost_vs_baseline,
             'savings_prop_cost_vs_baseline_off': savings_prop_cost_vs_baseline_off,
             'agent_mean_price': agent_mean_price,
             'baseline_mean_price': baseline_mean_price,
@@ -251,12 +262,16 @@ class MetricsTracker:
             'baseline_completion_rate': baseline_completion_rate,
             'baseline_max_queue_size': self.episode_baseline_max_queue_size_reached,
             'baseline_max_backlog_size': self.episode_baseline_max_backlog_size_reached,
-            # Drop metrics
+            # Loss metrics: includes age expirations and queue-full rejections.
             "jobs_dropped": self.episode_jobs_dropped,
+            "jobs_lost_total": self.episode_jobs_dropped,
             "drop_rate": drop_rate,
+            "loss_rate": loss_rate,
             "jobs_rejected_queue_full": self.episode_jobs_rejected_queue_full,
             "baseline_jobs_dropped": self.episode_baseline_jobs_dropped,
+            "baseline_jobs_lost_total": self.episode_baseline_jobs_dropped,
             "baseline_drop_rate": baseline_drop_rate,
+            "baseline_loss_rate": baseline_loss_rate,
             "baseline_jobs_rejected_queue_full": self.episode_baseline_jobs_rejected_queue_full,
         }
         self.episode_costs.append(episode_data)

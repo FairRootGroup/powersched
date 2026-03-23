@@ -332,7 +332,8 @@ class RewardCalculator:
             job_queue_2d: 2D job queue array
             num_unprocessed_jobs: Number of jobs waiting in queue
             weights: Weights object with weight values
-            num_dropped_this_step: Number of jobs dropped this step
+            num_dropped_this_step: Number of jobs lost this step
+                (aged out in queue/backlog or rejected because queue/backlog was full)
             env_print: Print function for logging
             num_on_nodes: Number of powered-on nodes
             total_used_cores: Total cores in use across all powered nodes
@@ -360,12 +361,9 @@ class RewardCalculator:
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
-        # 6. penalty for dropped jobs (WIP - unnormalized, weighted)
+        # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
         drop_penalty = min(0, PENALTY_DROPPED_JOB * num_dropped_this_step)
         drop_penalty_weighted = weights.drop_weight * drop_penalty
-
-        if num_dropped_this_step > 5:
-            drop_penalty_weighted = -1
 
         reward = (
             efficiency_reward_weighted

@@ -10,6 +10,7 @@ from src.job_management import (
     assign_jobs_to_available_nodes,
     fill_queue_from_backlog,
     age_backlog_queue,
+    age_job_queue,
 )
 from src.metrics_tracker import MetricsTracker
 from src.reward_calculation import power_consumption_mwh
@@ -69,11 +70,12 @@ def baseline_step(
         is_baseline=True,
     )
 
+    # Age jobs already waiting before admitting this step's new arrivals.
+    baseline_next_empty_slot, queue_aged_dropped = age_job_queue(job_queue_2d, baseline_next_empty_slot)
+
     # Age helper queue and fill real queue before new arrivals
-    age_backlog_queue(baseline_backlog_queue, metrics, _is_baseline=True)
-    baseline_next_empty_slot, _ = fill_queue_from_backlog(
-        job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot
-    )
+    backlog_aged_dropped = age_backlog_queue(baseline_backlog_queue, metrics, _is_baseline=True)
+    baseline_next_empty_slot, _ = fill_queue_from_backlog(job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot)
 
     _new_baseline_jobs, baseline_next_empty_slot, baseline_backlog_dropped = add_new_jobs(
         job_queue_2d, new_jobs_count, new_jobs_durations,
@@ -82,23 +84,30 @@ def baseline_step(
     metrics.baseline_jobs_submitted += new_jobs_count
     metrics.episode_baseline_jobs_submitted += new_jobs_count
     if baseline_backlog_dropped > 0:
-        metrics.baseline_jobs_dropped += baseline_backlog_dropped
-        metrics.episode_baseline_jobs_dropped += baseline_backlog_dropped
+        metrics.baseline_jobs_rejected_queue_full += baseline_backlog_dropped
+        metrics.episode_baseline_jobs_rejected_queue_full += baseline_backlog_dropped
 
-    num_launched, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
+    total_dropped = queue_aged_dropped + backlog_aged_dropped + baseline_backlog_dropped
+    num_launched, baseline_next_empty_slot, queue_dropped, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
         baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
     )
+    total_dropped += queue_dropped
 
     # Greedy loop: keep refilling from backlog and assigning until no more progress
     while len(baseline_backlog_queue) > 0 and num_launched > 0:
         baseline_next_empty_slot, moved = fill_queue_from_backlog(job_queue_2d, baseline_backlog_queue, baseline_next_empty_slot)
         if moved == 0:
             break
-        num_launched, baseline_next_empty_slot, _, next_job_id = assign_jobs_to_available_nodes(
+        num_launched, baseline_next_empty_slot, queue_dropped, next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, baseline_state['nodes'], baseline_cores_available,
             baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
         )
+        total_dropped += queue_dropped
+
+    if total_dropped > 0:
+        metrics.baseline_jobs_dropped += total_dropped
+        metrics.episode_baseline_jobs_dropped += total_dropped
 
     num_used_nodes = np.sum(baseline_state['nodes'] > 0)
     num_on_nodes = np.sum(baseline_state['nodes'] > -1)
