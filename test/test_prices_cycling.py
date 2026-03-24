@@ -71,18 +71,12 @@ def test_cycling_behavior():
     print(f"Episode 3 prices: {episode_3_prices}")
 
     # Check that episodes use different price sequences (unless wrapped)
-    if episode_1_prices != episode_2_prices:
-        print("✓ Episodes 1 and 2 use different price sequences (good!)")
-    else:
-        print("✗ Episodes 1 and 2 use same prices (bad - not cycling)")
+    assert episode_1_prices != episode_2_prices, "Episodes 1 and 2 use same prices (not cycling)"
+    print("✓ Episodes 1 and 2 use different price sequences (good!)")
 
     # Episode 3 should equal Episode 1 (wrapped back around)
-    if episode_1_prices == episode_3_prices:
-        print("✓ Episode 3 wrapped around to match Episode 1 (good!)")
-    else:
-        print(f"✗ Episode 3 doesn't match Episode 1 (unexpected)")
-        print(f"   Expected: {episode_1_prices}")
-        print(f"   Got:      {episode_3_prices}")
+    assert episode_1_prices == episode_3_prices, f"Episode 3 doesn't match Episode 1: expected {episode_1_prices}, got {episode_3_prices}"
+    print("✓ Episode 3 wrapped around to match Episode 1 (good!)")
 
 
 def test_determinism():
@@ -117,12 +111,8 @@ def test_determinism():
         predicted = prices2.advance_and_get_predicted_prices()
         run2_prices.append(float(predicted[0]))
 
-    if run1_prices == run2_prices:
-        print("✓ Determinism verified: same start_index gives same sequence")
-    else:
-        print("✗ Non-deterministic: different sequences")
-        print(f"Run 1 (first 5): {run1_prices[:5]}")
-        print(f"Run 2 (first 5): {run2_prices[:5]}")
+    assert run1_prices == run2_prices, f"Non-deterministic: run1={run1_prices[:5]} run2={run2_prices[:5]}"
+    print("✓ Determinism verified: same start_index gives same sequence")
 
 
 def test_environment_simulation():
