@@ -242,11 +242,7 @@ class RewardCalculator:
             return 0.0  # nothing on => no "efficiency" signal
         return 2*(float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))) - 1.0 # scale to [-1, 1] so that it can be weighted in either direction without exceeding bounds.
 
-    def _reward_energy_efficiency_utilization_normalized(
-            self,
-            num_on_nodes: int,
-            total_used_cores: int,
-    ) -> float:
+    def _reward_energy_efficiency_utilization_normalized(self, num_on_nodes: int, total_used_cores: int) -> float:
         """
         Utilization-aware efficiency reward based on delivered core-hours per MWh.
 
@@ -257,22 +253,16 @@ class RewardCalculator:
         if step_power_mwh <= 0.0:
             return 0.0
 
-        used_cores = total_used_cores
-        if used_cores <= 0.0:
+        if total_used_cores <= 0.0:
             efficiency_ratio = 0.0
         else:
-            efficiency_raw = used_cores / step_power_mwh  # core-hours per MWh for this 1h step
+            efficiency_raw = total_used_cores / step_power_mwh  # core-hours per MWh for this 1h step
             efficiency_max = float(CORES_PER_NODE) / COST_USED_MW
             efficiency_ratio = float(np.clip(efficiency_raw / efficiency_max, 0.0, 1.0))
 
         return float(np.tanh(self.EFFICIENCY_GAIN * (efficiency_ratio - self.EFFICIENCY_TARGET_RATIO)))
 
-    def _reward_price_utilization(
-            self,
-            current_price: float,
-            average_future_price: float,
-            used_cores: int,
-    ) -> float:
+    def _reward_price_utilization(self, current_price: float, average_future_price: float, used_cores: int) -> float:
         """
         Price-timing reward scaled by useful work volume, measured as equivalent fully used nodes.
 
