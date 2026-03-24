@@ -120,6 +120,7 @@ def test_get_price_context_uses_window():
 
 
 if __name__ == "__main__":
+    import sys
     all_pass = True
     all_pass &= test_price_history_bounded()
     all_pass &= test_rolling_window_behavior()
@@ -130,3 +131,4 @@ if __name__ == "__main__":
         print("✓ All tests passed!")
     else:
         print("✗ Some tests failed")
+        sys.exit(1)
