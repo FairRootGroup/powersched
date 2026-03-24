@@ -26,14 +26,21 @@ powersched/
 │   ├── callbacks.py        # Training callbacks
 │   ├── weights.py          # Reward weights
 │   ├── plot_config.py      # Plot configuration
-│   └── plot.py             # Visualization
+│   ├── plotter.py          # Visualization (plot_dashboard, plot_cumulative_savings, plot_episode_summary)
+│   ├── analysis_naming.py  # Standardized directory/model name construction from weight configs
+│   ├── analysis_reporting.py # Savings reporting and validation utilities
+│   ├── arrival_scale.py    # Job arrival scaling validation
+│   └── evaluation_summary.py # Episode summary formatting and occupancy calculations
 ├── test/                   # Test files (all start with test_)
 │   ├── run_all.py          # Run all tests
 │   ├── test_checkenv.py    # Environment validation
 │   ├── test_env.py         # Quick environment test
 │   ├── test_sanity_env.py  # Environment sanity checks (invariants, determinism)
-│   ├── test_sanity_workloadgen.py   # Workload generator sanity/property tests
-│   ├── test_inspect_workloadgen.py  # Distribution inspection and plotting tool
+│   ├── test_sanity_workloadgen.py      # Workload generator sanity/property tests
+│   ├── test_determinism_workloadgen.py # Workload generator determinism verification
+│   ├── test_inspect_workloadgen.py     # Distribution inspection and plotting tool
+│   ├── test_job_completion_metrics.py  # Job completion tracking tests
+│   ├── test_plotter.py     # Plotter function tests
 │   ├── test_sampler_*.py   # Sampler tests
 │   ├── test_output/        # Output files from test runs (plots, etc.)
 │   └── test_*.py           # Other unit tests
@@ -41,6 +48,9 @@ powersched/
 │   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
+├── analyze_arrivalscale_occupancy.py  # Analysis: arrival scale effects on occupancy
+├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
+├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
 ├── data/                   # Sample data
 │   └── workload_statistics/ # Workload log analysis scripts and aggregate stats
 ├── data-internal/          # Full Slurm logs
@@ -54,7 +64,8 @@ powersched/
 - **Pricing** (`src/prices.py`): Electricity price modeling and data handling
 - **Samplers**: Job duration (`src/sampler_duration.py`), job characteristics (`src/sampler_jobs.py`), and hourly statistical sampler (`src/sampler_hourly.py`) sampling from real data
 - **Workload Generator** (`src/workloadgen.py`, `src/workloadgen_cli.py`): Synthetic job generator that produces configurable, deterministic job streams without relying on historical logs. Supports flat/poisson/uniform arrival modes with optional burst injectors.
-- **Plotting** (`src/plot.py`): Visualization of training progress, rewards, and cluster state
+- **Plotting** (`src/plotter.py`): Visualization of training progress, rewards, and cluster state (`plot_dashboard`, `plot_cumulative_savings`, `plot_episode_summary`)
+- **Analysis utilities** (`src/analysis_naming.py`, `src/analysis_reporting.py`, `src/evaluation_summary.py`): Session naming, savings reporting, and episode summary formatting
 - **Callbacks** (`src/callbacks.py`): Custom callbacks for training monitoring and logging
 - **Weights** (`src/weights.py`): Reward weight configuration and management
 
@@ -153,6 +164,7 @@ The system uses weighted reward components:
 - `--price-weight` (default 0.2): Weight for electricity price optimization
 - `--idle-weight` (default 0.1): Penalty weight for idle nodes
 - `--job-age-weight` (default 0.0): Penalty weight for job waiting time
+- `--drop-weight` (default 0.0): Penalty weight for dropped jobs (exceeding MAX_JOB_AGE)
 
 **Workload generator options** (pass `--workload-gen` to enable; replaces historical log samplers):
 - `--workload-gen`: Arrival mode — `flat`, `poisson`, or `uniform` (default: disabled)
@@ -173,9 +185,15 @@ Additional training options:
 - `--session`: Session ID for organizing training runs
 - `--render`: Visualization mode ("human" or "none")
 - `--seed`: Random seed for reproducibility (seeds environment, numpy, torch, and PPO)
+- `--seed-sweep`: Isolate outputs under a seed-specific session subdirectory
 - `--device`: Training device ("auto", "cuda", or "cpu")
 - `--net-arch`: Hidden layer sizes for policy/value networks (e.g., "64,64" or "256,128")
 - `--model`: Load a specific model checkpoint by timestep number
+- `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step
+- `--jobs-exact-replay`: Replay raw jobs in timeline order without aggregation
+- `--jobs-exact-replay-aggregate`: Aggregate jobs per time-bin before enqueueing
+- `--plot-dashboard`: Generate combined dashboard plot after evaluation
+- `--dashboard-hours` (default 336): Hours to show in dashboard plot
 
 ## Data Files
 
@@ -248,7 +266,7 @@ Interactive script that runs the generator for a configurable number of hours, p
 - Action space: `[action_type, magnitude, do_refill]` - controls nodes online/offline and whether to refill the job queue from the backlog
 - Rewards balance efficiency, cost savings, and resource utilization
 - Cluster configuration: 335 nodes max, 96 cores per node, up to 16 nodes per job
-- Job queue: max 1000 jobs, max 1500 new jobs per hour, max 170h runtime; overflow goes to backlog
+- Job queue: max 2500 jobs, max 1500 new jobs per hour, max 170h runtime; overflow goes to backlog (max 50000)
 - Power consumption: 150W idle, 450W used per node
 - Baseline comparison: greedy scheduler that keeps all nodes on and processes jobs FIFO
 
