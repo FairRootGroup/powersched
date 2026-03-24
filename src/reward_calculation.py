@@ -89,11 +89,7 @@ class RewardCalculator:
         self._max_efficiency_reward = max(1.0, self._reward_efficiency(MAX_NODES, cost_for_max_efficiency))
 
         # Price bounds (legacy behavior kept for debugging/ablation).
-        self._max_price_reward_legacy = self._reward_price_legacy(
-            self.prices.MIN_PRICE,
-            self.prices.MAX_PRICE,
-            MAX_NEW_JOBS_PER_HOUR,
-        )
+        self._max_price_reward_legacy = self._reward_price_legacy(self.prices.MIN_PRICE, self.prices.MAX_PRICE, MAX_NEW_JOBS_PER_HOUR)
         self._min_price_reward_legacy = -self._max_price_reward_legacy
 
         # Idle penalty bounds
@@ -320,7 +316,7 @@ class RewardCalculator:
         return float(np.clip(penalty, -1.0, 0.0))
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
-                  num_off_nodes: int, _num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - _num_processed_jobs legacy; num_node_changes reserved for future node-change penalty
+                  num_off_nodes: int, job_queue_2d: np.ndarray,
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None], num_on_nodes: int,
                   total_used_cores: int) -> tuple[float, float, float, float, float, float]:
@@ -333,8 +329,6 @@ class RewardCalculator:
             current_price: Current electricity price
             average_future_price: Average predicted future price
             num_off_nodes: Number of offline nodes
-            _num_processed_jobs: Number of jobs launched this step (legacy param, unused by active price reward)
-            num_node_changes: Number of node state changes
             job_queue_2d: 2D job queue array
             num_unprocessed_jobs: Number of jobs waiting in queue
             weights: Weights object with weight values
