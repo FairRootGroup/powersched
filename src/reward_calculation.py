@@ -13,103 +13,40 @@ from src.prices import Prices
 from src.weights import Weights
 
 
-def _power_consumption_from_state_mwh(
-        nodes: np.ndarray,
-        cores_available: np.ndarray,
-        include_idle_nodes: bool = True,
-) -> float:
-    """Calculate step energy from per-node core utilization."""
-    on_mask = nodes >= 0
-    if not np.any(on_mask):
-        return 0.0
-
-    used_cores = np.zeros_like(cores_available, dtype=float)
-    used_cores[on_mask] = CORES_PER_NODE - cores_available[on_mask]
-    used_cores = np.clip(used_cores, 0.0, float(CORES_PER_NODE))
-
-    utilization = np.zeros_like(used_cores, dtype=float)
-    utilization[on_mask] = used_cores[on_mask] / float(CORES_PER_NODE)
-
-    powered_mask = on_mask if include_idle_nodes else (on_mask & (used_cores > 0.0))
-    if not np.any(powered_mask):
-        return 0.0
-
-    node_power_mw = np.zeros_like(utilization, dtype=float)
-    node_power_mw[powered_mask] = COST_IDLE_MW + (COST_USED_MW - COST_IDLE_MW) * utilization[powered_mask]
-    return float(np.sum(node_power_mw))
-
-
-def _used_cores_from_state(nodes: np.ndarray, cores_available: np.ndarray) -> float:
-    """Calculate the total number of used cores across all powered nodes."""
-    on_mask = nodes >= 0
-    if not np.any(on_mask):
-        return 0.0
-
-    used_cores = np.zeros_like(cores_available, dtype=float)
-    used_cores[on_mask] = CORES_PER_NODE - cores_available[on_mask]
-    used_cores = np.clip(used_cores, 0.0, float(CORES_PER_NODE))
-    return float(np.sum(used_cores))
-
-
-def power_cost(
-        nodes_or_num_used: np.ndarray | int,
-        cores_or_num_idle: np.ndarray | int,
-        current_price: float,
-        include_idle_nodes: bool = True,
-) -> float:
-    """
-    Calculate power cost for one environment step.
-
-    Args:
-        nodes_or_num_used: Either node-state array or number of used nodes
-        cores_or_num_idle: Either cores-available array or number of idle nodes
-        current_price: Current electricity price
-        include_idle_nodes: Whether idle powered-on nodes should contribute energy
-
-    Returns:
-        Total power cost
-    """
-    return power_consumption_mwh(
-        nodes_or_num_used,
-        cores_or_num_idle,
-        include_idle_nodes=include_idle_nodes,
-    ) * current_price
-
-
-def power_consumption_mwh(
-        nodes_or_num_used: np.ndarray | int,
-        cores_or_num_idle: np.ndarray | int,
-        include_idle_nodes: bool = True,
-) -> float:
+def power_consumption_mwh(num_powered_nodes: int, total_used_cores: int) -> float:
     """
     Calculate energy consumption for one environment step.
 
     One environment step equals one hour, so this is both average MW and MWh/step.
+    All powered-on nodes draw an idle baseline; the compute delta scales linearly
+    with core utilization: COST_IDLE_MW * num_powered + (COST_USED_MW - COST_IDLE_MW) * total_used_cores / CORES_PER_NODE.
 
     Args:
-        nodes_or_num_used: Either node-state array or number of used nodes
-        cores_or_num_idle: Either cores-available array or number of idle nodes
-        include_idle_nodes: Whether idle powered-on nodes should contribute energy
+        num_powered_nodes: Number of powered-on nodes (include idle for baseline, exclude for baseline_off)
+        total_used_cores: Total cores in use across all powered nodes
 
     Returns:
         Energy consumption in MWh for this step
     """
-    if np.isscalar(nodes_or_num_used):
-        num_used_nodes = int(nodes_or_num_used)
-        num_idle_nodes = int(cores_or_num_idle) if include_idle_nodes else 0
-        return COST_IDLE_MW * num_idle_nodes + COST_USED_MW * num_used_nodes
+    return num_powered_nodes * COST_IDLE_MW + (COST_USED_MW - COST_IDLE_MW) * total_used_cores / CORES_PER_NODE
 
-    nodes = np.asarray(nodes_or_num_used)
-    cores_available = np.asarray(cores_or_num_idle, dtype=float)
-    return _power_consumption_from_state_mwh(
-        nodes,
-        cores_available,
-        include_idle_nodes=include_idle_nodes,
-    )
+
+def power_cost(num_powered_nodes: int, total_used_cores: int, current_price: float) -> float:
+    """
+    Calculate power cost for one environment step.
+
+    Args:
+        num_powered_nodes: Number of powered-on nodes
+        total_used_cores: Total cores in use across all powered nodes
+        current_price: Current electricity price
+
+    Returns:
+        Total power cost
+    """
+    return power_consumption_mwh(num_powered_nodes, total_used_cores) * current_price
 
 
 class RewardCalculator:
-        
     """Calculates rewards with pre-computed normalization bounds."""
     EFFICIENCY_TARGET_RATIO = 0.70
     EFFICIENCY_GAIN = 5.0
@@ -145,8 +82,8 @@ class RewardCalculator:
     def _compute_bounds(self) -> None:
         """Compute min/max bounds for reward normalization."""
         # Efficiency bounds
-        cost_for_min_efficiency = power_cost(0, MAX_NODES, self.prices.MAX_PRICE)
-        cost_for_max_efficiency = power_cost(MAX_NODES, 0, self.prices.MIN_PRICE)
+        cost_for_min_efficiency = power_cost(MAX_NODES, 0, self.prices.MAX_PRICE)              # all nodes idle
+        cost_for_max_efficiency = power_cost(MAX_NODES, MAX_NODES * CORES_PER_NODE, self.prices.MIN_PRICE)  # all nodes fully used
 
         self._min_efficiency_reward = self._reward_efficiency(0, cost_for_min_efficiency)
         self._max_efficiency_reward = max(1.0, self._reward_efficiency(MAX_NODES, cost_for_max_efficiency))
@@ -217,7 +154,7 @@ class RewardCalculator:
         - Saturates quickly with better-than-context prices and used nodes.
         - Always applies overdrive when current price is negative.
         """
-        
+
         if num_used_nodes <= 0:
             return 0.0
 
@@ -307,8 +244,8 @@ class RewardCalculator:
 
     def _reward_energy_efficiency_utilization_normalized(
             self,
-            nodes: np.ndarray,
-            cores_available: np.ndarray,
+            num_on_nodes: int,
+            total_used_cores: int,
     ) -> float:
         """
         Utilization-aware efficiency reward based on delivered core-hours per MWh.
@@ -316,11 +253,11 @@ class RewardCalculator:
         Theoretical optimum under the current affine power model is achieved when every
         powered node is fully utilized, i.e. 96 cores at 450 W.
         """
-        step_power_mwh = power_consumption_mwh(nodes, cores_available)
+        step_power_mwh = power_consumption_mwh(num_on_nodes, total_used_cores)
         if step_power_mwh <= 0.0:
             return 0.0
 
-        used_cores = _used_cores_from_state(nodes, cores_available)
+        used_cores = total_used_cores
         if used_cores <= 0.0:
             efficiency_ratio = 0.0
         else:
@@ -334,7 +271,7 @@ class RewardCalculator:
             self,
             current_price: float,
             average_future_price: float,
-            used_cores: float,
+            used_cores: int,
     ) -> float:
         """
         Price-timing reward scaled by useful work volume, measured as equivalent fully used nodes.
@@ -395,8 +332,8 @@ class RewardCalculator:
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, _num_processed_jobs: int, num_node_changes: int, job_queue_2d: np.ndarray,  # noqa: ARG002 - _num_processed_jobs legacy; num_node_changes reserved for future node-change penalty
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
-                  env_print: Callable[..., None], nodes: np.ndarray | None = None,
-                  cores_available: np.ndarray | None = None) -> tuple[float, float, float, float, float, float]:
+                  env_print: Callable[..., None], num_on_nodes: int,
+                  total_used_cores: int) -> tuple[float, float, float, float, float, float]:
         """
         Calculate total reward by aggregating weighted components.
 
@@ -413,25 +350,17 @@ class RewardCalculator:
             weights: Weights object with weight values
             num_dropped_this_step: Number of jobs dropped this step
             env_print: Print function for logging
-            nodes: Optional node-state array for utilization-based power accounting
-            cores_available: Optional per-node free-core array for utilization-based power accounting
+            num_on_nodes: Number of powered-on nodes
+            total_used_cores: Total cores in use across all powered nodes
 
         Returns:
             Tuple of (total reward, total cost, eff_reward_norm, price_reward,
                       idle_penalty_norm, job_age_penalty_norm)
         """
         # 0. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
-        if nodes is not None and cores_available is not None:
-            total_cost = power_cost(nodes, cores_available, current_price)
-            used_cores = _used_cores_from_state(nodes, cores_available)
-            efficiency_reward_norm = self._reward_energy_efficiency_utilization_normalized(nodes, cores_available)
-            price_reward = self._reward_price_utilization(current_price, average_future_price, used_cores)
-        else:
-            total_cost = power_cost(num_used_nodes, num_idle_nodes, current_price)
-            efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes)
-            price_reward = self._reward_price(
-                current_price, average_future_price, num_used_nodes
-            )
+        total_cost = power_cost(num_on_nodes, total_used_cores, current_price)
+        efficiency_reward_norm = self._reward_energy_efficiency_utilization_normalized(num_on_nodes, total_used_cores)
+        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
 
         efficiency_reward_norm += self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
