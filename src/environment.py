@@ -486,8 +486,6 @@ class ComputeClusterEnv(gym.Env):
 
         self.metrics.episode_reward += step_reward
         step_power_mwh = power_consumption_mwh(num_on_nodes, num_used_cores)
-        
-        step_cost = step_power_mwh * current_price
         self.metrics.total_cost += step_cost
         self.metrics.episode_total_cost += step_cost
         self.metrics.total_power_consumption_mwh += step_power_mwh
