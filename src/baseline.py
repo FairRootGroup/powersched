@@ -12,7 +12,7 @@ from src.job_management import (
     age_backlog_queue,
 )
 from src.metrics_tracker import MetricsTracker
-from src.reward_calculation import power_cost, power_consumption_mwh
+from src.reward_calculation import power_consumption_mwh
 from src.config import CORES_PER_NODE
 
 
@@ -120,26 +120,13 @@ def baseline_step(
 
     baseline_state['job_queue'] = job_queue_2d.flatten()
 
-    baseline_cost = power_cost(baseline_state['nodes'], baseline_cores_available, current_price)
-    env_print(f"    > baseline_cost: €{baseline_cost:.4f} | used nodes: {num_used_nodes}, idle nodes: {num_idle_nodes}")
-    baseline_cost_off = power_cost(
-        baseline_state['nodes'],
-        baseline_cores_available,
-        current_price,
-        include_idle_nodes=False,
-    )
-    env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
-    baseline_power_mwh = power_consumption_mwh(baseline_state['nodes'], baseline_cores_available)
-    baseline_power_off_mwh = power_consumption_mwh(
-        baseline_state['nodes'],
-        baseline_cores_available,
-        include_idle_nodes=False,
-    )
-
-    num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(baseline_cores_available)
-    
+    num_used_cores = int(num_on_nodes * CORES_PER_NODE - np.sum(baseline_cores_available))
+    baseline_power_mwh = power_consumption_mwh(num_on_nodes, num_used_cores)
+    baseline_power_off_mwh = power_consumption_mwh(num_used_nodes, num_used_cores)
     baseline_cost = baseline_power_mwh * current_price
     baseline_cost_off = baseline_power_off_mwh * current_price
+    env_print(f"    > baseline_cost: €{baseline_cost:.4f} | used nodes: {num_used_nodes}, idle nodes: {num_idle_nodes}")
+    env_print(f"    > baseline_cost_off: €{baseline_cost_off:.4f} | used nodes: {num_used_nodes}, idle nodes: 0")
 
     return (
         baseline_cost,

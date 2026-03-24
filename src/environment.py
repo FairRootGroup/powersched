@@ -425,7 +425,7 @@ class ComputeClusterEnv(gym.Env):
         combined_queue_size = num_unprocessed_jobs + len(self.backlog_queue)
         num_unprocessed_jobs = combined_queue_size
         average_future_price = float(np.mean(self.state['predicted_prices']))
-        num_used_cores = num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available)
+        num_used_cores = int(num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available))
         num_running_jobs = len(self.running_jobs)
 
         # update stats
@@ -481,12 +481,11 @@ class ComputeClusterEnv(gym.Env):
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
             num_off_nodes, num_launched_jobs, num_node_changes, job_queue_2d,
             num_unprocessed_jobs, self.weights, num_dropped_this_step, self.env_print,
-            nodes=self.state['nodes'], cores_available=self.cores_available,
+            num_on_nodes, num_used_cores,
         )
 
-        
         self.metrics.episode_reward += step_reward
-        step_power_mwh = power_consumption_mwh(self.state['nodes'], self.cores_available)
+        step_power_mwh = power_consumption_mwh(num_on_nodes, num_used_cores)
         
         step_cost = step_power_mwh * current_price
         self.metrics.total_cost += step_cost
