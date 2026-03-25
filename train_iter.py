@@ -5,6 +5,7 @@ import argparse
 import os
 import sys
 import time
+import threading
 from src.arrival_scale import validate_job_arrival_scale
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 
@@ -154,10 +155,11 @@ def build_command(
 
 
 def make_log_dir(session):
+    ts = str(int(time.time()))
     if session:
-        log_dir = os.path.join("sessions", session, "proc_logs")
+        log_dir = os.path.join("sessions", session, "proc_logs", ts)
     else:
-        log_dir = os.path.join("proc_logs", str(int(time.time())))
+        log_dir = os.path.join("proc_logs", ts)
     os.makedirs(log_dir, exist_ok=True)
     return log_dir
 
@@ -181,30 +183,46 @@ def _run_plain(tasks, max_parallel, log_dir, launch):
 
     print(f"[run] logs -> {log_dir}/")
 
-    while pending or active:
-        while pending and len(active) < max_parallel:
-            combo, seed = pending.pop(0)
-            proc, label, fh, t0 = launch(combo, seed)
-            print(f"[run] starting ({len(done_log) + len(active) + 1}/{total}): {label}")
-            active.append((proc, label, fh, t0))
+    try:
+        while pending or active:
+            while pending and len(active) < max_parallel:
+                combo, seed = pending.pop(0)
+                proc, label, fh, t0 = launch(combo, seed)
+                print(f"[run] starting ({len(done_log) + len(active) + 1}/{total}): {label}")
+                active.append((proc, label, fh, t0))
 
-        still_running = []
+            still_running = []
+            for proc, label, fh, t0 in active:
+                if proc.poll() is not None:
+                    fh.close()
+                    rc = proc.returncode
+                    if rc != 0:
+                        failure_count += 1
+                    elapsed = time.time() - t0
+                    done_log.append((label, rc, elapsed))
+                    status = "done" if rc == 0 else f"FAILED (rc={rc})"
+                    print(f"[run] [{len(done_log)}/{total}] {status}: {label}  ({_elapsed_str(elapsed)})")
+                else:
+                    still_running.append((proc, label, fh, t0))
+            active = still_running
+
+            if active:
+                time.sleep(1)
+    finally:
         for proc, label, fh, t0 in active:
-            if proc.poll() is not None:
+            try:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            except OSError:
+                pass
+            try:
                 fh.close()
-                rc = proc.returncode
-                if rc != 0:
-                    failure_count += 1
-                elapsed = time.time() - t0
-                done_log.append((label, rc, elapsed))
-                status = "done" if rc == 0 else f"FAILED (rc={rc})"
-                print(f"[run] [{len(done_log)}/{total}] {status}: {label}  ({_elapsed_str(elapsed)})")
-            else:
-                still_running.append((proc, label, fh, t0))
-        active = still_running
-
-        if active:
-            time.sleep(1)
+            except OSError:
+                pass
 
     return failure_count
 
@@ -302,11 +320,20 @@ def _run_tui(stdscr, tasks, max_parallel, log_dir, launch):
                     idx = int(input_buf) - 1
                     if 0 <= idx < len(active):
                         proc, label, fh, t0 = active.pop(idx)
+                        elapsed = time.time() - t0
                         proc.terminate()
-                        proc.wait()
-                        fh.close()
+                        def _reap(proc, label, fh, elapsed):
+                            try:
+                                proc.wait()
+                            except OSError:
+                                pass
+                            try:
+                                fh.close()
+                            except OSError:
+                                pass
+                            done_log.append((label, -1, elapsed))
+                        threading.Thread(target=_reap, args=(proc, label, fh, elapsed), daemon=True).start()
                         failure_count += 1
-                        done_log.append((label, -1, time.time() - t0))
                 except ValueError:
                     pass
                 input_buf = ""
@@ -322,7 +349,6 @@ def _run_tui(stdscr, tasks, max_parallel, log_dir, launch):
         time.sleep(0.25)
 
     _draw_tui(stdscr, [], done_log, 0, total, log_dir)
-    stdscr.nodelay(False)
     try:
         h, w = stdscr.getmaxyx()
         summary = f"All {total} runs done. {failure_count} failure(s). Press any key to exit."
@@ -330,7 +356,9 @@ def _run_tui(stdscr, tasks, max_parallel, log_dir, launch):
         stdscr.refresh()
     except Exception:
         pass
-    stdscr.getch()
+    if sys.stdin.isatty():
+        stdscr.nodelay(False)
+        stdscr.getch()
 
     return failure_count
 
