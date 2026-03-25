@@ -73,8 +73,7 @@ class ComputeClusterEnv(gym.Env):
                  evaluation_mode: bool = False,
                  workload_gen: WorkloadGenerator | None = None,
                  job_arrival_scale: float = 1.0,
-                 jobs_exact_replay: bool = False,
-                 jobs_exact_replay_aggregate: bool = False) -> None:
+                 jobs_exact_replay: bool = False) -> None:
         super().__init__()
 
         self.weights = weights
@@ -89,7 +88,6 @@ class ComputeClusterEnv(gym.Env):
         self.evaluation_mode = evaluation_mode
         self.job_arrival_scale = float(job_arrival_scale)
         self.jobs_exact_replay = bool(jobs_exact_replay)
-        self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
 
         self.next_plot_save = self.steps_per_iteration
 
@@ -118,10 +116,7 @@ class ComputeClusterEnv(gym.Env):
             print(f"Parsed aggregated jobs for {len(self.jobs_sampler.aggregated_jobs)} hours")
             if self.jobs_exact_replay:
                 max_raw_jobs = max((len(v) for v in self.jobs_sampler.jobs.values()), default=0)
-                if self.jobs_exact_replay_aggregate:
-                    print("Jobs replay mode: exact timeline (aggregated per step)")
-                else:
-                    print("Jobs replay mode: exact timeline (raw jobs per hour)")
+                print("Jobs replay mode: exact timeline (raw jobs per hour)")
                 print(f"Max raw jobs per hour: {max_raw_jobs}")
             else:
                 self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
@@ -350,7 +345,6 @@ class ComputeClusterEnv(gym.Env):
             hourly_sampler, durations_sampler, self.np_random,
             job_arrival_scale=self.job_arrival_scale,
             jobs_exact_replay=self.jobs_exact_replay,
-            jobs_exact_replay_aggregate=self.jobs_exact_replay_aggregate,
         )
 
         # Add new jobs to queue (overflow goes to helper)

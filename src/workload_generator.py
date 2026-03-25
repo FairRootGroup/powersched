@@ -30,7 +30,6 @@ def generate_jobs(
     np_random: np.random.Generator,
     job_arrival_scale: float = 1.0,
     jobs_exact_replay: bool = False,
-    jobs_exact_replay_aggregate: bool = False,
 ) -> tuple[int, list[int], list[int], list[int]]:
     """
     Generate new jobs for the current hour using configured workload source.
@@ -50,9 +49,6 @@ def generate_jobs(
             - >1.0: upsample jobs
             - 0.0..1.0: downsample jobs
         jobs_exact_replay: If True, replay raw jobs in log order for --jobs mode.
-        jobs_exact_replay_aggregate: In exact replay mode, aggregate each sampled
-            raw time-bin into compact hourly-equivalent templates.
-
     Returns:
         Tuple of (new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
     """
@@ -68,26 +64,14 @@ def generate_jobs(
             # Replay jobs exactly as they appear in the parsed timeline (one bin per step).
             sampled = jobs_sampler.sample(1, wrap=True)
             raw_jobs = next(iter(sampled.values()), [])
-            if jobs_exact_replay_aggregate and raw_jobs:
-                aggregated_jobs = jobs_sampler.aggregate_jobs(raw_jobs)
-                hourly_jobs = jobs_sampler.convert_to_hourly_jobs(
-                    aggregated_jobs, CORES_PER_NODE, MAX_NODES_PER_JOB
-                )
-                for job in hourly_jobs:
-                    instances = max(1, int(job.get('instances', 1)))
-                    new_jobs_count += instances
-                    new_jobs_durations.extend([int(job['duration_hours'])] * instances)
-                    new_jobs_nodes.extend([int(job['nnodes'])] * instances)
-                    new_jobs_cores.extend([int(job['cores_per_node'])] * instances)
-            else:
-                for job in raw_jobs:
-                    duration_hours = max(1, int(math.ceil(int(job['duration_minutes']) / 60)))
-                    nnodes = min(max(int(job['nnodes']), MIN_NODES_PER_JOB), MAX_NODES_PER_JOB)
-                    cores_per_node = min(max(int(job['cores_per_node']), MIN_CORES_PER_JOB), CORES_PER_NODE)
-                    new_jobs_count += 1
-                    new_jobs_durations.append(duration_hours)
-                    new_jobs_nodes.append(nnodes)
-                    new_jobs_cores.append(cores_per_node)
+            for job in raw_jobs:
+                duration_hours = max(1, int(math.ceil(int(job['duration_minutes']) / 60)))
+                nnodes = min(max(int(job['nnodes']), MIN_NODES_PER_JOB), MAX_NODES_PER_JOB)
+                cores_per_node = min(max(int(job['cores_per_node']), MIN_CORES_PER_JOB), CORES_PER_NODE)
+                new_jobs_count += 1
+                new_jobs_durations.append(duration_hours)
+                new_jobs_nodes.append(nnodes)
+                new_jobs_cores.append(cores_per_node)
         else:
             # Use pre-aggregated hourly templates for pattern-based replay.
             sampled = jobs_sampler.sample_one_hourly(wrap=True)
