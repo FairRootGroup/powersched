@@ -73,5 +73,8 @@ jobs:
       - name: Run jobs aggregated sampler test
         run: python -m test.test_sampler_jobs_aggregated --file-path data/allusers-gpu-30.log
 
+      - name: Run jobs replay modes test
+        run: python -m test.test_jobs_replay_modes
+
       - name: Run workload generator inspection test
         run: python -m test.test_inspect_workloadgen --workload-gen poisson --wg-poisson-lambdas4 200,10,6,24 --wg-max-jobs-hour 1500 --hours 336 --plot --wg-burst-small-prob 0.2 --wg-burst-heavy-prob 0.02

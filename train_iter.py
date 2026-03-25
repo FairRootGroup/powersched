@@ -112,7 +112,6 @@ def build_command(
     hourly_jobs,
     job_arrival_scale,
     jobs_exact_replay,
-    jobs_exact_replay_aggregate,
     plot_dashboard=False,
     dashboard_hours=24 * 14,
     seed=None,
@@ -139,8 +138,6 @@ def build_command(
     ]
     if jobs_exact_replay:
         command += ["--jobs-exact-replay"]
-    if jobs_exact_replay_aggregate:
-        command += ["--jobs-exact-replay-aggregate"]
     if plot_dashboard:
         command += ["--plot-dashboard", "--dashboard-hours", str(dashboard_hours)]
     if seed is not None:
@@ -365,7 +362,7 @@ def _run_tui(stdscr, tasks, max_parallel, log_dir, launch):
 
 def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
-                     jobs_exact_replay_aggregate, plot_dashboard, dashboard_hours,
+                     plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, workloadgen_args,
                      no_tui=False):
     multi_seed = len(seeds) > 1
@@ -381,7 +378,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
         command = build_command(
             efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
-            job_arrival_scale, jobs_exact_replay, jobs_exact_replay_aggregate,
+            job_arrival_scale, jobs_exact_replay,
             plot_dashboard, dashboard_hours, seed, seed_sweep,
             evaluate_savings, eval_months, workloadgen_args,
         )
@@ -432,7 +429,6 @@ def main():
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
     parser.add_argument('--job-arrival-scale', type=float, default=1.0, help='Scale sampled arrivals per step (forwarded to train.py).')
     parser.add_argument('--jobs-exact-replay', action='store_true', help='Forward to train.py: replay raw jobs in timeline order for --jobs mode.')
-    parser.add_argument('--jobs-exact-replay-aggregate', action='store_true', help='Forward to train.py: aggregate per-step raw jobs in exact replay mode.')
     parser.add_argument("--fix-weights", type=str, help="Comma-separated list of weights to fix (efficiency,price,idle,job-age,drop)")
     parser.add_argument("--fix-values", type=str, help="Comma-separated list of values for fixed weights")
     parser.add_argument("--iter-limit-per-step", type=int, help="Max number of training iterations per step (1 iteration = {TIMESTEPS} steps)")
@@ -458,8 +454,6 @@ def main():
         parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
-    if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
-        parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
     if args.workload_gen and args.job_arrival_scale != 1.0:
         parser.error("--job-arrival-scale is not supported with --workload-gen. Use workload generator arrival settings instead.")
 
@@ -502,7 +496,6 @@ def main():
         hourly_jobs=args.hourly_jobs,
         job_arrival_scale=args.job_arrival_scale,
         jobs_exact_replay=args.jobs_exact_replay,
-        jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate,
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
         seeds=seeds,

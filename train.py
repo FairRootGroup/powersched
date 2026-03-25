@@ -52,7 +52,6 @@ def main():
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
     parser.add_argument('--job-arrival-scale', type=float, default=1.0, help='Scale sampled arrivals per step (1.0 = unchanged).')
     parser.add_argument('--jobs-exact-replay', action='store_true', help='For --jobs mode, replay raw jobs in timeline order (no template aggregation).')
-    parser.add_argument('--jobs-exact-replay-aggregate', action='store_true', help='With --jobs-exact-replay, aggregate each sampled raw time-bin before enqueueing.')
     parser.add_argument('--plot-rewards', action='store_true', help='Per step, plot rewards for all possible num_idle_nodes & num_used_nodes (default: False).')
     parser.add_argument('--plot-eff-reward', action=argparse.BooleanOptionalAction, default=True, help='Include efficiency reward in the plot (dashed line).')
     parser.add_argument('--plot-price-reward', action=argparse.BooleanOptionalAction, default=True, help='Include price reward in the plot (dashed line).')
@@ -91,8 +90,6 @@ def main():
         parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
-    if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
-        parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
     if args.workload_gen and args.job_arrival_scale != 1.0:
         print(
             "Warning: --job-arrival-scale is not allowed with --workload-gen; "
@@ -177,8 +174,7 @@ def main():
                             evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen,
                             job_arrival_scale=args.job_arrival_scale,
-                            jobs_exact_replay=args.jobs_exact_replay,
-                            jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate)
+                            jobs_exact_replay=args.jobs_exact_replay)
     env.session_dir = session_root
     env.plots_dir = plots_dir
     env.reset(seed=args.seed)
