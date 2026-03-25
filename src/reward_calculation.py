@@ -53,6 +53,8 @@ class RewardCalculator:
     # Faster response so price signal reacts on the same horizon as node-efficiency actions.
     # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
     PRICE_ADVANTAGE_GAIN = 4.0
+    PRICE_QUANTILE_LOW = 0.30
+    PRICE_QUANTILE_HIGH = 0.70
     # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
     PRICE_NODE_TAU_POS = 40.0
     PRICE_NODE_TAU_NEG = 40.0
@@ -66,8 +68,7 @@ class RewardCalculator:
     NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD = 1.5
     # Drop penalty: tanh saturation curve. TAU=20: 1 drop≈-0.05, 10 drops≈-0.46, 50 drops≈-1.0.
     DROP_PENALTY_TAU = 20.0
-
-
+    
     # The first 24h are treated as deliberate deferral room; after that, starvation should ramp up quickly.
     DEFERRAL_GRACE_HOURS = 24
     CHEAP_SERVICE_GAIN = 0.75
@@ -124,6 +125,11 @@ class RewardCalculator:
     def _reward_efficiency(num_used_nodes: int, total_cost: float) -> float:
         """Calculate efficiency reward: work done per unit cost."""
         return num_used_nodes / (total_cost + 1e-6)
+
+    @staticmethod
+    def _sigmoid(x: float) -> float:
+        """Numerically stable logistic helper for smooth thresholding."""
+        return float(1.0 / (1.0 + np.exp(-np.clip(x, -60.0, 60.0))))
 
     def _reward_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int, total_cost: float) -> float:
         """Calculate normalized efficiency reward [0, 1]."""
@@ -314,6 +320,56 @@ class RewardCalculator:
 
         return float(reward)
 
+    def _reward_price_quantile_utilization(self, current_price: float, used_cores: int) -> float:
+        """
+        Quantile-based price reward using only the rolling observed price history.
+
+        The reward is positive when the current price is in the cheap tail of the recent
+        window, negative in the expensive tail, and smooth inside the quantile band.
+        Useful work is still scaled via the existing equivalent-node saturation, and
+        negative-price overdrive remains active regardless of the quantile band.
+        """
+        if used_cores <= 0.0:
+            return 0.0
+
+        equivalent_used_nodes = used_cores / float(CORES_PER_NODE)
+        raw_reward = 0.0
+
+        price_history = np.asarray(self.prices.price_history, dtype=np.float32)
+        if price_history.size >= 2:
+            q_low, q_high = np.quantile(
+                price_history,
+                [self.PRICE_QUANTILE_LOW, self.PRICE_QUANTILE_HIGH],
+            )
+            price_band = max(float(q_high - q_low), 1e-6)
+
+            cheap_score = self._sigmoid((float(q_low) - current_price) / price_band)
+            expensive_score = self._sigmoid((current_price - float(q_high)) / price_band)
+            relative_advantage = cheap_score - expensive_score
+
+            advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
+            tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
+            load_component = 1.0 - np.exp(-equivalent_used_nodes / tau)
+            raw_reward = advantage_component * load_component
+
+        if current_price < 0.0:
+            negative_strength = 1.0 - np.exp(-abs(current_price) / self.NEGATIVE_PRICE_TAU)
+            negative_load_component = 1.0 - np.exp(-equivalent_used_nodes / self.NEGATIVE_PRICE_NODE_TAU)
+            overdrive = negative_load_component * negative_strength
+
+            if self.NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE:
+                reward = np.tanh(raw_reward) + self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = min(reward, self.NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD)
+            else:
+                raw_reward += self.NEGATIVE_PRICE_OVERDRIVE_GAIN * overdrive
+                reward = np.tanh(raw_reward)
+
+            reward = max(reward, self.NEGATIVE_PRICE_OVERDRIVE_FLOOR * overdrive)
+        else:
+            reward = np.tanh(raw_reward)
+
+        return float(reward)
+
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
         Reward a full blackout only when there truly is no work to do.
@@ -454,7 +510,8 @@ class RewardCalculator:
         # 1. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
         total_cost = power_cost(num_on_nodes, total_used_cores, current_price)
         efficiency_reward_norm = self._reward_energy_efficiency_utilization_normalized(num_on_nodes, total_used_cores)
-        # legacy: efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes)
+        price_reward = self._reward_price_quantile_utilization(current_price, total_used_cores)
+
         efficiency_reward_norm += self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
