@@ -47,6 +47,10 @@ class Prices:
         # deterministic daily sinusoid
         base = self.ELECTRICITY_PRICE_BASE
         return float(max(1.0, base * (1 + 0.2 * np.sin((t % 24) / 24 * 2 * np.pi))))
+    
+    
+    def _synthetic_price_logic(self, t: int) -> float:
+        return 250.0 if (t % 24) < 12 else -10.0
 
     def get_real_price(self, shifted_price: float) -> float:
         return shifted_price - self.price_shift
@@ -74,7 +78,7 @@ class Prices:
             start = int(start_index)
             self.price_index = start + self.PREDICTION_WINDOW
             self.predicted_prices = np.array(
-                [self._synthetic_price_at(start + i) for i in range(self.PREDICTION_WINDOW)],
+                [self._synthetic_price_logic(start + i) for i in range(self.PREDICTION_WINDOW)],
                 dtype=np.float32,
             )
 
@@ -83,7 +87,7 @@ class Prices:
         if self.external_prices is not None:
             new_price = float(self.external_prices[self.price_index % len(self.external_prices)])
         else:
-            new_price = self._synthetic_price_at(self.price_index)
+            new_price = self._synthetic_price_logic(self.price_index)
 
         self.price_index += 1
 
@@ -105,7 +109,7 @@ class Prices:
     # ---------- NON-MUTATING utilities ----------
     def _generated_prices_for_stats(self, n: int) -> np.ndarray:
         # Do NOT touch price_index/history here.
-        return np.array([self._synthetic_price_at(i) for i in range(n)], dtype=np.float32)
+        return np.array([self._synthetic_price_logic(i) for i in range(n)], dtype=np.float32)
 
     def get_price_stats(self, use_original: bool = False) -> dict[str, float]:
         if use_original and self.original_prices is not None:
