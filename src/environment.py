@@ -179,7 +179,7 @@ class ComputeClusterEnv(gym.Env):
                 shape=(MAX_QUEUE_SIZE * 4,),
                 dtype=np.int32
             ),
-            # predicted prices for the next 24h
+            # current decision hour plus the next 23 hours
             'predicted_prices': spaces.Box(low=-1000, high=1000, shape=(24,), dtype=np.float32),
             # Summary statistics for all outstanding jobs (queue + backlog)
             'pending_job_count': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
@@ -461,8 +461,7 @@ class ComputeClusterEnv(gym.Env):
             self.current_episode += 1
         self.env_print(Fore.GREEN + f"\n[[[ Starting episode: {self.current_episode}, step: {self.current_step}, hour: {self.metrics.current_hour}" + Fore.RESET)
 
-        self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
-        current_price = float(self.state['predicted_prices'][0])
+        current_price = self.prices.get_current_price()
         if self.render_mode == 'human':
             self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
 
@@ -754,6 +753,7 @@ class ComputeClusterEnv(gym.Env):
 
         # flatten job_queue again
         self.state['job_queue'] = job_queue_2d.flatten()
+        self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
 
         if self.render_mode == 'human':
             # go slow to be able to read stuff in human mode

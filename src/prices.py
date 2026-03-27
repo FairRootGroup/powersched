@@ -59,7 +59,7 @@ class Prices:
         """Reset internal timeline/state to episode start.
 
         start_index is the index in external_prices for the *first* element
-        of the 24h prediction window.
+        of the 24h prediction window, i.e. the current decision hour.
         """
         self.price_history = deque(maxlen=self.HISTORY_WINDOW)
 
@@ -83,17 +83,34 @@ class Prices:
             )
 
     # ---------- *stateful* stepping (used by env.step) ----------
+    def get_current_price(self) -> float:
+        """Return the current decision-hour price without mutating state."""
+        if self.predicted_prices.size == 0:
+            raise ValueError("predicted_prices is empty; call reset() first")
+        return float(self.predicted_prices[0])
+
     def get_next_price(self) -> float:
+        """
+        Consume the current decision hour and advance the prediction window.
+
+        Returns the current price that was just consumed. After the call:
+        - that consumed price is appended to price_history
+        - predicted_prices is shifted left by one hour
+        - the next unseen price is appended at the end
+        """
+        current_price = self.get_current_price()
+
         if self.external_prices is not None:
-            new_price = float(self.external_prices[self.price_index % len(self.external_prices)])
+            next_unseen_price = float(self.external_prices[self.price_index % len(self.external_prices)])
         else:
-            new_price = self._synthetic_price_logic(self.price_index)
+            next_unseen_price = self._synthetic_price_logic(self.price_index)
 
         self.price_index += 1
+        self.price_history.append(current_price)
+        self.predicted_prices = np.roll(self.predicted_prices, -1)
+        self.predicted_prices[-1] = next_unseen_price
 
-        self.price_history.append(new_price)
-
-        return new_price
+        return current_price
 
     def get_price_context(self) -> tuple[float | None, float]:
         history_avg = float(np.mean(self.price_history)) if self.price_history else None
@@ -101,9 +118,7 @@ class Prices:
         return history_avg, future_avg
 
     def advance_and_get_predicted_prices(self) -> np.ndarray:  # Changed name for readability
-        new_price = self.get_next_price()
-        self.predicted_prices = np.roll(self.predicted_prices, -1)
-        self.predicted_prices[-1] = new_price
+        self.get_next_price()
         return self.predicted_prices.copy()
 
     # ---------- NON-MUTATING utilities ----------
