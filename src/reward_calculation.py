@@ -54,9 +54,9 @@ class RewardCalculator:
     # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
     PRICE_ADVANTAGE_GAIN = 4.0
     # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
-    PRICE_NODE_TAU_POS = 70.0
+    PRICE_NODE_TAU_POS = 40.0
     PRICE_NODE_TAU_NEG = 40.0
-    NEGATIVE_PRICE_NODE_TAU = 14.0  # fast node saturation only for negative-price overdrive
+    NEGATIVE_PRICE_NODE_TAU = 30.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
     # Overdrive terms for negative prices:
     # - gain controls overdrive strength during negative-price windows
@@ -213,10 +213,10 @@ class RewardCalculator:
             valid_mask = job_queue_2d[:, 0] > 0
             # [valid_mask, 1] selects column 1 (age) only for rows where mask is True
             max_age = job_queue_2d[valid_mask, 1].max() if valid_mask.any() else 0
-            if max_age > 0:
-                tau_hours = WEEK_HOURS / 2.0
-                max_factor = 1.0 - np.exp(-WEEK_HOURS / tau_hours)
-                factor = 1.0 - np.exp(-max_age / tau_hours)
+            if max_age > 24:
+                tau_hours = WEEK_HOURS
+                max_factor = 1.0 - np.exp(-(2*WEEK_HOURS) / tau_hours)
+                factor = 1.0 - np.exp(-(max_age-24) / tau_hours)
                 factor = min(factor / max_factor, 1.0)
                 job_age_penalty = factor
         return job_age_penalty
