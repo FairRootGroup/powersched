@@ -322,10 +322,11 @@ class RewardCalculator:
 
     def _reward_price_quantile_utilization(self, current_price: float, used_cores: int) -> float:
         """
-        Quantile-based price reward using only the rolling observed price history.
+        Quantile-based price reward using the rolling forecast window the agent sees.
 
-        The reward is positive when the current price is in the cheap tail of the recent
-        window, negative in the expensive tail, and smooth inside the quantile band.
+        The reward is positive when running now is cheap relative to the upcoming
+        forecast horizon, negative when it is expensive relative to better points
+        later in the window, and smooth inside the quantile band.
         Useful work is still scaled via the existing equivalent-node saturation, and
         negative-price overdrive remains active regardless of the quantile band.
         """
@@ -335,10 +336,11 @@ class RewardCalculator:
         equivalent_used_nodes = used_cores / float(CORES_PER_NODE)
         raw_reward = 0.0
 
-        price_history = np.asarray(self.prices.price_history, dtype=np.float32)
-        if price_history.size >= 2:
+        prediction_window = np.asarray(self.prices.predicted_prices, dtype=np.float32)
+        future_reference = prediction_window[1:] if prediction_window.size > 1 else prediction_window
+        if future_reference.size >= 2:
             q_low, q_high = np.quantile(
-                price_history,
+                future_reference,
                 [self.PRICE_QUANTILE_LOW, self.PRICE_QUANTILE_HIGH],
             )
             price_band = max(float(q_high - q_low), 1e-6)
