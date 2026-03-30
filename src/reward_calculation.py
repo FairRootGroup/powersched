@@ -58,12 +58,6 @@ class RewardCalculator:
     PRICE_NODE_TAU_NEG = 40.0
     NEGATIVE_PRICE_NODE_TAU = 30.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
-    # Overdrive terms for negative prices:
-    # - gain controls overdrive strength during negative-price windows
-    # - floor guarantees a minimum positive drive proportional to negative-price strength and used work
-    # Toggle behavior:
-    # - capped mode (default): overdrive is folded into tanh, so reward stays <= 1
-    # - uncapped mode: overdrive is added after tanh and can exceed 1 up to NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD
     NEGATIVE_PRICE_OVERDRIVE_GAIN = 2.5
     NEGATIVE_PRICE_OVERDRIVE_FLOOR = 0.35
     NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE = True
@@ -72,7 +66,11 @@ class RewardCalculator:
     DROP_PENALTY_TAU = 20.0
 
 
-    ALLOW_DROP_PENALTY = True  # whether to include penalties for dropped jobs in the reward calculation
+    # The first 24h are treated as deliberate deferral room; after that, starvation should ramp up quickly.
+    DEFERRAL_GRACE_HOURS = 24
+    CHEAP_SERVICE_GAIN = 0.75
+    OVERDUE_BACKLOG_GAIN = 1.25
+    OVERDUE_AGE_CORE_HOUR_TAU = 0.5 * MAX_NODES * CORES_PER_NODE
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -134,6 +132,37 @@ class RewardCalculator:
         if history_avg is not None:
             return (history_avg + future_avg) / 2
         return average_future_price
+
+    def _price_phase_strengths(self, current_price: float) -> tuple[float, float]:
+        """
+        Map the current price into a cheap-vs-expensive phase inside the visible forecast window.
+
+        The quantile band is used as the "decision zone":
+        - at/below q_low  -> fully cheap
+        - at/above q_high -> fully expensive
+        - inside the band -> smooth linear interpolation
+
+        This is intentionally more explicit than the old sigmoid-based score. For the
+        synthetic 12h logic benchmark, it makes the cheap/expensive phase separation
+        obvious to the reward, which is exactly what we want to teach first.
+        """
+        prediction_window = np.asarray(self.prices.predicted_prices, dtype=np.float32)
+        future_reference = prediction_window[1:] if prediction_window.size > 1 else prediction_window
+        if future_reference.size < 2:
+            return 0.0, 0.0
+
+        q_low, q_high = np.quantile(
+            future_reference,
+            [self.PRICE_QUANTILE_LOW, self.PRICE_QUANTILE_HIGH],
+        )
+        price_band = float(q_high - q_low)
+        if price_band <= 1e-6:
+            return 0.0, 0.0
+
+        normalized = (current_price - float(q_low)) / price_band
+        cheap_strength = float(np.clip(1.0 - normalized, 0.0, 1.0))
+        expensive_strength = float(np.clip(normalized, 0.0, 1.0))
+        return cheap_strength, expensive_strength
 
     def _reward_price_legacy(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
         """Legacy linear reward: preserved for comparison/ablation."""
@@ -204,32 +233,6 @@ class RewardCalculator:
         """Calculate normalized idle penalty [-1, 0]."""
         current_penalty = self._penalty_idle(num_idle_nodes)
         normalized_penalty = -self._normalize(current_penalty, self._min_idle_penalty, self._max_idle_penalty)
-        return float(np.clip(normalized_penalty, -1, 0))
-
-    @staticmethod
-    def _penalty_job_age(num_off_nodes: int, job_queue_2d: np.ndarray) -> float:
-        """Calculate saturated penalty for jobs waiting in queue when nodes are off."""
-        job_age_penalty = 0.0
-        if num_off_nodes > 0:
-            # Vectorized max age calculation (much faster than Python loop)
-            # [:, 0] selects column 0 (duration) for all rows; > 0 creates boolean mask
-            valid_mask = job_queue_2d[:, 0] > 0
-            # [valid_mask, 1] selects column 1 (age) only for rows where mask is True
-            max_age = job_queue_2d[valid_mask, 1].max() if valid_mask.any() else 0
-            if max_age > 24:
-                tau_hours = WEEK_HOURS
-                max_factor = 1.0 - np.exp(-(2*WEEK_HOURS) / tau_hours)
-                factor = 1.0 - np.exp(-(max_age-24) / tau_hours)
-                factor = min(factor / max_factor, 1.0)
-                job_age_penalty = factor
-        return job_age_penalty
-
-    def _penalty_job_age_normalized(self, num_off_nodes: int, job_queue_2d: np.ndarray) -> float:
-        """Calculate normalized job age penalty [-1, 0]."""
-        current_penalty = self._penalty_job_age(num_off_nodes, job_queue_2d)
-        # _penalty_job_age already returns [0, 1]; negate to get [-1, 0]
-        # normalized_penalty = self._normalize(current_penalty, 0, -1)
-        normalized_penalty = -current_penalty
         return float(np.clip(normalized_penalty, -1, 0))
 
     def _reward_energy_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int) -> float:
@@ -303,22 +306,79 @@ class RewardCalculator:
 
     def _blackout_term(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int) -> float:
         """
-        Reward/penalty for full blackout (all nodes off).
-        If queue is empty, reward the blackout. If jobs are waiting, apply a smooth penalty in [-1, 0].
+        Reward a full blackout only when there truly is no work to do.
+
+        The old implementation punished a queue during blackout immediately, which
+        collided with the benchmark objective of deferring expensive-hour work.
+        Deferral pressure now lives in the backlog term below instead of here.
         """
-        BLACKOUT_QUEUE_THRESHOLD = 10  # jobs waiting until penalty saturates to -1
-        SATURATION_FACTOR = 2
         on_nodes = num_used_nodes + num_idle_nodes
 
         if on_nodes != 0:
-            return 0.0  # only care about full blackout
+            return 0.0
 
-        if num_unprocessed_jobs <= 0:
-            return 1.0  # correct blackout
+        return 1.0 if num_unprocessed_jobs <= 0 else 0.0
 
-        ratio = num_unprocessed_jobs / max(BLACKOUT_QUEUE_THRESHOLD, 1)
-        penalty = np.exp(-ratio * SATURATION_FACTOR) - 1.0
-        return float(np.clip(penalty, -1.0, 0.0))
+    def _penalty_job_age(
+        self,
+        current_price: float,
+        decision_pending_core_demand: float,
+        remaining_overdue_age_core_hours: float,
+        total_used_cores: int,
+    ) -> float:
+        """
+        Combined backlog pressure term used in the legacy "job age" reward slot.
+
+        It deliberately does two things:
+        1. Cheap-hour service pressure:
+           If cheap compute is available *and* backlog exists, the agent should keep
+           the cluster busy instead of trickling.
+        2. Overdue backlog pressure:
+           Once jobs have outlived the deferral grace period, leaving them pending
+           becomes increasingly expensive regardless of price.
+        """
+        cheap_strength, _ = self._price_phase_strengths(current_price)
+
+        cheap_service_shortfall = 0.0
+        if cheap_strength > 0.0 and decision_pending_core_demand > 0.0:
+            step_capacity_cores = float(MAX_NODES * CORES_PER_NODE)
+            target_service = min(float(decision_pending_core_demand), step_capacity_cores)
+            achieved_service = min(float(total_used_cores), target_service)
+            cheap_service_shortfall = cheap_strength * (1.0 - achieved_service / max(target_service, 1e-6))
+
+        overdue_pressure = 0.0
+        if remaining_overdue_age_core_hours > 0.0:
+            overdue_pressure = 1.0 - np.exp(
+                -float(remaining_overdue_age_core_hours) / max(self.OVERDUE_AGE_CORE_HOUR_TAU, 1e-6)
+            )
+
+        combined_pressure = (
+            self.CHEAP_SERVICE_GAIN * cheap_service_shortfall
+            + self.OVERDUE_BACKLOG_GAIN * overdue_pressure
+        )
+        return float(np.clip(combined_pressure, 0.0, 1.0))
+
+    def _penalty_job_age_normalized(
+        self,
+        current_price: float,
+        decision_pending_core_demand: float,
+        remaining_overdue_age_core_hours: float,
+        total_used_cores: int,
+    ) -> float:
+        """Legacy reward slot for backlog pressure, normalized to [-1, 0]."""
+        current_penalty = self._penalty_job_age(
+            current_price,
+            decision_pending_core_demand,
+            remaining_overdue_age_core_hours,
+            total_used_cores,
+        )
+        return float(np.clip(-current_penalty, -1.0, 0.0))
+
+    def _penalty_drop(self, num_dropped: int) -> float:
+        """Heavy penalty for jobs dropped this step."""
+        if num_dropped <= 0:
+            return 0.0
+        return float(-1.0 - 0.25 * min(num_dropped - 1, 1000))
 
     def _penalty_drop(self, num_dropped: int) -> float:
         """Drop penalty: tanh saturation curve bounded in [-1, 0]."""
@@ -328,7 +388,8 @@ class RewardCalculator:
                   num_off_nodes: int, job_queue_2d: np.ndarray,
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None], num_on_nodes: int,
-                  total_used_cores: int) -> tuple[float, float, float, float, float, float]:
+                  total_used_cores: int, decision_pending_core_demand: float = 0.0,
+                  remaining_overdue_age_core_hours: float = 0.0) -> tuple[float, float, float, float, float, float]:
         """
         Calculate total reward by aggregating weighted components.
 
@@ -346,6 +407,8 @@ class RewardCalculator:
             env_print: Print function for logging
             num_on_nodes: Number of powered-on nodes
             total_used_cores: Total cores in use across all powered nodes
+            decision_pending_core_demand: Total pending node-core demand before scheduling this step
+            remaining_overdue_age_core_hours: Post-scheduling overdue-age mass of still-pending jobs
 
         Returns:
             Tuple of (total reward, total cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm)
@@ -362,8 +425,15 @@ class RewardCalculator:
         # legacy: price_reward = self._reward_price_normalized_legacy(current_price, average_future_price, total_used_cores)
         price_reward_weighted = weights.price_weight * price_reward
 
-        # 3. penalize delayed jobs, more if they are older. but only if there are turned off nodes
-        job_age_penalty_norm = self._penalty_job_age_normalized(num_off_nodes, job_queue_2d)
+        # 3. Push pending work into cheap hours and punish starving backlog after the grace period.
+        # The method name is kept for compatibility with existing plots/logs, but the semantics
+        # now describe backlog pressure rather than a simple "oldest queue age" penalty.
+        job_age_penalty_norm = self._penalty_job_age_normalized(
+            current_price,
+            decision_pending_core_demand,
+            remaining_overdue_age_core_hours,
+            total_used_cores,
+        )
         job_age_penalty_weighted = weights.job_age_weight * job_age_penalty_norm
 
         # 4. penalty for idling nodes
@@ -371,9 +441,10 @@ class RewardCalculator:
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
         # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
-        drop_penalty_weighted = 0
+        drop_penalty_weighted = 0.0
         if self.ALLOW_DROP_PENALTY and num_dropped_this_step > 0:
-            drop_penalty_weighted = -1.0 - 0.25 * min(num_dropped_this_step - 1, 1000)  # harsher penalty for losing many jobs, capped at -251.0 for 1000+ jobs
+            # drop_penalty_weighted = weights.drop_weight * self._penalty_drop(num_dropped_this_step)
+            drop_penalty_weighted = 0.3 * self._penalty_drop(num_dropped_this_step)
 
         reward = (
             efficiency_reward_weighted

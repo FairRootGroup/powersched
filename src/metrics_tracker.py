@@ -37,8 +37,10 @@ class MetricsTracker:
 
         # Agent job metrics (cumulative across episodes)
         self.jobs_submitted: int = 0
+        self.jobs_launched: int = 0
         self.jobs_completed: int = 0
         self.total_job_wait_time: int = 0
+        self.total_job_wait_time_launch: int = 0
         self.max_queue_size_reached: int = 0
         self.max_backlog_size_reached: int = 0
         self.jobs_dropped: int = 0
@@ -46,8 +48,10 @@ class MetricsTracker:
 
         # Baseline job metrics (cumulative across episodes)
         self.baseline_jobs_submitted: int = 0
+        self.baseline_jobs_launched: int = 0
         self.baseline_jobs_completed: int = 0
         self.baseline_total_job_wait_time: int = 0
+        self.baseline_total_job_wait_time_launch: int = 0
         self.baseline_max_queue_size_reached: int = 0
         self.baseline_max_backlog_size_reached: int = 0
         self.baseline_jobs_dropped: int = 0
@@ -78,8 +82,10 @@ class MetricsTracker:
 
         # Agent job metrics (episode)
         self.episode_jobs_submitted: int = 0
+        self.episode_jobs_launched: int = 0
         self.episode_jobs_completed: int = 0
         self.episode_total_job_wait_time: int = 0
+        self.episode_total_job_wait_time_launch: int = 0
         self.episode_max_queue_size_reached: int = 0
         self.episode_max_backlog_size_reached: int = 0
         self.episode_jobs_dropped: int = 0
@@ -87,12 +93,23 @@ class MetricsTracker:
 
         # Baseline job metrics (episode)
         self.episode_baseline_jobs_submitted: int = 0
+        self.episode_baseline_jobs_launched: int = 0
         self.episode_baseline_jobs_completed: int = 0
         self.episode_baseline_total_job_wait_time: int = 0
+        self.episode_baseline_total_job_wait_time_launch: int = 0
         self.episode_baseline_max_queue_size_reached: int = 0
         self.episode_baseline_max_backlog_size_reached: int = 0
         self.episode_baseline_jobs_dropped: int = 0
         self.episode_baseline_jobs_rejected_queue_full: int = 0
+
+        # End-of-episode pending-work snapshot.
+        # These are updated every step so record_episode_completion() can report what
+        # backlog remains when the episode terminates.
+        self.episode_pending_jobs_end: int = 0
+        self.episode_pending_core_demand_end: float = 0.0
+        self.episode_pending_core_hours_end: float = 0.0
+        self.episode_overdue_jobs_end: int = 0
+        self.episode_overdue_age_core_hours_end: float = 0.0
 
         # Time series data for plotting (episode)
         self.episode_on_nodes: list[int] = []
@@ -121,15 +138,16 @@ class MetricsTracker:
         Returns:
             Dictionary with episode data
         """
-        # Calculate average wait times
+        # Scheduling wait is measured when work launches, not when it eventually finishes.
+        # That makes "defer into cheap hours" visible immediately instead of only after completion.
         avg_wait_time: float = (
-            self.episode_total_job_wait_time / self.episode_jobs_completed
-            if self.episode_jobs_completed > 0
+            self.episode_total_job_wait_time_launch / self.episode_jobs_launched
+            if self.episode_jobs_launched > 0
             else 0.0
         )
         baseline_avg_wait_time: float = (
-            self.episode_baseline_total_job_wait_time / self.episode_baseline_jobs_completed
-            if self.episode_baseline_jobs_completed > 0
+            self.episode_baseline_total_job_wait_time_launch / self.episode_baseline_jobs_launched
+            if self.episode_baseline_jobs_launched > 0
             else 0.0
         )
 
@@ -209,13 +227,20 @@ class MetricsTracker:
             'total_reward': self.episode_reward,
             # Agent job metrics
             'jobs_submitted': self.episode_jobs_submitted,
+            'jobs_launched': self.episode_jobs_launched,
             'jobs_completed': self.episode_jobs_completed,
             'avg_wait_time': avg_wait_time,
             'completion_rate': completion_rate,
             'max_queue_size': self.episode_max_queue_size_reached,
             'max_backlog_size': self.episode_max_backlog_size_reached,
+            'pending_jobs_end': self.episode_pending_jobs_end,
+            'pending_core_demand_end': self.episode_pending_core_demand_end,
+            'pending_core_hours_end': self.episode_pending_core_hours_end,
+            'overdue_jobs_end': self.episode_overdue_jobs_end,
+            'overdue_age_core_hours_end': self.episode_overdue_age_core_hours_end,
             # Baseline job metrics
             'baseline_jobs_submitted': self.episode_baseline_jobs_submitted,
+            'baseline_jobs_launched': self.episode_baseline_jobs_launched,
             'baseline_jobs_completed': self.episode_baseline_jobs_completed,
             'baseline_avg_wait_time': baseline_avg_wait_time,
             'baseline_completion_rate': baseline_completion_rate,

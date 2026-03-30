@@ -269,6 +269,18 @@ def assign_jobs_to_available_nodes(
                 "allocation": job_allocation,
                 "wait_time": int(job_age),
             }
+            # Record scheduling delay when the job starts.
+            # Completion metrics are tracked separately when the job actually finishes.
+            if is_baseline:
+                metrics.baseline_jobs_launched += 1
+                metrics.baseline_total_job_wait_time_launch += int(job_age)
+                metrics.episode_baseline_jobs_launched += 1
+                metrics.episode_baseline_total_job_wait_time_launch += int(job_age)
+            else:
+                metrics.jobs_launched += 1
+                metrics.total_job_wait_time_launch += int(job_age)
+                metrics.episode_jobs_launched += 1
+                metrics.episode_total_job_wait_time_launch += int(job_age)
             next_job_id += 1
 
             # Clear job from queue
