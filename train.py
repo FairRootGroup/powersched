@@ -310,13 +310,17 @@ def main():
 
                 # Calculate job metrics across all episodes
                 total_jobs_submitted = sum(ep['jobs_submitted'] for ep in env.metrics.episode_costs)
+                total_jobs_launched = sum(int(ep.get('jobs_launched', ep['jobs_completed'])) for ep in env.metrics.episode_costs)
                 total_jobs_completed = sum(ep['jobs_completed'] for ep in env.metrics.episode_costs)
                 total_baseline_submitted = sum(ep['baseline_jobs_submitted'] for ep in env.metrics.episode_costs)
+                total_baseline_launched = sum(int(ep.get('baseline_jobs_launched', ep['baseline_jobs_completed'])) for ep in env.metrics.episode_costs)
                 total_baseline_completed = sum(ep['baseline_jobs_completed'] for ep in env.metrics.episode_costs)
-                avg_wait_time = sum(ep['avg_wait_time'] * ep['jobs_completed'] for ep in env.metrics.episode_costs) / total_jobs_completed if total_jobs_completed > 0 else 0
-                avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * ep['baseline_jobs_completed'] for ep in env.metrics.episode_costs) / total_baseline_completed if total_baseline_completed > 0 else 0
+                avg_wait_time = sum(ep['avg_wait_time'] * int(ep.get('jobs_launched', ep['jobs_completed'])) for ep in env.metrics.episode_costs) / total_jobs_launched if total_jobs_launched > 0 else 0
+                avg_baseline_wait_time = sum(ep['baseline_avg_wait_time'] * int(ep.get('baseline_jobs_launched', ep['baseline_jobs_completed'])) for ep in env.metrics.episode_costs) / total_baseline_launched if total_baseline_launched > 0 else 0
                 avg_max_queue = sum(ep['max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
                 avg_baseline_max_queue = sum(ep['baseline_max_queue_size'] for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
+                avg_pending_jobs_end = sum(int(ep.get('pending_jobs_end', 0)) for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
+                avg_overdue_jobs_end = sum(int(ep.get('overdue_jobs_end', 0)) for ep in env.metrics.episode_costs) / len(env.metrics.episode_costs)
                 total_agent_cost = sum(float(ep['agent_cost']) for ep in env.metrics.episode_costs)
                 total_baseline_cost = sum(float(ep['baseline_cost']) for ep in env.metrics.episode_costs)
                 total_baseline_off_cost = sum(float(ep['baseline_cost_off']) for ep in env.metrics.episode_costs)
@@ -358,15 +362,19 @@ def main():
                 ) if arrivals_per_hour_by_episode else 0.0
                 std_arrivals_per_hour = arrivals_variance ** 0.5
 
-                print("\n=== JOB PROCESSING METRICS ===")
-                print("\nAgent:")
+                print(f"\n=== JOB PROCESSING METRICS ===")
+                print(f"\nAgent:")
+                print(f"  Jobs Launched: {total_jobs_launched:,} / {total_jobs_submitted:,}")
                 print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_agent_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
+                print(f"  Average Pending Jobs At Episode End: {avg_pending_jobs_end:.1f}")
+                print(f"  Average Overdue Jobs At Episode End: {avg_overdue_jobs_end:.1f}")
                 print(f"  Total Cost: €{total_agent_cost:,.0f}")
                 print(f"  Job Arrivals/Hour (mean ± std): {mean_arrivals_per_hour:.2f} ± {std_arrivals_per_hour:.2f}")
 
-                print("\nBaseline:")
+                print(f"\nBaseline:")
+                print(f"  Jobs Launched: {total_baseline_launched:,} / {total_baseline_submitted:,}")
                 print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_baseline_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_baseline_max_queue:.0f}")

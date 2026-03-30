@@ -23,6 +23,30 @@ def _as_series(x: np.ndarray | list[float] | None, n: int) -> np.ndarray | None:
     return out
 
 
+def _episode_launch_wait(metrics, baseline: bool = False) -> float:
+    """
+    Return average queueing delay measured at launch.
+
+    Old mock/test objects may still only expose completion-based wait fields, so this
+    helper keeps a compatible fallback for plotting utilities.
+    """
+    if baseline:
+        launched = getattr(metrics, "episode_baseline_jobs_launched", metrics.episode_baseline_jobs_completed)
+        total_wait = getattr(
+            metrics,
+            "episode_baseline_total_job_wait_time_launch",
+            metrics.episode_baseline_total_job_wait_time,
+        )
+    else:
+        launched = getattr(metrics, "episode_jobs_launched", metrics.episode_jobs_completed)
+        total_wait = getattr(
+            metrics,
+            "episode_total_job_wait_time_launch",
+            metrics.episode_total_job_wait_time,
+        )
+    return (total_wait / launched) if launched > 0 else 0.0
+
+
 def _compute_cumulative_savings(episode_costs: list[dict[str, float | int]]) -> dict[str, np.ndarray] | None:
     """
     episode_costs: list of dicts with keys:
@@ -113,7 +137,7 @@ def plot_episode(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: b
     if env.plot_config.plot_idle_penalty:
         ax2.plot(hours, env.metrics.episode_idle_penalties, color='green', linestyle='--', label='Idle Penalties')
     if env.plot_config.plot_job_age_penalty:
-        ax2.plot(hours, env.metrics.episode_job_age_penalties, color='yellow', linestyle='--', label='Job Age Penalties')
+        ax2.plot(hours, env.metrics.episode_job_age_penalties, color='yellow', linestyle='--', label='Backlog Pressure')
 
     ax2.tick_params(axis='y')
     if env.plot_config.plot_idle_penalty or env.plot_config.plot_job_age_penalty:
@@ -131,16 +155,8 @@ def plot_episode(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save: b
         if env.metrics.episode_baseline_jobs_submitted > 0
         else 0
     )
-    avg_wait = (
-        env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed
-        if env.metrics.episode_jobs_completed > 0
-        else 0
-    )
-    baseline_avg_wait = (
-        env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed
-        if env.metrics.episode_baseline_jobs_completed > 0
-        else 0
-    )
+    avg_wait = _episode_launch_wait(env.metrics, baseline=False)
+    baseline_avg_wait = _episode_launch_wait(env.metrics, baseline=True)
     baseline_savings_pct = (
         ((env.metrics.episode_baseline_cost - env.metrics.episode_total_cost) / env.metrics.episode_baseline_cost) * 100
         if env.metrics.episode_baseline_cost > 0
@@ -197,16 +213,8 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
         if env.metrics.episode_baseline_jobs_submitted > 0
         else 0.0
     )
-    avg_wait = (
-        (env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed)
-        if env.metrics.episode_jobs_completed > 0
-        else 0.0
-    )
-    baseline_avg_wait = (
-        (env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed)
-        if env.metrics.episode_baseline_jobs_completed > 0
-        else 0.0
-    )
+    avg_wait = _episode_launch_wait(env.metrics, baseline=False)
+    baseline_avg_wait = _episode_launch_wait(env.metrics, baseline=True)
 
     base_cost = float(env.metrics.episode_baseline_cost)
     base_cost_off = float(env.metrics.episode_baseline_cost_off)
@@ -268,7 +276,7 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
     if env.plot_config.plot_idle_penalty:
         add_panel("Idle penalty (%)", env.metrics.episode_idle_penalties, "score", None)
     if env.plot_config.plot_job_age_penalty:
-        add_panel("Job-age penalty (%)", env.metrics.episode_job_age_penalties, "score", None)
+        add_panel("Backlog pressure (%)", env.metrics.episode_job_age_penalties, "score", None)
     if env.plot_config.plot_total_reward:
         add_panel("Total reward", getattr(env.metrics, "episode_rewards", None), "reward", None)
 

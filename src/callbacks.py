@@ -44,8 +44,12 @@ class ComputeClusterCallback(BaseCallback):
 
             # Job metrics (agent)
             completion_rate = (env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100 if env.metrics.episode_jobs_submitted > 0 else 0.0)
-            avg_wait = (env.metrics.episode_total_job_wait_time / env.metrics.episode_jobs_completed if env.metrics.episode_jobs_completed > 0 else 0.0)
+            avg_wait = (
+                env.metrics.episode_total_job_wait_time_launch / env.metrics.episode_jobs_launched
+                if env.metrics.episode_jobs_launched > 0 else 0.0
+            )
             self.logger.record("metrics/jobs_submitted", env.metrics.episode_jobs_submitted)
+            self.logger.record("metrics/jobs_launched", env.metrics.episode_jobs_launched)
             self.logger.record("metrics/jobs_completed", env.metrics.episode_jobs_completed)
             self.logger.record("metrics/completion_rate", completion_rate)
             self.logger.record("metrics/avg_wait_hours", avg_wait)
@@ -55,6 +59,9 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/nodes_off", MAX_NODES - env.metrics.episode_on_nodes[-1])
             self.logger.record("metrics/max_queue_size", env.metrics.episode_max_queue_size_reached)
             self.logger.record("metrics/max_backlog_size", env.metrics.episode_max_backlog_size_reached)
+            self.logger.record("metrics/pending_jobs_end", env.metrics.episode_pending_jobs_end)
+            self.logger.record("metrics/pending_core_hours_end", env.metrics.episode_pending_core_hours_end)
+            self.logger.record("metrics/overdue_jobs_end", env.metrics.episode_overdue_jobs_end)
             self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
             self.logger.record("metrics/jobs_lost_total", env.metrics.episode_jobs_dropped)
             loss_rate = (env.metrics.episode_jobs_dropped / env.metrics.episode_jobs_submitted * 100 if env.metrics.episode_jobs_submitted > 0 else 0.0)
@@ -63,8 +70,12 @@ class ComputeClusterCallback(BaseCallback):
 
             # Job metrics (baseline)
             baseline_completion_rate = (env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100 if env.metrics.episode_baseline_jobs_submitted > 0 else 0.0)
-            baseline_avg_wait = (env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed if env.metrics.episode_baseline_jobs_completed > 0 else 0.0)
+            baseline_avg_wait = (
+                env.metrics.episode_baseline_total_job_wait_time_launch / env.metrics.episode_baseline_jobs_launched
+                if env.metrics.episode_baseline_jobs_launched > 0 else 0.0
+            )
             self.logger.record("metrics/bl_jobs_submitted", env.metrics.episode_baseline_jobs_submitted)
+            self.logger.record("metrics/bl_jobs_launched", env.metrics.episode_baseline_jobs_launched)
             self.logger.record("metrics/bl_jobs_completed", env.metrics.episode_baseline_jobs_completed)
             self.logger.record("metrics/bl_completion_rate", baseline_completion_rate)
             self.logger.record("metrics/bl_avg_wait_hours", baseline_avg_wait)

@@ -53,13 +53,13 @@ class WorkloadGenConfig:
     # Burst 1: many small-ish jobs at once
     burst_small_prob: float = 0.0
     burst_small_jobs_min: int = 50
-    burst_small_jobs_max: int = 750
+    burst_small_jobs_max: int = 1500
     burst_small_duration_min: int = 1
-    burst_small_duration_max: int = 8
+    burst_small_duration_max: int = 2
     burst_small_nodes_min: int = 1
-    burst_small_nodes_max: int = 2
+    burst_small_nodes_max: int = 1
     burst_small_cores_min: int = 1
-    burst_small_cores_max: int = 16
+    burst_small_cores_max: int = 4
 
     # Burst 2: heavy jobs (high duration + high resource demand)
     burst_heavy_prob: float = 0.0
