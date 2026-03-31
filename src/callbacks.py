@@ -39,8 +39,8 @@ class ComputeClusterCallback(BaseCallback):
             savings_off_clean = savings_off if env.metrics.episode_jobs_dropped == 0 else 0.0
             self.logger.record("metrics/savings_off_clean", savings_off_clean)
             #self.logger.record("metrics/queue_fill_pct", env.metrics.episode_max_queue_size_reached / MAX_QUEUE_SIZE * 100)
-            self.logger.record("metrics/baseline_cost", env.metrics.episode_baseline_cost)
-            self.logger.record("metrics/baseline_cost_off", env.metrics.episode_baseline_cost_off)
+            self.logger.record("metrics/bl_cost", env.metrics.episode_baseline_cost)
+            self.logger.record("metrics/bl_cost_off", env.metrics.episode_baseline_cost_off)
 
             # Job metrics (agent)
             completion_rate = (env.metrics.episode_jobs_completed / env.metrics.episode_jobs_submitted * 100 if env.metrics.episode_jobs_submitted > 0 else 0.0)
@@ -64,17 +64,17 @@ class ComputeClusterCallback(BaseCallback):
             # Job metrics (baseline)
             baseline_completion_rate = (env.metrics.episode_baseline_jobs_completed / env.metrics.episode_baseline_jobs_submitted * 100 if env.metrics.episode_baseline_jobs_submitted > 0 else 0.0)
             baseline_avg_wait = (env.metrics.episode_baseline_total_job_wait_time / env.metrics.episode_baseline_jobs_completed if env.metrics.episode_baseline_jobs_completed > 0 else 0.0)
-            self.logger.record("metrics/baseline_jobs_submitted", env.metrics.episode_baseline_jobs_submitted)
-            self.logger.record("metrics/baseline_jobs_completed", env.metrics.episode_baseline_jobs_completed)
-            self.logger.record("metrics/baseline_completion_rate", baseline_completion_rate)
-            self.logger.record("metrics/baseline_avg_wait_hours", baseline_avg_wait)
-            self.logger.record("metrics/baseline_max_queue_size", env.metrics.episode_baseline_max_queue_size_reached)
-            self.logger.record("metrics/baseline_max_backlog_size", env.metrics.episode_baseline_max_backlog_size_reached)
-            self.logger.record("metrics/baseline_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
-            self.logger.record("metrics/baseline_jobs_lost_total", env.metrics.episode_baseline_jobs_dropped)
+            self.logger.record("metrics/bl_jobs_submitted", env.metrics.episode_baseline_jobs_submitted)
+            self.logger.record("metrics/bl_jobs_completed", env.metrics.episode_baseline_jobs_completed)
+            self.logger.record("metrics/bl_completion_rate", baseline_completion_rate)
+            self.logger.record("metrics/bl_avg_wait_hours", baseline_avg_wait)
+            self.logger.record("metrics/bl_max_queue_size", env.metrics.episode_baseline_max_queue_size_reached)
+            self.logger.record("metrics/bl_max_backlog_size", env.metrics.episode_baseline_max_backlog_size_reached)
+            self.logger.record("metrics/bl_jobs_dropped", env.metrics.episode_baseline_jobs_dropped)
+            self.logger.record("metrics/bl_jobs_lost_total", env.metrics.episode_baseline_jobs_dropped)
             baseline_loss_rate = (env.metrics.episode_baseline_jobs_dropped / env.metrics.episode_baseline_jobs_submitted * 100 if env.metrics.episode_baseline_jobs_submitted > 0 else 0.0)
-            self.logger.record("metrics/baseline_loss_rate", baseline_loss_rate)
-            self.logger.record("metrics/baseline_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
+            self.logger.record("metrics/bl_loss_rate", baseline_loss_rate)
+            self.logger.record("metrics/bl_jobs_rejected_queue_full", env.metrics.episode_baseline_jobs_rejected_queue_full)
 
             # Proportional (per-core) power metrics
             _delta = COST_USED_MW - COST_IDLE_MW
@@ -91,8 +91,8 @@ class ComputeClusterCallback(BaseCallback):
                 for used, cores in zip(env.metrics.episode_baseline_used_nodes, env.metrics.episode_baseline_used_cores)
             )
             self.logger.record("metrics/prop_power_mwh", agent_prop_power)
-            self.logger.record("metrics/baseline_prop_power_mwh", baseline_prop_power)
-            self.logger.record("metrics/baseline_off_prop_power_mwh", baseline_off_prop_power)
+            self.logger.record("metrics/bl_prop_power_mwh", baseline_prop_power)
+            self.logger.record("metrics/bl_off_prop_power_mwh", baseline_off_prop_power)
             self.logger.record("metrics/savings_prop_power_vs_baseline_off", baseline_off_prop_power - agent_prop_power)
             agent_prop_cost = sum(
                 (COST_IDLE_MW * on + _delta * (cores / CORES_PER_NODE)) * price
