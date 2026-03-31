@@ -109,6 +109,7 @@ class MetricsTracker:
         self.episode_price_rewards: list[float] = []
         self.episode_idle_penalties: list[float] = []
         self.episode_job_age_penalties: list[float] = []
+        self.episode_drop_penalties: list[float] = []
         self.episode_rewards: list[float] = []
         self.episode_running_jobs_counts: list[int] = []
 
