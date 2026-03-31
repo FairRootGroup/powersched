@@ -20,7 +20,7 @@ from src.workloadgen import WorkloadGenerator
 from src.config import (
     MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
     CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
-    MAX_NODES_PER_JOB, EPISODE_HOURS
+    MAX_NODES_PER_JOB, EPISODE_HOURS, PENALTY_DROPPED_JOB
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
@@ -500,10 +500,11 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_price_rewards.append(price_reward * 100)
         self.metrics.episode_job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.episode_idle_penalties.append(idle_penalty_norm * 100)
+        self.metrics.episode_drop_penalties.append(PENALTY_DROPPED_JOB * num_dropped_this_step)
         self.metrics.episode_rewards.append(step_reward)
         self.metrics.jobs_dropped += num_dropped_this_step
         self.metrics.episode_jobs_dropped += num_dropped_this_step
-        
+
         # print stats
         self.env_print(f"[6] End of step stats...")
         self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
