@@ -372,7 +372,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
 
     def launch(combo, seed):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
-        label = f"efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}"
+        label = f"efficiency={efficiency_weight+0}, price={price_weight+0}, idle={idle_weight+0}, job_age={job_age_weight+0}, drop={drop_weight+0}"
         if multi_seed:
             label += f", seed={seed}"
         command = build_command(
@@ -481,7 +481,7 @@ def main():
     for combo, seed in itertools.product(combinations, seeds):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
         seed_str = f", seed={seed}" if len(seeds) > 1 else ""
-        print(f"    efficiency={efficiency_weight}, price={price_weight}, idle={idle_weight}, job_age={job_age_weight}, drop={drop_weight}{seed_str}")
+        print(f"    efficiency={efficiency_weight+0}, price={price_weight+0}, idle={idle_weight+0}, job_age={job_age_weight+0}, drop={drop_weight+0}{seed_str}")
 
     total_runs = len(combinations) * len(seeds)
     print(f"Running {total_runs} combinations with up to {args.parallel} parallel processes")
