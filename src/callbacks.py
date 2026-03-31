@@ -41,6 +41,8 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/avg_wait_hours", avg_wait)
             self.logger.record("metrics/on_nodes", env.metrics.episode_on_nodes[-1])
             self.logger.record("metrics/used_nodes", env.metrics.episode_used_nodes[-1])
+            self.logger.record("metrics/idle_nodes", env.metrics.episode_on_nodes[-1] - env.metrics.episode_used_nodes[-1])
+            self.logger.record("metrics/off_nodes", MAX_NODES - env.metrics.episode_on_nodes[-1])
             self.logger.record("metrics/max_queue_size", env.metrics.episode_max_queue_size_reached)
             self.logger.record("metrics/max_backlog_size", env.metrics.episode_max_backlog_size_reached)
             self.logger.record("metrics/jobs_dropped", env.metrics.episode_jobs_dropped)
