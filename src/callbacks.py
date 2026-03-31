@@ -34,7 +34,10 @@ class ComputeClusterCallback(BaseCallback):
 
             self.logger.record("metrics/cost", env.metrics.episode_total_cost)
             self.logger.record("metrics/savings", env.metrics.episode_baseline_cost - env.metrics.episode_total_cost)
-            self.logger.record("metrics/savings_off", env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost)
+            savings_off = env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost
+            self.logger.record("metrics/savings_off", savings_off)
+            savings_off_clean = savings_off if env.metrics.episode_jobs_dropped == 0 else 0.0
+            self.logger.record("metrics/savings_off_clean", savings_off_clean)
             #self.logger.record("metrics/queue_fill_pct", env.metrics.episode_max_queue_size_reached / MAX_QUEUE_SIZE * 100)
             self.logger.record("metrics/baseline_cost", env.metrics.episode_baseline_cost)
             self.logger.record("metrics/baseline_cost_off", env.metrics.episode_baseline_cost_off)
