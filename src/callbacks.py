@@ -30,7 +30,7 @@ class ComputeClusterCallback(BaseCallback):
             self.logger.record("metrics/reward_price", sum(env.metrics.episode_price_rewards) / 100)
             self.logger.record("metrics/penalty_idle", sum(env.metrics.episode_idle_penalties) / 100)
             self.logger.record("metrics/penalty_job_age", sum(env.metrics.episode_job_age_penalties) / 100)
-            self.logger.record("metrics/penalty_drop", sum(env.metrics.episode_drop_penalties) / 100)
+            self.logger.record("metrics/penalty_drop", sum(env.metrics.episode_drop_penalties))
 
             self.logger.record("metrics/cost", env.metrics.episode_total_cost)
             self.logger.record("metrics/savings", env.metrics.episode_baseline_cost - env.metrics.episode_total_cost)
