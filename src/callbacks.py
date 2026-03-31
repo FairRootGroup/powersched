@@ -25,6 +25,13 @@ class ComputeClusterCallback(BaseCallback):
     def _on_step(self) -> bool:
         env = self.training_env.envs[0].unwrapped
         if env.metrics.current_hour == EPISODE_HOURS-1:
+            self.logger.record("metrics/total_reward", env.metrics.episode_reward)
+            self.logger.record("metrics/reward_eff", sum(env.metrics.episode_eff_rewards) / 100)
+            self.logger.record("metrics/reward_price", sum(env.metrics.episode_price_rewards) / 100)
+            self.logger.record("metrics/penalty_idle", sum(env.metrics.episode_idle_penalties) / 100)
+            self.logger.record("metrics/penalty_job_age", sum(env.metrics.episode_job_age_penalties) / 100)
+            self.logger.record("metrics/penalty_drop", sum(env.metrics.episode_drop_penalties) / 100)
+
             self.logger.record("metrics/cost", env.metrics.episode_total_cost)
             self.logger.record("metrics/savings", env.metrics.episode_baseline_cost - env.metrics.episode_total_cost)
             self.logger.record("metrics/savings_off", env.metrics.episode_baseline_cost_off - env.metrics.episode_total_cost)
