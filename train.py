@@ -215,7 +215,7 @@ def main():
         )
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:
-        print(f"Starting a new model training...")
+        print("Starting a new model training...")
         # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
         net_arch_layers = [int(x) for x in args.net_arch.split(',')]
         policy_kwargs = dict(
@@ -250,7 +250,7 @@ def main():
             print("Train a model first, then run evaluation mode.")
             return
 
-        print(f"=== EVALUATION MODE ===")
+        print("=== EVALUATION MODE ===")
         print(f"Evaluation period: {args.eval_months} months ({args.eval_months * 2} episodes, Each episode = 2 weeks)")
         if evaluation_plots_dir is None:
             raise RuntimeError("Evaluation plots directory could not be determined for the selected model.")
@@ -302,13 +302,13 @@ def main():
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
             plot_episode_summary(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human', suffix=f"eval_{args.eval_months}m")
             if results:
-                print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
-                print(f"\nVs Baseline (with idle nodes):")
+                print("\n=== CUMULATIVE SAVINGS ANALYSIS ===")
+                print("\nVs Baseline (with idle nodes):")
                 print(f"  Total Savings: €{results['total_savings']:,.0f}")
                 print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
 
-                print(f"\nVs Baseline_off (no idle nodes):")
+                print("\nVs Baseline_off (no idle nodes):")
                 print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
                 print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct_off']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
@@ -330,22 +330,9 @@ def main():
                 total_agent_power_mwh = sum(float(ep.get('agent_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_power_mwh = sum(float(ep.get('baseline_power_consumption_mwh', 0.0)) for ep in env.metrics.episode_costs)
                 total_baseline_off_power_mwh = sum(float(ep.get('baseline_power_consumption_off_mwh', 0.0)) for ep in env.metrics.episode_costs)
-                total_agent_prop_power_mwh = sum(float(ep.get('agent_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
-                total_baseline_prop_power_mwh = sum(float(ep.get('baseline_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
-                total_baseline_off_prop_power_mwh = sum(float(ep.get('baseline_off_prop_power_mwh', 0.0)) for ep in env.metrics.episode_costs)
-                total_agent_prop_cost = sum(float(ep.get('agent_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
-                total_baseline_prop_cost = sum(float(ep.get('baseline_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
-                total_baseline_off_prop_cost = sum(float(ep.get('baseline_off_prop_cost', 0.0)) for ep in env.metrics.episode_costs)
-                total_savings_prop_cost_vs_baseline = total_baseline_prop_cost - total_agent_prop_cost
-                total_savings_prop_cost_vs_baseline_off = total_baseline_off_prop_cost - total_agent_prop_cost
                 total_agent_mean_price = (total_agent_cost / total_agent_power_mwh) if total_agent_power_mwh > 0 else 0.0
                 total_baseline_mean_price = (total_baseline_cost / total_baseline_power_mwh) if total_baseline_power_mwh > 0 else 0.0
                 total_baseline_off_mean_price = (total_baseline_off_cost / total_baseline_off_power_mwh) if total_baseline_off_power_mwh > 0 else 0.0
-                total_agent_prop_mean_price = (total_agent_prop_cost / total_agent_prop_power_mwh) if total_agent_prop_power_mwh > 0 else 0.0
-                total_baseline_prop_mean_price = (total_baseline_prop_cost / total_baseline_prop_power_mwh) if total_baseline_prop_power_mwh > 0 else 0.0
-                total_baseline_off_prop_mean_price = (total_baseline_off_prop_cost / total_baseline_off_prop_power_mwh) if total_baseline_off_prop_power_mwh > 0 else 0.0
-                prop_savings_pct_vs_baseline = safe_ratio(total_savings_prop_cost_vs_baseline * 100.0, total_baseline_prop_cost)
-                prop_savings_pct_vs_baseline_off = safe_ratio(total_savings_prop_cost_vs_baseline_off * 100.0, total_baseline_off_prop_cost)
                 total_agent_completion_rate = (total_jobs_completed / total_jobs_submitted * 100) if total_jobs_submitted > 0 else 0.0
                 total_baseline_completion_rate = (total_baseline_completed / total_baseline_submitted * 100) if total_baseline_submitted > 0 else 0.0
                 total_savings_vs_baseline = total_baseline_cost - total_agent_cost
@@ -363,40 +350,40 @@ def main():
                 ) if arrivals_per_hour_by_episode else 0.0
                 std_arrivals_per_hour = arrivals_variance ** 0.5
 
-                print(f"\n=== JOB PROCESSING METRICS ===")
-                print(f"\nAgent:")
+                print("\n=== JOB PROCESSING METRICS ===")
+                print("\nAgent:")
                 print(f"  Jobs Completed: {total_jobs_completed:,} / {total_jobs_submitted:,} ({total_agent_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_max_queue:.0f}")
                 print(f"  Total Cost: €{total_agent_cost:,.0f}")
                 print(f"  Job Arrivals/Hour (mean ± std): {mean_arrivals_per_hour:.2f} ± {std_arrivals_per_hour:.2f}")
 
-                print(f"\nBaseline:")
+                print("\nBaseline:")
                 print(f"  Jobs Completed: {total_baseline_completed:,} / {total_baseline_submitted:,} ({total_baseline_completion_rate:.1f}%)")
                 print(f"  Average Wait Time: {avg_baseline_wait_time:.1f} hours")
                 print(f"  Average Max Queue Size: {avg_baseline_max_queue:.0f}")
                 print(f"  Baseline Total Cost: €{total_baseline_cost:,.0f}")
                 print(f"  Baseline_off Total Cost: €{total_baseline_off_cost:,.0f}")
 
-                print(f"\n=== COST PER 1,000 COMPLETED JOBS ===")
+                print("\n=== COST PER 1,000 COMPLETED JOBS ===")
                 print(f"  Agent:        {fmt_optional(total_agent_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
                 print(f"  Baseline:     {fmt_optional(total_baseline_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
                 print(f"  Baseline_off: {fmt_optional(total_baseline_off_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
 
-                print(f"\n=== AGENT LOST JOBS PER SAVED EURO ===")
+                print("\n=== AGENT LOST JOBS PER SAVED EURO ===")
                 print(f"  Total Lost Jobs (Agent): {total_jobs_dropped:,}")
                 print(f"  Total Lost Jobs (Baseline): {total_baseline_jobs_dropped:,}")
                 print(f"  Vs Baseline:     {fmt_optional(total_dropped_jobs_per_saved_euro, 6)} jobs/€")
                 print(f"  Vs Baseline_off: {fmt_optional(total_dropped_jobs_per_saved_euro_off, 6)} jobs/€")
 
 
-                print(f"\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")
-                print(f"  Agent:        Power={total_agent_prop_power_mwh:,.1f} MWh, Mean Price={total_agent_prop_mean_price:.2f} €/MWh")
-                print(f"  Baseline:     Power={total_baseline_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_prop_mean_price:.2f} €/MWh")
-                print(f"  Baseline_off: Power={total_baseline_off_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_prop_mean_price:.2f} €/MWh")
-                print(f"\n=== PROPORTIONAL COST SAVINGS (TOTAL OVER EVALUATION) ===")
-                print(f"  Vs Baseline:     €{total_savings_prop_cost_vs_baseline:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline, 1)}%")
-                print(f"  Vs Baseline_off: €{total_savings_prop_cost_vs_baseline_off:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline_off, 1)}%")
+                print("\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")
+                print(f"  Agent:        Power={total_agent_power_mwh:,.1f} MWh, Mean Price={total_agent_mean_price:.2f} €/MWh")
+                print(f"  Baseline:     Power={total_baseline_power_mwh:,.1f} MWh, Mean Price={total_baseline_mean_price:.2f} €/MWh")
+                print(f"  Baseline_off: Power={total_baseline_off_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_mean_price:.2f} €/MWh")
+                print("\n=== COST SAVINGS (TOTAL OVER EVALUATION) ===")
+                print(f"  Vs Baseline:     €{total_savings_vs_baseline:,.0f}, {fmt_optional(safe_ratio(total_savings_vs_baseline * 100.0, total_baseline_cost), 1)}%")
+                print(f"  Vs Baseline_off: €{total_savings_vs_baseline_off:,.0f}, {fmt_optional(safe_ratio(total_savings_vs_baseline_off * 100.0, total_baseline_off_cost), 1)}%")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 
