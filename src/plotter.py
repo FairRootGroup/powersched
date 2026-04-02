@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import numpy as np
+from src.config import CORES_PER_NODE
 
 if TYPE_CHECKING:
     from src.environment import ComputeClusterEnv
@@ -231,25 +232,45 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
         f"Base: {env.metrics.episode_baseline_jobs_completed}/{env.metrics.episode_baseline_jobs_submitted} ({baseline_completion_rate:.0f}%, wait={baseline_avg_wait:.1f}h, Q={env.metrics.episode_baseline_max_queue_size_reached})"
     )
 
-    # ----- collect per-hour panels (one / panel, optional overlay) -----
+    # ----- collect per-hour panels -----
     panels = []
 
-    def add_panel(title: str, series: np.ndarray | list[float] | None, ylabel: str, ylim: tuple[float, float] | None = None, overlay: tuple[str, np.ndarray | list[float] | None] | None = None) -> None:
-        """
-        overlay: optional (label, series2)
-        """
+    def add_panel(
+        title: str,
+        series: np.ndarray | list[float] | None,
+        ylabel: str,
+        ylim: tuple[float, float] | None = None,
+        overlays: list[tuple[str, np.ndarray | list[float] | None, str, str]] | None = None,
+        secondary_ylabel: str | None = None,
+        secondary_ylim: tuple[float, float] | None = None,
+        secondary_overlays: list[tuple[str, np.ndarray | list[float] | None, str, str]] | None = None,
+    ) -> None:
         s = _as_series(series, num_hours)
         if s is None:
             return
 
-        ov = None
-        if overlay is not None:
-            ov_label, ov_series = overlay
+        primary_overlay_series = []
+        for ov_label, ov_series, ov_color, ov_style in overlays or []:
             s2 = _as_series(ov_series, num_hours)
             if s2 is not None:
-                ov = (ov_label, s2)
+                primary_overlay_series.append((ov_label, s2, ov_color, ov_style))
 
-        panels.append((title, s, ylabel, ylim, ov))
+        secondary_overlay_series = []
+        for ov_label, ov_series, ov_color, ov_style in secondary_overlays or []:
+            s2 = _as_series(ov_series, num_hours)
+            if s2 is not None:
+                secondary_overlay_series.append((ov_label, s2, ov_color, ov_style))
+
+        panels.append((
+            title,
+            s,
+            ylabel,
+            ylim,
+            primary_overlay_series,
+            secondary_ylabel,
+            secondary_ylim,
+            secondary_overlay_series,
+        ))
 
     # Price
     if env.plot_config.plot_price:
@@ -266,7 +287,27 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
         running_series = getattr(env.metrics, "episode_running_jobs_counts", None)
         if running_series is None:
             running_series = getattr(env.metrics, "running_jobs_counts", None)
-        add_panel("Job queue & running jobs",env.metrics.episode_job_queue_sizes,"jobs",None,overlay=("Running jobs", running_series))
+        launched_jobs_series = getattr(env.metrics, "episode_launched_jobs_counts", None)
+        if launched_jobs_series is None:
+            launched_jobs_series = getattr(env.metrics, "launched_jobs_counts", None)
+        launched_cores_series = getattr(env.metrics, "episode_launched_cores", None)
+        if launched_cores_series is None:
+            launched_cores_series = getattr(env.metrics, "launched_cores", None)
+        add_panel(
+            "Job queue, running & launches",
+            env.metrics.episode_job_queue_sizes,
+            "jobs",
+            None,
+            overlays=[
+                ("Running jobs", running_series, "tab:orange", "--"),
+                ("Launched jobs", launched_jobs_series, "tab:green", ":"),
+            ],
+            secondary_ylabel="launched cores",
+            secondary_ylim=(0, max_nodes * CORES_PER_NODE),
+            secondary_overlays=[
+                ("Launched cores", launched_cores_series, "black", "-."),
+            ],
+        )
 
     # Reward components
     if env.plot_config.plot_eff_reward:
@@ -299,15 +340,16 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
         axs.append(fig.add_subplot(gs[r, c]))
 
     # Plot per-hour panels
-    for idx, (title, s, ylabel, ylim, overlay) in enumerate(panels):
+    for idx, (title, s, ylabel, ylim, overlays, secondary_ylabel, secondary_ylim, secondary_overlays) in enumerate(panels):
         ax = axs[idx]
-        # main series
-        ax.plot(hours, s, label=title)
-        # overlay series (e.g. running jobs)
-        if overlay is not None:
-            ov_label, s2 = overlay
-            ax.plot(hours, s2, label=ov_label, linestyle="--")
-            ax.legend(fontsize=7)
+        main_line, = ax.plot(hours, s, label=title, color="tab:blue")
+
+        legend_lines = [main_line]
+        legend_labels = [title]
+        for ov_label, s2, ov_color, ov_style in overlays:
+            line, = ax.plot(hours, s2, label=ov_label, color=ov_color, linestyle=ov_style)
+            legend_lines.append(line)
+            legend_labels.append(ov_label)
 
         ax.set_title(title, fontsize=9, pad=2)
         ax.set_ylabel(ylabel, fontsize=9)
@@ -315,6 +357,23 @@ def plot_dashboard(env: ComputeClusterEnv, num_hours: int, max_nodes: int, save:
         ax.tick_params(labelsize=8)
         if ylim is not None:
             ax.set_ylim(*ylim)
+
+        if secondary_overlays:
+            ax_r = ax.twinx()
+            sec_lines = []
+            sec_labels = []
+            for ov_label, s2, ov_color, ov_style in secondary_overlays:
+                line, = ax_r.plot(hours, s2, label=ov_label, color=ov_color, linestyle=ov_style, alpha=0.9)
+                sec_lines.append(line)
+                sec_labels.append(ov_label)
+            if secondary_ylabel is not None:
+                ax_r.set_ylabel(secondary_ylabel, fontsize=9)
+            ax_r.tick_params(labelsize=8)
+            if secondary_ylim is not None:
+                ax_r.set_ylim(*secondary_ylim)
+            ax.legend(legend_lines + sec_lines, legend_labels + sec_labels, fontsize=7, loc="upper right")
+        elif len(legend_lines) > 1:
+            ax.legend(legend_lines, legend_labels, fontsize=7, loc="upper right")
 
     # Hide unused axes
     for j in range(n_pan, nrows * ncols):
