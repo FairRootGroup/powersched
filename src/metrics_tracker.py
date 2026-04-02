@@ -75,6 +75,8 @@ class MetricsTracker:
         self.used_nodes: list[int] = []
         self.job_queue_sizes: list[int] = []
         self.price_stats: list[float] = []
+        self.launched_jobs_counts: list[int] = []
+        self.launched_cores: list[int] = []
 
         self.eff_rewards: list[float] = []
         self.price_rewards: list[float] = []
@@ -139,6 +141,8 @@ class MetricsTracker:
         self.episode_baseline_used_cores: list[int] = []
         self.episode_job_queue_sizes: list[int] = []
         self.episode_price_stats: list[float] = []
+        self.episode_launched_jobs_counts: list[int] = []
+        self.episode_launched_cores: list[int] = []
 
         self.episode_eff_rewards: list[float] = []
         self.episode_price_rewards: list[float] = []

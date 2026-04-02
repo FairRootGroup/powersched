@@ -554,6 +554,7 @@ class ComputeClusterEnv(gym.Env):
 
         self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}, refill={do_refill}...")
         num_node_changes = adjust_nodes(action_type, action_magnitude, self.state['nodes'], self.cores_available, self.env_print)
+        available_cores_before_launch = int(np.sum(self.cores_available))
 
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
@@ -587,6 +588,7 @@ class ComputeClusterEnv(gym.Env):
                 if extra_launched > 0:
                     self.env_print(f"   {extra_launched} additional jobs launched from backlog")
 
+        launched_cores_this_step = max(0, available_cores_before_launch - int(np.sum(self.cores_available)))
         remaining_pending_summary = self._pending_work_summary(job_queue_2d)
 
         # Update summary statistics for all outstanding jobs (queue + backlog)
@@ -611,6 +613,8 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.used_nodes.append(num_used_nodes)
         self.metrics.job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.price_stats.append(current_price)
+        self.metrics.launched_jobs_counts.append(num_launched_jobs)
+        self.metrics.launched_cores.append(launched_cores_this_step)
         self.metrics.current_running_jobs = num_running_jobs
         self.metrics.episode_running_jobs_counts.append(num_running_jobs)
         self.metrics.episode_on_nodes.append(num_on_nodes)
@@ -618,6 +622,8 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_used_cores.append(num_used_cores)
         self.metrics.episode_job_queue_sizes.append(num_unprocessed_jobs)
         self.metrics.episode_price_stats.append(current_price)
+        self.metrics.episode_launched_jobs_counts.append(num_launched_jobs)
+        self.metrics.episode_launched_cores.append(launched_cores_this_step)
         self.metrics.episode_pending_jobs_end = int(remaining_pending_summary["pending_job_count"])
         self.metrics.episode_pending_core_demand_end = float(remaining_pending_summary["pending_core_demand"])
         self.metrics.episode_pending_core_hours_end = float(remaining_pending_summary["pending_core_hours"])
