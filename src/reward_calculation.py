@@ -50,16 +50,15 @@ class RewardCalculator:
     """Calculates rewards with pre-computed normalization bounds."""
     EFFICIENCY_TARGET_RATIO = 0.70
     EFFICIENCY_GAIN = 5.0
-    # Faster response so price signal reacts on the same horizon as node-efficiency actions.
-    # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
-    PRICE_ADVANTAGE_GAIN = 4.0
-    PRICE_QUANTILE_LOW = 0.30
-    PRICE_QUANTILE_HIGH = 0.70
-    # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
-    PRICE_NODE_TAU_POS = 40.0
-    PRICE_NODE_TAU_NEG = 40.0
+    # Faster response so price signal reacts on the same horizon as scheduling actions.
+    # Keep the cheap-side incentive moderate, but make the expensive-side penalty hit
+    # near -1 already for medium useful-work volumes.
+    PRICE_ADVANTAGE_GAIN_POS = 3.0
+    PRICE_ADVANTAGE_GAIN_NEG = 3.0
     PRICE_QUANTILE_LOW = 0.10
     PRICE_QUANTILE_HIGH = 0.90
+    PRICE_NODE_TAU_POS = 40.0
+    PRICE_NODE_TAU_NEG = 20.0
     NEGATIVE_PRICE_NODE_TAU = 30.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
     NEGATIVE_PRICE_OVERDRIVE_GAIN = 2.5
@@ -126,11 +125,6 @@ class RewardCalculator:
         """Calculate efficiency reward: work done per unit cost."""
         return num_used_nodes / (total_cost + 1e-6)
 
-    @staticmethod
-    def _sigmoid(x: float) -> float:
-        """Numerically stable logistic helper for smooth thresholding."""
-        return float(1.0 / (1.0 + np.exp(-np.clip(x, -60.0, 60.0))))
-
     def _reward_efficiency_normalized(self, num_used_nodes: int, num_idle_nodes: int, num_unprocessed_jobs: int, total_cost: float) -> float:
         """Calculate normalized efficiency reward [0, 1]."""
         if num_used_nodes + num_idle_nodes == 0:
@@ -180,6 +174,16 @@ class RewardCalculator:
         expensive_strength = float(np.clip(normalized, 0.0, 1.0))
         return cheap_strength, expensive_strength
 
+    def _price_advantage_component(self, relative_advantage: float) -> float:
+        """Asymmetric gain: harsher on expensive hours than on cheap-hour rewards."""
+        gain = self.PRICE_ADVANTAGE_GAIN_POS if relative_advantage >= 0.0 else self.PRICE_ADVANTAGE_GAIN_NEG
+        return gain * relative_advantage
+
+    def _price_load_component(self, activity_units: float, relative_advantage: float) -> float:
+        """Saturate expensive-hour penalties faster than cheap-hour rewards."""
+        tau = self.PRICE_NODE_TAU_POS if relative_advantage >= 0.0 else self.PRICE_NODE_TAU_NEG
+        return float(1.0 - np.exp(-activity_units / tau))
+
     def _reward_price_legacy(self, current_price: float, average_future_price: float, num_processed_jobs: int) -> float:
         """Legacy linear reward: preserved for comparison/ablation."""
         context_avg = self._price_context_average(average_future_price)
@@ -208,9 +212,8 @@ class RewardCalculator:
         price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
         relative_advantage = (context_avg - current_price) / price_span
 
-        advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
-        tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
-        node_component = 1.0 - np.exp(-num_used_nodes / tau)
+        advantage_component = self._price_advantage_component(relative_advantage)
+        node_component = self._price_load_component(num_used_nodes, relative_advantage)
         raw_reward = advantage_component * node_component
 
         if current_price < 0.0:
@@ -296,10 +299,9 @@ class RewardCalculator:
         price_span = max(self.prices.MAX_PRICE - self.prices.MIN_PRICE, 1e-6)
         relative_advantage = (context_avg - current_price) / price_span
 
-        advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
         equivalent_used_nodes = used_cores / float(CORES_PER_NODE)
-        tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
-        load_component = 1.0 - np.exp(-equivalent_used_nodes / tau)
+        advantage_component = self._price_advantage_component(relative_advantage)
+        load_component = self._price_load_component(equivalent_used_nodes, relative_advantage)
         raw_reward = advantage_component * load_component
 
         if current_price < 0.0:
@@ -336,22 +338,11 @@ class RewardCalculator:
         equivalent_used_nodes = used_cores / float(CORES_PER_NODE)
         raw_reward = 0.0
 
-        prediction_window = np.asarray(self.prices.predicted_prices, dtype=np.float32)
-        future_reference = prediction_window[1:] if prediction_window.size > 1 else prediction_window
-        if future_reference.size >= 2:
-            q_low, q_high = np.quantile(
-                future_reference,
-                [self.PRICE_QUANTILE_LOW, self.PRICE_QUANTILE_HIGH],
-            )
-            price_band = max(float(q_high - q_low), 1e-6)
-
-            cheap_score = self._sigmoid((float(q_low) - current_price) / price_band)
-            expensive_score = self._sigmoid((current_price - float(q_high)) / price_band)
-            relative_advantage = cheap_score - expensive_score
-
-            advantage_component = self.PRICE_ADVANTAGE_GAIN * relative_advantage
-            tau = self.PRICE_NODE_TAU_POS if advantage_component >= 0.0 else self.PRICE_NODE_TAU_NEG
-            load_component = 1.0 - np.exp(-equivalent_used_nodes / tau)
+        cheap_strength, expensive_strength = self._price_phase_strengths(current_price)
+        if cheap_strength > 0.0 or expensive_strength > 0.0:
+            relative_advantage = cheap_strength - expensive_strength
+            advantage_component = self._price_advantage_component(relative_advantage)
+            load_component = self._price_load_component(equivalent_used_nodes, relative_advantage)
             raw_reward = advantage_component * load_component
 
         if current_price < 0.0:
@@ -519,7 +510,6 @@ class RewardCalculator:
 
         # legacy: price_reward = self._reward_price_normalized_legacy(current_price, average_future_price, total_used_cores)
          # 2. Increase reward if current price is favorable and currently useful work is high.
-        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
         price_reward_weighted = weights.price_weight * price_reward
 
         # 3. Push pending work into cheap hours. The method name is kept for
