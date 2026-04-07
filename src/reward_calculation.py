@@ -6,7 +6,7 @@ import numpy as np
 
 from src.config import (
     COST_IDLE_MW, COST_USED_MW, PENALTY_IDLE_NODE,
-    PENALTY_DROPPED_JOB, MAX_NODES, MAX_NEW_JOBS_PER_HOUR, WEEK_HOURS,
+    MAX_NODES, MAX_NEW_JOBS_PER_HOUR, WEEK_HOURS,
     CORES_PER_NODE,
 )
 from src.prices import Prices
@@ -68,6 +68,8 @@ class RewardCalculator:
     NEGATIVE_PRICE_OVERDRIVE_FLOOR = 0.35
     NEGATIVE_PRICE_OVERDRIVE_ALLOW_ABOVE_ONE = True
     NEGATIVE_PRICE_OVERDRIVE_MAX_REWARD = 1.5
+    # Drop penalty: tanh saturation curve. TAU=20: 1 drop≈-0.05, 10 drops≈-0.46, 50 drops≈-1.0.
+    DROP_PENALTY_TAU = 20.0
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -317,7 +319,7 @@ class RewardCalculator:
 
     def _penalty_drop(self, num_dropped: int) -> float:
         """Drop penalty: tanh saturation curve bounded in [-1, 0]."""
-        return min(0, PENALTY_DROPPED_JOB * num_dropped)
+        return -float(np.tanh(num_dropped / self.DROP_PENALTY_TAU))
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, job_queue_2d: np.ndarray,
