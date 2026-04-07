@@ -315,6 +315,10 @@ class RewardCalculator:
         penalty = np.exp(-ratio * SATURATION_FACTOR) - 1.0
         return float(np.clip(penalty, -1.0, 0.0))
 
+    def _penalty_drop(self, num_dropped: int) -> float:
+        """Drop penalty: tanh saturation curve bounded in [-1, 0]."""
+        return min(0, PENALTY_DROPPED_JOB * num_dropped)
+
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, job_queue_2d: np.ndarray,
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
@@ -339,30 +343,30 @@ class RewardCalculator:
             total_used_cores: Total cores in use across all powered nodes
 
         Returns:
-            Tuple of (total reward, total cost, eff_reward_norm, price_reward,
-                      idle_penalty_norm, job_age_penalty_norm)
+            Tuple of (total reward, total cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm)
         """
-        # 0. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
+        # 1. Energy efficiency. Reward calculation based on Workload (used nodes) (W) / Cost (C)
         total_cost = power_cost(num_on_nodes, total_used_cores, current_price)
         efficiency_reward_norm = self._reward_energy_efficiency_utilization_normalized(num_on_nodes, total_used_cores)
-        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
-
+        # legacy: efficiency_reward_norm = self._reward_energy_efficiency_normalized(num_used_nodes, num_idle_nodes)
         efficiency_reward_norm += self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
         # 2. Increase reward if current price is favorable and currently useful work is high.
+        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
+        # legacy: price_reward = self._reward_price_normalized_legacy(current_price, average_future_price, total_used_cores)
         price_reward_weighted = weights.price_weight * price_reward
 
         # 3. penalize delayed jobs, more if they are older. but only if there are turned off nodes
         job_age_penalty_norm = self._penalty_job_age_normalized(num_off_nodes, job_queue_2d)
         job_age_penalty_weighted = weights.job_age_weight * job_age_penalty_norm
 
-        # 5. penalty for idling nodes
+        # 4. penalty for idling nodes
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
-        # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
-        drop_penalty = min(0, PENALTY_DROPPED_JOB * num_dropped_this_step)
+        # 5. penalty for lost jobs (aged out or rejected because queue/backlog was full)
+        drop_penalty = self._penalty_drop(num_dropped_this_step)
         drop_penalty_weighted = weights.drop_weight * drop_penalty
 
         reward = (
