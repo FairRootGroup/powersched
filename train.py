@@ -38,7 +38,7 @@ def fmt_optional(value: float | None, precision: int = 2, thousands: bool = Fals
     return f"{value:,.{precision}f}" if thousands else f"{value:.{precision}f}"
 
 
-STEPS_PER_ITERATION = 100000
+STEPS_PER_ITERATION = 10000
 
 
 def main():
@@ -52,6 +52,7 @@ def main():
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
     parser.add_argument('--job-arrival-scale', type=float, default=1.0, help='Scale sampled arrivals per step (1.0 = unchanged).')
     parser.add_argument('--jobs-exact-replay', action='store_true', help='For --jobs mode, replay raw jobs in timeline order (no template aggregation).')
+    parser.add_argument('--jobs-exact-replay-aggregate', action='store_true', help='With --jobs-exact-replay, aggregate each sampled raw time-bin before enqueueing.')
     parser.add_argument('--plot-rewards', action='store_true', help='Per step, plot rewards for all possible num_idle_nodes & num_used_nodes (default: False).')
     parser.add_argument('--plot-eff-reward', action=argparse.BooleanOptionalAction, default=False, help='Include efficiency reward in the plot (dashed line).')
     parser.add_argument('--plot-price-reward', action=argparse.BooleanOptionalAction, default=False, help='Include price reward in the plot (dashed line).')
@@ -76,6 +77,7 @@ def main():
     add_workloadgen_args(parser)
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
+    parser.add_argument("--dashboard-interval", type=int, default=10000, help="Hours between dashboard plots (default: 10000).")
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
@@ -83,6 +85,12 @@ def main():
     parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
     parser.add_argument("--print-policy", action="store_true", help="Print structure of the policy network.")
     parser.add_argument("--seed-path", default="", help="Path if models are saved by seed (forwarded to train.py) - only used by analyze_seed_occupancy.py, ignored otherwise.")
+    parser.add_argument(
+        "--flush-after-drop-streak",
+        type=int,
+        default=0,
+        help="At episode end, flush only if the current consecutive dropped-job streak reached this many steps (0 disables).",
+    )
 
     args = parser.parse_args()
     try:
@@ -91,6 +99,8 @@ def main():
         parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
+    if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
+        parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
     if args.workload_gen and args.job_arrival_scale != 1.0:
         print(
             "Warning: --job-arrival-scale is not allowed with --workload-gen; "
@@ -171,7 +181,11 @@ def main():
                             workload_gen=workload_gen,
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
-                            output_dir=args.output_dir)
+                            output_dir=args.output_dir,
+                            jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate,
+                            flush_after_drop_streak=args.flush_after_drop_streak)
+    env.session_dir = session_root
+    env.plots_dir = plots_dir
     env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir
@@ -210,7 +224,7 @@ def main():
         )
         model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
     else:
-        print("Starting a new model training...")
+        print(f"Starting a new model training...")
         # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
         net_arch_layers = [int(x) for x in args.net_arch.split(',')]
         policy_kwargs = dict(
@@ -245,7 +259,7 @@ def main():
             print("Train a model first, then run evaluation mode.")
             return
 
-        print("=== EVALUATION MODE ===")
+        print(f"=== EVALUATION MODE ===")
         print(f"Evaluation period: {args.eval_months} months ({args.eval_months * 2} episodes, Each episode = 2 weeks)")
         if evaluation_plots_dir is None:
             raise RuntimeError("Evaluation plots directory could not be determined for the selected model.")
@@ -297,13 +311,13 @@ def main():
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
             plot_episode_summary(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human', suffix=f"eval_{args.eval_months}m")
             if results:
-                print("\n=== CUMULATIVE SAVINGS ANALYSIS ===")
-                print("\nVs Baseline (with idle nodes):")
+                print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
+                print(f"\nVs Baseline (with idle nodes):")
                 print(f"  Total Savings: €{results['total_savings']:,.0f}")
                 print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
 
-                print("\nVs Baseline_off (no idle nodes):")
+                print(f"\nVs Baseline_off (no idle nodes):")
                 print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
                 print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct_off']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
@@ -381,7 +395,7 @@ def main():
                 print(f"  Baseline Total Cost: €{total_baseline_cost:,.0f}")
                 print(f"  Baseline_off Total Cost: €{total_baseline_off_cost:,.0f}")
 
-                print("\n=== COST PER 1,000 COMPLETED JOBS ===")
+                print(f"\n=== COST PER 1,000 COMPLETED JOBS ===")
                 print(f"  Agent:        {fmt_optional(total_agent_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
                 print(f"  Baseline:     {fmt_optional(total_baseline_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
                 print(f"  Baseline_off: {fmt_optional(total_baseline_off_cost_per_1000_completed, 2, thousands=True)} €/1k jobs")
@@ -393,13 +407,13 @@ def main():
                 print(f"  Vs Baseline_off: {fmt_optional(total_dropped_jobs_per_saved_euro_off, 6)} jobs/€")
 
 
-                print("\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")
-                print(f"  Agent:        Power={total_agent_power_mwh:,.1f} MWh, Mean Price={total_agent_mean_price:.2f} €/MWh")
-                print(f"  Baseline:     Power={total_baseline_power_mwh:,.1f} MWh, Mean Price={total_baseline_mean_price:.2f} €/MWh")
-                print(f"  Baseline_off: Power={total_baseline_off_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_mean_price:.2f} €/MWh")
-                print("\n=== COST SAVINGS (TOTAL OVER EVALUATION) ===")
-                print(f"  Vs Baseline:     €{total_savings_vs_baseline:,.0f}, {fmt_optional(safe_ratio(total_savings_vs_baseline * 100.0, total_baseline_cost), 1)}%")
-                print(f"  Vs Baseline_off: €{total_savings_vs_baseline_off:,.0f}, {fmt_optional(safe_ratio(total_savings_vs_baseline_off * 100.0, total_baseline_off_cost), 1)}%")
+                print(f"\n=== POWER & PRICE METRICS (TOTAL OVER EVALUATION) ===")
+                print(f"  Agent:        Power={total_agent_prop_power_mwh:,.1f} MWh, Mean Price={total_agent_prop_mean_price:.2f} €/MWh")
+                print(f"  Baseline:     Power={total_baseline_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_prop_mean_price:.2f} €/MWh")
+                print(f"  Baseline_off: Power={total_baseline_off_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_prop_mean_price:.2f} €/MWh")
+                print(f"\n=== PROPORTIONAL COST SAVINGS (TOTAL OVER EVALUATION) ===")
+                print(f"  Vs Baseline:     €{total_savings_prop_cost_vs_baseline:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline, 1)}%")
+                print(f"  Vs Baseline_off: €{total_savings_prop_cost_vs_baseline_off:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline_off, 1)}%")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 
@@ -433,11 +447,7 @@ def main():
                 print(f"iterations limit ({args.iter_limit}) reached: {iters}.")
                 break
             try:
-                model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
-                print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
-                model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
-
-                if args.plot_dashboard:
+                if args.plot_dashboard and (STEPS_PER_ITERATION * (iters - 1)) % args.dashboard_interval == 0:  # Only plot after the first iteration to avoid empty data
                     try:
                         plot_dashboard(
                             env,
@@ -449,6 +459,11 @@ def main():
                         )
                     except Exception as e:
                         print(f"Dashboard plot failed (non-fatal): {e}")
+                        
+                model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
+                print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
+                model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
+
 
             except PlottingComplete:
                 print("Plotting complete, terminating training...")

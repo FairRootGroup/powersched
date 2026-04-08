@@ -380,9 +380,14 @@ class RewardCalculator:
             return 0.0
         return float(-1.0 - 0.25 * min(num_dropped - 1, 1000))
 
-    def _penalty_drop(self, num_dropped: int) -> float:
+    def _penalty_drop_alt(self, num_dropped: int) -> float:
         """Drop penalty: tanh saturation curve bounded in [-1, 0]."""
         return -float(np.tanh(num_dropped / self.DROP_PENALTY_TAU))
+    def loss_penalty(self, num_lost: int) -> float:
+        """Weighted penalty for jobs lost this step, including episode-end flushes."""
+        if not self.ALLOW_DROP_PENALTY or num_lost <= 0:
+            return 0.0
+        return 0.3 * self._penalty_drop(num_lost)
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
                   num_off_nodes: int, job_queue_2d: np.ndarray,
@@ -441,10 +446,8 @@ class RewardCalculator:
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
         # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
-        drop_penalty_weighted = 0.0
-        if self.ALLOW_DROP_PENALTY and num_dropped_this_step > 0:
-            # drop_penalty_weighted = weights.drop_weight * self._penalty_drop(num_dropped_this_step)
-            drop_penalty_weighted = 0.3 * self._penalty_drop(num_dropped_this_step)
+        # Episode-end flushes reuse the same penalty path via loss_penalty().
+        drop_penalty_weighted = self.loss_penalty(num_dropped_this_step)
 
         reward = (
             efficiency_reward_weighted

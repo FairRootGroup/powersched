@@ -20,7 +20,7 @@ from src.workloadgen import WorkloadGenerator
 from src.config import (
     MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
     CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
-    MAX_NODES_PER_JOB, EPISODE_HOURS, PENALTY_DROPPED_JOB
+    MAX_NODES_PER_JOB, EPISODE_HOURS
 )
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
@@ -75,7 +75,9 @@ class ComputeClusterEnv(gym.Env):
                  workload_gen: WorkloadGenerator | None = None,
                  job_arrival_scale: float = 1.0,
                  jobs_exact_replay: bool = False,
-                 output_dir: str = "sessions") -> None:
+                 output_dir: str = "sessions",
+                 jobs_exact_replay_aggregate: bool = False,
+                 flush_after_drop_streak: int = 0) -> None:
         super().__init__()
 
         self.weights = weights
@@ -90,6 +92,10 @@ class ComputeClusterEnv(gym.Env):
         self.evaluation_mode = evaluation_mode
         self.job_arrival_scale = float(job_arrival_scale)
         self.jobs_exact_replay = bool(jobs_exact_replay)
+        self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
+        self.flush_after_drop_streak = max(0, int(flush_after_drop_streak))
+        self.consecutive_drop_steps = 0
+        self.flush_pending_for_episode = False
 
         self.next_plot_save = self.steps_per_iteration
 
@@ -118,7 +124,10 @@ class ComputeClusterEnv(gym.Env):
             print(f"Parsed aggregated jobs for {len(self.jobs_sampler.aggregated_jobs)} hours")
             if self.jobs_exact_replay:
                 max_raw_jobs = max((len(v) for v in self.jobs_sampler.jobs.values()), default=0)
-                print("Jobs replay mode: exact timeline (raw jobs per hour)")
+                if self.jobs_exact_replay_aggregate:
+                    print("Jobs replay mode: exact timeline (aggregated per step)")
+                else:
+                    print("Jobs replay mode: exact timeline (raw jobs per hour)")
                 print(f"Max raw jobs per hour: {max_raw_jobs}")
             else:
                 self.jobs_sampler.precalculate_hourly_jobs(CORES_PER_NODE, MAX_NODES_PER_JOB)
@@ -182,6 +191,8 @@ class ComputeClusterEnv(gym.Env):
 
     def _reset_timeline_state(self, start_index: int) -> None:
         self.prices.reset(start_index=start_index)
+        self.consecutive_drop_steps = 0
+        self.flush_pending_for_episode = False
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
@@ -307,6 +318,88 @@ class ComputeClusterEnv(gym.Env):
 
         # Cache the queue/backlog version for next step.
         self._cached_queue_backlog_version = self._queue_backlog_version
+
+    @staticmethod
+    def _count_queued_jobs(job_queue_2d: np.ndarray) -> int:
+        """Count active jobs represented in a dense queue array."""
+        return int(np.count_nonzero(job_queue_2d[:, 0] > 0))
+
+    def _flush_workload_side(
+        self,
+        job_queue_2d: np.ndarray,
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        backlog_queue: deque,
+    ) -> int:
+        """
+        Drop all outstanding work for one side of the simulation and reset its cluster.
+
+        This is intentionally stronger than a normal episode rollover: queued jobs,
+        backlog jobs, and still-running jobs are all considered lost so the next
+        episode can start from a clean slate.
+        """
+        flushed_jobs = (
+            self._count_queued_jobs(job_queue_2d)
+            + len(backlog_queue)
+            + len(running_jobs)
+        )
+
+        job_queue_2d.fill(0)
+        nodes.fill(0)
+        cores_available.fill(CORES_PER_NODE)
+        running_jobs.clear()
+        backlog_queue.clear()
+        return int(flushed_jobs)
+
+    def _flush_episode_state(self) -> dict[str, int | float | bool]:
+        """Flush both agent and baseline states after the terminal step of an episode."""
+        agent_job_queue_2d = self.state['job_queue'].reshape(-1, 4)
+        baseline_job_queue_2d = self.baseline_state['job_queue'].reshape(-1, 4)
+
+        agent_jobs_flushed = self._flush_workload_side(
+            agent_job_queue_2d,
+            self.state['nodes'],
+            self.cores_available,
+            self.running_jobs,
+            self.backlog_queue,
+        )
+        baseline_jobs_flushed = self._flush_workload_side(
+            baseline_job_queue_2d,
+            self.baseline_state['nodes'],
+            self.baseline_cores_available,
+            self.baseline_running_jobs,
+            self.baseline_backlog_queue,
+        )
+
+        self.next_empty_slot = 0
+        self.baseline_next_empty_slot = 0
+        self.metrics.current_running_jobs = 0
+
+        if agent_jobs_flushed > 0:
+            self.metrics.jobs_flushed += agent_jobs_flushed
+            self.metrics.episode_jobs_flushed += agent_jobs_flushed
+        if baseline_jobs_flushed > 0:
+            self.metrics.baseline_jobs_flushed += baseline_jobs_flushed
+            self.metrics.episode_baseline_jobs_flushed += baseline_jobs_flushed
+
+        flush_penalty = self.reward_calculator.loss_penalty(agent_jobs_flushed)
+
+        if agent_jobs_flushed > 0 or baseline_jobs_flushed > 0:
+            self._mark_queue_backlog_mutation()
+            self._update_pending_job_stats(agent_job_queue_2d)
+        self.consecutive_drop_steps = 0
+        self.flush_pending_for_episode = False
+
+        self.state['job_queue'] = agent_job_queue_2d.flatten()
+        self.baseline_state['job_queue'] = baseline_job_queue_2d.flatten()
+
+        return {
+            "flush_applied": bool(agent_jobs_flushed > 0 or baseline_jobs_flushed > 0),
+            "agent_jobs_flushed": agent_jobs_flushed,
+            "baseline_jobs_flushed": baseline_jobs_flushed,
+            "flush_penalty": float(flush_penalty),
+        }
 
     def _resolve_reset_start_index(self, options: dict[str, Any]) -> int:
         """
@@ -575,10 +668,18 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_price_rewards.append(price_reward * 100)
         self.metrics.episode_job_age_penalties.append(job_age_penalty_norm * 100)
         self.metrics.episode_idle_penalties.append(idle_penalty_norm * 100)
-        self.metrics.episode_drop_penalties.append(PENALTY_DROPPED_JOB * num_dropped_this_step)
         self.metrics.episode_rewards.append(step_reward)
         self.metrics.jobs_dropped += num_dropped_this_step
         self.metrics.episode_jobs_dropped += num_dropped_this_step
+        if num_dropped_this_step > 0:
+            self.consecutive_drop_steps += 1
+        else:
+            self.consecutive_drop_steps = 0
+        if (
+            self.flush_after_drop_streak > 0
+            and self.consecutive_drop_steps >= self.flush_after_drop_streak
+        ):
+            self.flush_pending_for_episode = True
         
         # print stats
         self.env_print(f"[6] End of step stats...")
@@ -595,6 +696,13 @@ class ComputeClusterEnv(gym.Env):
 
         truncated = False
         terminated = False
+        flush_applied = False
+        flush_penalty = 0.0
+        agent_jobs_flushed = 0
+        baseline_jobs_flushed = 0
+        drop_streak_steps = self.consecutive_drop_steps
+        flush_armed_by_drop_streak = bool(self.flush_pending_for_episode)
+        episode_flush_triggered_by_drop_streak = False
         if self.metrics.current_hour == EPISODE_HOURS:
             if self.render_mode == 'human':
                 plot_episode(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
@@ -608,6 +716,30 @@ class ComputeClusterEnv(gym.Env):
                     print(self.next_plot_save)
             truncated = True
             terminated = False
+
+            if flush_armed_by_drop_streak:
+                episode_flush_triggered_by_drop_streak = True
+                flush_result = self._flush_episode_state()
+                flush_applied = bool(flush_result["flush_applied"])
+                flush_penalty = float(flush_result["flush_penalty"])
+                agent_jobs_flushed = int(flush_result["agent_jobs_flushed"])
+                baseline_jobs_flushed = int(flush_result["baseline_jobs_flushed"])
+                if flush_penalty != 0.0:
+                    step_reward += 10*flush_penalty
+                    self.metrics.episode_reward += flush_penalty
+                    if self.metrics.rewards:
+                        self.metrics.rewards[-1] += flush_penalty
+                    if self.metrics.episode_rewards:
+                        self.metrics.episode_rewards[-1] += flush_penalty
+                if flush_applied:
+                    self.env_print(
+                        f"[flush] Drop streak {self.flush_after_drop_streak}+ reached "
+                        f"({drop_streak_steps} steps). "
+                        f"Dropped outstanding work at episode boundary: "
+                        f"agent={agent_jobs_flushed}, baseline={baseline_jobs_flushed}, penalty={flush_penalty:.4f}"
+                    )
+            else:
+                self.flush_pending_for_episode = False
 
             # Record episode costs for long-term analysis
             self.metrics.record_episode_completion(self.current_episode)
@@ -627,7 +759,15 @@ class ComputeClusterEnv(gym.Env):
             "num_unprocessed_jobs": num_unprocessed_jobs,
             "num_on_nodes": num_on_nodes,
             "episode_jobs_dropped": self.metrics.episode_jobs_dropped,
-            "episode_jobs_lost_total": self.metrics.episode_jobs_dropped,
+            "episode_jobs_flushed": self.metrics.episode_jobs_flushed,
+            "episode_jobs_lost_total": self.metrics.episode_jobs_dropped + self.metrics.episode_jobs_flushed,
+            "episode_flush_applied": flush_applied,
+            "episode_flush_triggered_by_drop_streak": episode_flush_triggered_by_drop_streak,
+            "drop_streak_steps": drop_streak_steps,
+            "drop_streak_flush_armed": flush_armed_by_drop_streak,
+            "step_flush_penalty": flush_penalty,
+            "step_jobs_flushed": agent_jobs_flushed,
+            "step_baseline_jobs_flushed": baseline_jobs_flushed,
         }
 
         return self.state, step_reward, terminated, truncated, info
