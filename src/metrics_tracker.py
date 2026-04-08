@@ -1,5 +1,7 @@
 """Metrics tracking and episode recording for the PowerSched environment."""
 
+from src.config import COST_IDLE_MW, COST_USED_MW, CORES_PER_NODE, MAX_NODES
+
 
 class MetricsTracker:
     """Tracks metrics throughout training episodes."""
@@ -13,6 +15,11 @@ class MetricsTracker:
     def _safe_ratio(numerator: float, denominator: float) -> float:
         """Safe division; returns NaN when denominator is not positive."""
         return (numerator / denominator) if denominator > 0.0 else float("nan")
+
+    @staticmethod
+    def _jobs_lost_total(dropped: int, flushed: int) -> int:
+        """Total lost jobs, including regular drops and episode-end flushes."""
+        return int(dropped) + int(flushed)
 
     def __init__(self) -> None:
         """Initialize all metric counters."""
@@ -44,6 +51,7 @@ class MetricsTracker:
         self.max_queue_size_reached: int = 0
         self.max_backlog_size_reached: int = 0
         self.jobs_dropped: int = 0
+        self.jobs_flushed: int = 0
         self.jobs_rejected_queue_full: int = 0
 
         # Baseline job metrics (cumulative across episodes)
@@ -55,6 +63,7 @@ class MetricsTracker:
         self.baseline_max_queue_size_reached: int = 0
         self.baseline_max_backlog_size_reached: int = 0
         self.baseline_jobs_dropped: int = 0
+        self.baseline_jobs_flushed: int = 0
         self.baseline_jobs_rejected_queue_full: int = 0
 
         # Time series data for plotting (cumulative)
@@ -89,6 +98,7 @@ class MetricsTracker:
         self.episode_max_queue_size_reached: int = 0
         self.episode_max_backlog_size_reached: int = 0
         self.episode_jobs_dropped: int = 0
+        self.episode_jobs_flushed: int = 0
         self.episode_jobs_rejected_queue_full: int = 0
 
         # Baseline job metrics (episode)
@@ -100,6 +110,7 @@ class MetricsTracker:
         self.episode_baseline_max_queue_size_reached: int = 0
         self.episode_baseline_max_backlog_size_reached: int = 0
         self.episode_baseline_jobs_dropped: int = 0
+        self.episode_baseline_jobs_flushed: int = 0
         self.episode_baseline_jobs_rejected_queue_full: int = 0
 
         # End-of-episode pending-work snapshot.
@@ -124,7 +135,6 @@ class MetricsTracker:
         self.episode_price_rewards: list[float] = []
         self.episode_idle_penalties: list[float] = []
         self.episode_job_age_penalties: list[float] = []
-        self.episode_drop_penalties: list[float] = []
         self.episode_rewards: list[float] = []
         self.episode_running_jobs_counts: list[int] = []
 
@@ -168,13 +178,36 @@ class MetricsTracker:
             if self.episode_jobs_submitted
             else 0.0
         )
+        jobs_lost_total = self._jobs_lost_total(self.episode_jobs_dropped, self.episode_jobs_flushed)
+        flush_rate: float = (
+            (self.episode_jobs_flushed / self.episode_jobs_submitted * 100)
+            if self.episode_jobs_submitted
+            else 0.0
+        )
+        loss_rate: float = (
+            (jobs_lost_total / self.episode_jobs_submitted * 100)
+            if self.episode_jobs_submitted
+            else 0.0
+        )
         baseline_drop_rate: float = (
             (self.episode_baseline_jobs_dropped / self.episode_baseline_jobs_submitted * 100)
             if self.episode_baseline_jobs_submitted
             else 0.0
         )
-        loss_rate = drop_rate
-        baseline_loss_rate = baseline_drop_rate
+        baseline_jobs_lost_total = self._jobs_lost_total(
+            self.episode_baseline_jobs_dropped,
+            self.episode_baseline_jobs_flushed,
+        )
+        baseline_flush_rate: float = (
+            (self.episode_baseline_jobs_flushed / self.episode_baseline_jobs_submitted * 100)
+            if self.episode_baseline_jobs_submitted
+            else 0.0
+        )
+        baseline_loss_rate: float = (
+            (baseline_jobs_lost_total / self.episode_baseline_jobs_submitted * 100)
+            if self.episode_baseline_jobs_submitted
+            else 0.0
+        )
         agent_mean_price: float = self._effective_mean_price(
             self.episode_total_cost, self.episode_total_power_consumption_mwh
         )
@@ -197,6 +230,38 @@ class MetricsTracker:
         savings_vs_baseline: float = self.episode_baseline_cost - self.episode_total_cost
         savings_vs_baseline_off: float = self.episode_baseline_cost_off - self.episode_total_cost
 
+        # Proportional (per-core) power: idle_base for all on-nodes + compute delta scaled by core utilization.
+        # Formula per step: COST_IDLE_MW * num_on + (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)
+        _compute_delta_mw = COST_USED_MW - COST_IDLE_MW
+        agent_prop_power_mwh: float = sum(
+            COST_IDLE_MW * on + _compute_delta_mw * (cores / CORES_PER_NODE)
+            for on, cores in zip(self.episode_on_nodes, self.episode_used_cores)
+        )
+        # Baseline always has all MAX_NODES on
+        baseline_prop_power_mwh: float = sum(
+            COST_IDLE_MW * MAX_NODES + _compute_delta_mw * (cores / CORES_PER_NODE)
+            for cores in self.episode_baseline_used_cores
+        )
+        # Baseline_off: only used nodes are on (no idle nodes)
+        baseline_off_prop_power_mwh: float = sum(
+            COST_IDLE_MW * used + _compute_delta_mw * (cores / CORES_PER_NODE)
+            for used, cores in zip(self.episode_baseline_used_nodes, self.episode_baseline_used_cores)
+        )
+        # Proportional cost: same as prop power but multiplied by price at each step
+        agent_prop_cost: float = sum(
+            (COST_IDLE_MW * on + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
+            for on, cores, price in zip(self.episode_on_nodes, self.episode_used_cores, self.episode_price_stats)
+        )
+        baseline_prop_cost: float = sum(
+            (COST_IDLE_MW * MAX_NODES + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
+            for cores, price in zip(self.episode_baseline_used_cores, self.episode_price_stats)
+        )
+        baseline_off_prop_cost: float = sum(
+            (COST_IDLE_MW * used + _compute_delta_mw * (cores / CORES_PER_NODE)) * price
+            for used, cores, price in zip(self.episode_baseline_used_nodes, self.episode_baseline_used_cores, self.episode_price_stats)
+        )
+        savings_prop_cost_vs_baseline: float = baseline_prop_cost - agent_prop_cost
+        savings_prop_cost_vs_baseline_off: float = baseline_off_prop_cost - agent_prop_cost
         dropped_jobs_per_saved_euro: float = self._safe_ratio(
             float(self.episode_jobs_dropped), savings_vs_baseline
         ) if savings_vs_baseline > 0.0 else float("nan")
@@ -212,6 +277,14 @@ class MetricsTracker:
             'agent_power_consumption_mwh': self.episode_total_power_consumption_mwh,
             'baseline_power_consumption_mwh': self.episode_baseline_power_consumption_mwh,
             'baseline_power_consumption_off_mwh': self.episode_baseline_power_consumption_off_mwh,
+            'agent_prop_power_mwh': agent_prop_power_mwh,
+            'baseline_prop_power_mwh': baseline_prop_power_mwh,
+            'baseline_off_prop_power_mwh': baseline_off_prop_power_mwh,
+            'agent_prop_cost': agent_prop_cost,
+            'baseline_prop_cost': baseline_prop_cost,
+            'baseline_off_prop_cost': baseline_off_prop_cost,
+            'savings_prop_cost_vs_baseline': savings_prop_cost_vs_baseline,
+            'savings_prop_cost_vs_baseline_off': savings_prop_cost_vs_baseline_off,
             'agent_mean_price': agent_mean_price,
             'baseline_mean_price': baseline_mean_price,
             'baseline_off_mean_price': baseline_off_mean_price,
@@ -246,15 +319,19 @@ class MetricsTracker:
             'baseline_completion_rate': baseline_completion_rate,
             'baseline_max_queue_size': self.episode_baseline_max_queue_size_reached,
             'baseline_max_backlog_size': self.episode_baseline_max_backlog_size_reached,
-            # Loss metrics: includes age expirations and queue-full rejections.
+            # Loss metrics: includes age expirations, queue-full rejections, and episode-end flushes.
             "jobs_dropped": self.episode_jobs_dropped,
-            "jobs_lost_total": self.episode_jobs_dropped,
+            "jobs_flushed": self.episode_jobs_flushed,
+            "jobs_lost_total": jobs_lost_total,
             "drop_rate": drop_rate,
+            "flush_rate": flush_rate,
             "loss_rate": loss_rate,
             "jobs_rejected_queue_full": self.episode_jobs_rejected_queue_full,
             "baseline_jobs_dropped": self.episode_baseline_jobs_dropped,
-            "baseline_jobs_lost_total": self.episode_baseline_jobs_dropped,
+            "baseline_jobs_flushed": self.episode_baseline_jobs_flushed,
+            "baseline_jobs_lost_total": baseline_jobs_lost_total,
             "baseline_drop_rate": baseline_drop_rate,
+            "baseline_flush_rate": baseline_flush_rate,
             "baseline_loss_rate": baseline_loss_rate,
             "baseline_jobs_rejected_queue_full": self.episode_baseline_jobs_rejected_queue_full,
         }
