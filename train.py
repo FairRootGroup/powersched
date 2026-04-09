@@ -89,7 +89,7 @@ def main():
         "--flush-after-drop-streak",
         type=int,
         default=0,
-        help="At episode end, flush only if the current consecutive dropped-job streak reached this many steps (0 disables).",
+        help="Immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
 
     args = parser.parse_args()

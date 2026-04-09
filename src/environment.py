@@ -46,6 +46,7 @@ class ComputeClusterEnv(gym.Env):
     """An environment for scheduling compute jobs based on electricity price predictions."""
 
     metadata = {'render.modes': ['human', 'none']}
+    DROP_STREAK_TERMINATION_PENALTY = -200.0
 
     def render(self, mode: str = 'human') -> None:
         self.render_mode = mode
@@ -678,6 +679,7 @@ class ComputeClusterEnv(gym.Env):
         flush_penalty = 0.0
         agent_jobs_flushed = 0
         baseline_jobs_flushed = 0
+        terminal_penalty_applied = 0.0
         drop_streak_steps = self.consecutive_drop_steps
         flush_triggered_by_drop_streak = (
             self.flush_after_drop_streak > 0
@@ -689,13 +691,14 @@ class ComputeClusterEnv(gym.Env):
             flush_penalty = float(flush_result["flush_penalty"])
             agent_jobs_flushed = int(flush_result["agent_jobs_flushed"])
             baseline_jobs_flushed = int(flush_result["baseline_jobs_flushed"])
-            if flush_penalty != 0.0:
-                step_reward += flush_penalty
-                self.metrics.episode_reward += flush_penalty
-                if self.metrics.rewards:
-                    self.metrics.rewards[-1] += flush_penalty
-                if self.metrics.episode_rewards:
-                    self.metrics.episode_rewards[-1] += flush_penalty
+            previous_step_reward = step_reward
+            terminal_penalty_applied = float(self.DROP_STREAK_TERMINATION_PENALTY)
+            step_reward = terminal_penalty_applied
+            self.metrics.episode_reward += terminal_penalty_applied - previous_step_reward
+            if self.metrics.rewards:
+                self.metrics.rewards[-1] = terminal_penalty_applied
+            if self.metrics.episode_rewards:
+                self.metrics.episode_rewards[-1] = terminal_penalty_applied
 
             post_flush_pending_summary = self._pending_work_summary(self.state['job_queue'].reshape(-1, 4))
             self.metrics.episode_pending_jobs_end = int(post_flush_pending_summary["pending_job_count"])
@@ -709,7 +712,8 @@ class ComputeClusterEnv(gym.Env):
                     f"[flush] Drop streak {self.flush_after_drop_streak}+ reached "
                     f"({drop_streak_steps} steps). "
                     f"Dropped outstanding work immediately: "
-                    f"agent={agent_jobs_flushed}, baseline={baseline_jobs_flushed}, penalty={flush_penalty:.4f}"
+                    f"agent={agent_jobs_flushed}, baseline={baseline_jobs_flushed}, "
+                    f"loss_penalty={flush_penalty:.4f}, terminal_penalty={terminal_penalty_applied:.4f}"
                 )
         
         # print stats
@@ -727,7 +731,10 @@ class ComputeClusterEnv(gym.Env):
 
         truncated = False
         terminated = False
-        if self.metrics.current_hour == EPISODE_HOURS:
+        if flush_triggered_by_drop_streak:
+            terminated = True
+            truncated = False
+        elif self.metrics.current_hour == EPISODE_HOURS:
             if self.render_mode == 'human':
                 plot_episode(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
                 if self.plot_config.plot_once:
@@ -741,7 +748,8 @@ class ComputeClusterEnv(gym.Env):
             truncated = True
             terminated = False
 
-            # Record episode costs for long-term analysis
+        if terminated or truncated:
+            # Record episode costs before reset so callbacks/evaluation can read the finished episode.
             self.metrics.record_episode_completion(self.current_episode)
 
         # flatten job_queue again
@@ -766,6 +774,7 @@ class ComputeClusterEnv(gym.Env):
             "drop_streak_steps": drop_streak_steps,
             "drop_streak_flush_armed": flush_triggered_by_drop_streak,
             "step_flush_penalty": flush_penalty,
+            "step_terminal_penalty": terminal_penalty_applied,
             "step_jobs_flushed": agent_jobs_flushed,
             "step_baseline_jobs_flushed": baseline_jobs_flushed,
         }
