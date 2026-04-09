@@ -384,7 +384,7 @@ class RewardCalculator:
         """Drop penalty: tanh saturation curve bounded in [-1, 0]."""
         return -float(np.tanh(num_dropped / self.DROP_PENALTY_TAU))
     def loss_penalty(self, num_lost: int) -> float:
-        """Weighted penalty for jobs lost this step, including episode-end flushes."""
+        """Weighted penalty for jobs lost this step, including streak-triggered flushes."""
         if not self.ALLOW_DROP_PENALTY or num_lost <= 0:
             return 0.0
         return 0.3 * self._penalty_drop(num_lost)
@@ -446,7 +446,7 @@ class RewardCalculator:
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
         # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
-        # Episode-end flushes reuse the same penalty path via loss_penalty().
+        # Streak-triggered flushes reuse the same penalty path via loss_penalty().
         drop_penalty_weighted = self.loss_penalty(num_dropped_this_step)
 
         reward = (

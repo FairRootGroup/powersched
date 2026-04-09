@@ -18,7 +18,7 @@ class MetricsTracker:
 
     @staticmethod
     def _jobs_lost_total(dropped: int, flushed: int) -> int:
-        """Total lost jobs, including regular drops and episode-end flushes."""
+        """Total lost jobs, including regular drops and streak-triggered flushes."""
         return int(dropped) + int(flushed)
 
     def __init__(self) -> None:
@@ -319,7 +319,7 @@ class MetricsTracker:
             'baseline_completion_rate': baseline_completion_rate,
             'baseline_max_queue_size': self.episode_baseline_max_queue_size_reached,
             'baseline_max_backlog_size': self.episode_baseline_max_backlog_size_reached,
-            # Loss metrics: includes age expirations, queue-full rejections, and episode-end flushes.
+            # Loss metrics: includes age expirations, queue-full rejections, and streak-triggered flushes.
             "jobs_dropped": self.episode_jobs_dropped,
             "jobs_flushed": self.episode_jobs_flushed,
             "jobs_lost_total": jobs_lost_total,

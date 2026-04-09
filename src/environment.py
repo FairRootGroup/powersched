@@ -95,7 +95,6 @@ class ComputeClusterEnv(gym.Env):
         self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
         self.flush_after_drop_streak = max(0, int(flush_after_drop_streak))
         self.consecutive_drop_steps = 0
-        self.flush_pending_for_episode = False
 
         self.next_plot_save = self.steps_per_iteration
 
@@ -192,7 +191,6 @@ class ComputeClusterEnv(gym.Env):
     def _reset_timeline_state(self, start_index: int) -> None:
         self.prices.reset(start_index=start_index)
         self.consecutive_drop_steps = 0
-        self.flush_pending_for_episode = False
 
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
@@ -352,8 +350,8 @@ class ComputeClusterEnv(gym.Env):
         backlog_queue.clear()
         return int(flushed_jobs)
 
-    def _flush_episode_state(self) -> dict[str, int | float | bool]:
-        """Flush both agent and baseline states after the terminal step of an episode."""
+    def _flush_workload_state(self) -> dict[str, int | float | bool]:
+        """Flush both agent and baseline states immediately after a trigger step."""
         agent_job_queue_2d = self.state['job_queue'].reshape(-1, 4)
         baseline_job_queue_2d = self.baseline_state['job_queue'].reshape(-1, 4)
 
@@ -389,7 +387,6 @@ class ComputeClusterEnv(gym.Env):
             self._mark_queue_backlog_mutation()
             self._update_pending_job_stats(agent_job_queue_2d)
         self.consecutive_drop_steps = 0
-        self.flush_pending_for_episode = False
 
         self.state['job_queue'] = agent_job_queue_2d.flatten()
         self.baseline_state['job_queue'] = baseline_job_queue_2d.flatten()
@@ -675,11 +672,45 @@ class ComputeClusterEnv(gym.Env):
             self.consecutive_drop_steps += 1
         else:
             self.consecutive_drop_steps = 0
-        if (
+        if self.consecutive_drop_steps > self.metrics.episode_max_drop_streak:
+            self.metrics.episode_max_drop_streak = self.consecutive_drop_steps
+        flush_applied = False
+        flush_penalty = 0.0
+        agent_jobs_flushed = 0
+        baseline_jobs_flushed = 0
+        drop_streak_steps = self.consecutive_drop_steps
+        flush_triggered_by_drop_streak = (
             self.flush_after_drop_streak > 0
             and self.consecutive_drop_steps >= self.flush_after_drop_streak
-        ):
-            self.flush_pending_for_episode = True
+        )
+        if flush_triggered_by_drop_streak:
+            flush_result = self._flush_workload_state()
+            flush_applied = bool(flush_result["flush_applied"])
+            flush_penalty = float(flush_result["flush_penalty"])
+            agent_jobs_flushed = int(flush_result["agent_jobs_flushed"])
+            baseline_jobs_flushed = int(flush_result["baseline_jobs_flushed"])
+            if flush_penalty != 0.0:
+                step_reward += flush_penalty
+                self.metrics.episode_reward += flush_penalty
+                if self.metrics.rewards:
+                    self.metrics.rewards[-1] += flush_penalty
+                if self.metrics.episode_rewards:
+                    self.metrics.episode_rewards[-1] += flush_penalty
+
+            post_flush_pending_summary = self._pending_work_summary(self.state['job_queue'].reshape(-1, 4))
+            self.metrics.episode_pending_jobs_end = int(post_flush_pending_summary["pending_job_count"])
+            self.metrics.episode_pending_core_demand_end = float(post_flush_pending_summary["pending_core_demand"])
+            self.metrics.episode_pending_core_hours_end = float(post_flush_pending_summary["pending_core_hours"])
+            self.metrics.episode_overdue_jobs_end = int(post_flush_pending_summary["overdue_jobs"])
+            self.metrics.episode_overdue_age_core_hours_end = float(post_flush_pending_summary["overdue_age_core_hours"])
+
+            if flush_applied:
+                self.env_print(
+                    f"[flush] Drop streak {self.flush_after_drop_streak}+ reached "
+                    f"({drop_streak_steps} steps). "
+                    f"Dropped outstanding work immediately: "
+                    f"agent={agent_jobs_flushed}, baseline={baseline_jobs_flushed}, penalty={flush_penalty:.4f}"
+                )
         
         # print stats
         self.env_print(f"[6] End of step stats...")
@@ -696,13 +727,6 @@ class ComputeClusterEnv(gym.Env):
 
         truncated = False
         terminated = False
-        flush_applied = False
-        flush_penalty = 0.0
-        agent_jobs_flushed = 0
-        baseline_jobs_flushed = 0
-        drop_streak_steps = self.consecutive_drop_steps
-        flush_armed_by_drop_streak = bool(self.flush_pending_for_episode)
-        episode_flush_triggered_by_drop_streak = False
         if self.metrics.current_hour == EPISODE_HOURS:
             if self.render_mode == 'human':
                 plot_episode(self, EPISODE_HOURS, MAX_NODES, False, True, self.current_step)
@@ -716,30 +740,6 @@ class ComputeClusterEnv(gym.Env):
                     print(self.next_plot_save)
             truncated = True
             terminated = False
-
-            if flush_armed_by_drop_streak:
-                episode_flush_triggered_by_drop_streak = True
-                flush_result = self._flush_episode_state()
-                flush_applied = bool(flush_result["flush_applied"])
-                flush_penalty = float(flush_result["flush_penalty"])
-                agent_jobs_flushed = int(flush_result["agent_jobs_flushed"])
-                baseline_jobs_flushed = int(flush_result["baseline_jobs_flushed"])
-                if flush_penalty != 0.0:
-                    step_reward += 10*flush_penalty
-                    self.metrics.episode_reward += flush_penalty
-                    if self.metrics.rewards:
-                        self.metrics.rewards[-1] += flush_penalty
-                    if self.metrics.episode_rewards:
-                        self.metrics.episode_rewards[-1] += flush_penalty
-                if flush_applied:
-                    self.env_print(
-                        f"[flush] Drop streak {self.flush_after_drop_streak}+ reached "
-                        f"({drop_streak_steps} steps). "
-                        f"Dropped outstanding work at episode boundary: "
-                        f"agent={agent_jobs_flushed}, baseline={baseline_jobs_flushed}, penalty={flush_penalty:.4f}"
-                    )
-            else:
-                self.flush_pending_for_episode = False
 
             # Record episode costs for long-term analysis
             self.metrics.record_episode_completion(self.current_episode)
@@ -762,9 +762,9 @@ class ComputeClusterEnv(gym.Env):
             "episode_jobs_flushed": self.metrics.episode_jobs_flushed,
             "episode_jobs_lost_total": self.metrics.episode_jobs_dropped + self.metrics.episode_jobs_flushed,
             "episode_flush_applied": flush_applied,
-            "episode_flush_triggered_by_drop_streak": episode_flush_triggered_by_drop_streak,
+            "episode_flush_triggered_by_drop_streak": flush_triggered_by_drop_streak,
             "drop_streak_steps": drop_streak_steps,
-            "drop_streak_flush_armed": flush_armed_by_drop_streak,
+            "drop_streak_flush_armed": flush_triggered_by_drop_streak,
             "step_flush_penalty": flush_penalty,
             "step_jobs_flushed": agent_jobs_flushed,
             "step_baseline_jobs_flushed": baseline_jobs_flushed,
