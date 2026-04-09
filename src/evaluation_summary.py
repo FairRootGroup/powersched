@@ -60,6 +60,7 @@ def build_episode_summary_line(
         f"PendingEnd={int(episode_data.get('pending_jobs_end', 0))}, "
         f"OverdueEnd={int(episode_data.get('overdue_jobs_end', 0))}, "
         f"EpisodeMaxQueue={int(episode_data['max_queue_size'])}, "
+        f"MaxDropStreak={int(episode_data.get('max_drop_streak', 0))}, "
         f"Lost={int(episode_data.get('jobs_lost_total', episode_data['jobs_dropped']))}, "
         f"TimelineMaxQueue={timeline_max_queue}, "
         f"Agent Occupancy (Cores)={agent_occupancy_cores_pct:.2f}%, "

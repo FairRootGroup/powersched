@@ -99,6 +99,7 @@ class MetricsTracker:
         self.episode_max_backlog_size_reached: int = 0
         self.episode_jobs_dropped: int = 0
         self.episode_jobs_flushed: int = 0
+        self.episode_max_drop_streak: int = 0
         self.episode_jobs_rejected_queue_full: int = 0
 
         # Baseline job metrics (episode)
@@ -304,8 +305,11 @@ class MetricsTracker:
             'jobs_completed': self.episode_jobs_completed,
             'avg_wait_time': avg_wait_time,
             'completion_rate': completion_rate,
+            'on_nodes_end': int(self.episode_on_nodes[-1]) if self.episode_on_nodes else 0,
+            'used_nodes_end': int(self.episode_used_nodes[-1]) if self.episode_used_nodes else 0,
             'max_queue_size': self.episode_max_queue_size_reached,
             'max_backlog_size': self.episode_max_backlog_size_reached,
+            'max_drop_streak': self.episode_max_drop_streak,
             'pending_jobs_end': self.episode_pending_jobs_end,
             'pending_core_demand_end': self.episode_pending_core_demand_end,
             'pending_core_hours_end': self.episode_pending_core_hours_end,
