@@ -472,6 +472,8 @@ class RewardCalculator:
             total_used_cores,
         )
         
+        # 4. Intrinsic anti-starvation signal: once work is overdue, staying near
+        # zero throughput should be structurally worse than doing at least some work.
         intrinsic_starvation_reward = self._reward_intrinsic_starvation(
             remaining_overdue_age_core_hours,
             total_used_cores,
@@ -479,14 +481,7 @@ class RewardCalculator:
         
         job_age_penalty_weighted = weights.job_age_weight * job_age_penalty_norm + intrinsic_starvation_reward
 
-        # 4. Intrinsic anti-starvation signal: once work is overdue, staying near
-        # zero throughput should be structurally worse than doing at least some work.
-        intrinsic_starvation_reward = self._reward_intrinsic_starvation(
-            remaining_overdue_age_core_hours,
-            total_used_cores,
-        )
-
-        # 4. penalty for idling nodes
+        # 5. penalty for idling nodes
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
@@ -506,7 +501,7 @@ class RewardCalculator:
             f"    > $$$TOTAL: {reward:.4f} = "
             f"{efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + "
             f"{idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f} + "
-            f"{intrinsic_starvation_reward:.4f} + {drop_penalty_weighted:.4f}"
+            f"{drop_penalty_weighted:.4f}"
         )
         env_print(f"    > step cost: €{total_cost:.4f}")
 
