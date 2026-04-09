@@ -449,7 +449,7 @@ def main():
         "--flush-after-drop-streak",
         type=int,
         default=0,
-        help="Forward to train.py: flush at episode end only after this many consecutive dropped-job steps (0 disables).",
+        help="Forward to train.py: immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     add_workloadgen_args(parser)
