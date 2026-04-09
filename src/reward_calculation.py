@@ -56,6 +56,8 @@ class RewardCalculator:
     # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
     PRICE_NODE_TAU_POS = 40.0
     PRICE_NODE_TAU_NEG = 40.0
+    PRICE_QUANTILE_LOW = 0.10
+    PRICE_QUANTILE_HIGH = 0.90
     NEGATIVE_PRICE_NODE_TAU = 30.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
     NEGATIVE_PRICE_OVERDRIVE_GAIN = 2.5
@@ -71,6 +73,14 @@ class RewardCalculator:
     CHEAP_SERVICE_GAIN = 0.75
     OVERDUE_BACKLOG_GAIN = 1.25
     OVERDUE_AGE_CORE_HOUR_TAU = 0.5 * MAX_NODES * CORES_PER_NODE
+    # Separate intrinsic service-continuity signal:
+    # once work is overdue, staying near full blackout should hurt more than doing
+    # at least some useful work. This is intentionally unweighted so it remains a
+    # structural part of the objective rather than a tunable backlog coefficient.
+    INTRINSIC_STARVATION_GAIN = 1.5
+    INTRINSIC_STARVATION_OVERDUE_TAU = 0.25 * MAX_NODES * CORES_PER_NODE
+    INTRINSIC_STARVATION_SERVICE_CORE_TAU = 12.0
+    ALLOW_DROP_PENALTY = True  # whether to include penalties for dropped jobs in the reward calculation
 
     def __init__(self, prices: Prices) -> None:
         """
@@ -319,23 +329,30 @@ class RewardCalculator:
 
         return 1.0 if num_unprocessed_jobs <= 0 else 0.0
 
+    def _overdue_pressure(self, remaining_overdue_age_core_hours: float, tau: float) -> float:
+        """Smoothly map post-grace overdue mass into [0, 1]."""
+        if remaining_overdue_age_core_hours <= 0.0:
+            return 0.0
+        return float(
+            1.0 - np.exp(
+                -float(remaining_overdue_age_core_hours) / max(float(tau), 1e-6)
+            )
+        )
+
     def _penalty_job_age(
         self,
         current_price: float,
         decision_pending_core_demand: float,
-        remaining_overdue_age_core_hours: float,
         total_used_cores: int,
     ) -> float:
         """
-        Combined backlog pressure term used in the legacy "job age" reward slot.
+        Weighted cheap-hour service pressure used in the legacy "job age" slot.
 
-        It deliberately does two things:
-        1. Cheap-hour service pressure:
-           If cheap compute is available *and* backlog exists, the agent should keep
-           the cluster busy instead of trickling.
-        2. Overdue backlog pressure:
-           Once jobs have outlived the deferral grace period, leaving them pending
-           becomes increasingly expensive regardless of price.
+        This term now only teaches *when* pending work should be served:
+        if the current hour is cheap and runnable demand exists, under-serving that
+        hour is penalized. Post-grace starvation is handled separately by an
+        intrinsic reward so the "do nothing" failure mode is structural rather than
+        weight-dependent.
         """
         cheap_strength, _ = self._price_phase_strengths(current_price)
 
@@ -346,30 +363,46 @@ class RewardCalculator:
             achieved_service = min(float(total_used_cores), target_service)
             cheap_service_shortfall = cheap_strength * (1.0 - achieved_service / max(target_service, 1e-6))
 
-        overdue_pressure = 0.0
-        if remaining_overdue_age_core_hours > 0.0:
-            overdue_pressure = 1.0 - np.exp(
-                -float(remaining_overdue_age_core_hours) / max(self.OVERDUE_AGE_CORE_HOUR_TAU, 1e-6)
-            )
+        return float(np.clip(self.CHEAP_SERVICE_GAIN * cheap_service_shortfall, 0.0, 1.0))
 
-        combined_pressure = (
-            self.CHEAP_SERVICE_GAIN * cheap_service_shortfall
-            + self.OVERDUE_BACKLOG_GAIN * overdue_pressure
+    def _reward_intrinsic_starvation(
+        self,
+        remaining_overdue_age_core_hours: float,
+        total_used_cores: int,
+    ) -> float:
+        """
+        Intrinsic post-grace service-continuity reward.
+
+        Once pending work has moved past the 24h grace window, staying near zero
+        service becomes increasingly negative. Any useful work reduces this penalty
+        smoothly, which makes a full blackout with overdue backlog worse than at
+        least some utilization.
+        """
+        overdue_pressure = self._overdue_pressure(
+            remaining_overdue_age_core_hours,
+            self.INTRINSIC_STARVATION_OVERDUE_TAU,
         )
-        return float(np.clip(combined_pressure, 0.0, 1.0))
+        if overdue_pressure <= 0.0:
+            return 0.0
+
+        zero_service_pressure = float(
+            np.exp(
+                -max(float(total_used_cores), 0.0)
+                / max(self.INTRINSIC_STARVATION_SERVICE_CORE_TAU, 1e-6)
+            )
+        )
+        return float(-self.INTRINSIC_STARVATION_GAIN * overdue_pressure * zero_service_pressure)
 
     def _penalty_job_age_normalized(
         self,
         current_price: float,
         decision_pending_core_demand: float,
-        remaining_overdue_age_core_hours: float,
         total_used_cores: int,
     ) -> float:
-        """Legacy reward slot for backlog pressure, normalized to [-1, 0]."""
+        """Cheap-hour service pressure, normalized to [-1, 0]."""
         current_penalty = self._penalty_job_age(
             current_price,
             decision_pending_core_demand,
-            remaining_overdue_age_core_hours,
             total_used_cores,
         )
         return float(np.clip(-current_penalty, -1.0, 0.0))
@@ -425,21 +458,33 @@ class RewardCalculator:
         efficiency_reward_norm += self._blackout_term(num_used_nodes, num_idle_nodes, num_unprocessed_jobs)
         efficiency_reward_weighted = weights.efficiency_weight * efficiency_reward_norm
 
-        # 2. Increase reward if current price is favorable and currently useful work is high.
-        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
         # legacy: price_reward = self._reward_price_normalized_legacy(current_price, average_future_price, total_used_cores)
+         # 2. Increase reward if current price is favorable and currently useful work is high.
+        price_reward = self._reward_price_utilization(current_price, average_future_price, total_used_cores)
         price_reward_weighted = weights.price_weight * price_reward
 
-        # 3. Push pending work into cheap hours and punish starving backlog after the grace period.
-        # The method name is kept for compatibility with existing plots/logs, but the semantics
-        # now describe backlog pressure rather than a simple "oldest queue age" penalty.
+        # 3. Push pending work into cheap hours. The method name is kept for
+        # compatibility with existing plots/logs, but the semantics now describe
+        # cheap-hour service pressure rather than a simple "oldest queue age" penalty.
         job_age_penalty_norm = self._penalty_job_age_normalized(
             current_price,
             decision_pending_core_demand,
+            total_used_cores,
+        )
+        
+        intrinsic_starvation_reward = self._reward_intrinsic_starvation(
             remaining_overdue_age_core_hours,
             total_used_cores,
         )
-        job_age_penalty_weighted = weights.job_age_weight * job_age_penalty_norm
+        
+        job_age_penalty_weighted = weights.job_age_weight * job_age_penalty_norm + intrinsic_starvation_reward
+
+        # 4. Intrinsic anti-starvation signal: once work is overdue, staying near
+        # zero throughput should be structurally worse than doing at least some work.
+        intrinsic_starvation_reward = self._reward_intrinsic_starvation(
+            remaining_overdue_age_core_hours,
+            total_used_cores,
+        )
 
         # 4. penalty for idling nodes
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
@@ -457,7 +502,12 @@ class RewardCalculator:
             + drop_penalty_weighted
         )
 
-        env_print(f"    > $$$TOTAL: {reward:.4f} = {efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + {idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f} + {drop_penalty_weighted:.4f}")
+        env_print(
+            f"    > $$$TOTAL: {reward:.4f} = "
+            f"{efficiency_reward_weighted:.4f} + {price_reward_weighted:.4f} + "
+            f"{idle_penalty_weighted:.4f} + {job_age_penalty_weighted:.4f} + "
+            f"{intrinsic_starvation_reward:.4f} + {drop_penalty_weighted:.4f}"
+        )
         env_print(f"    > step cost: €{total_cost:.4f}")
 
         return reward, total_cost, efficiency_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm

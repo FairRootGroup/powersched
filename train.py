@@ -38,7 +38,7 @@ def fmt_optional(value: float | None, precision: int = 2, thousands: bool = Fals
     return f"{value:,.{precision}f}" if thousands else f"{value:.{precision}f}"
 
 
-STEPS_PER_ITERATION = 10000
+STEPS_PER_ITERATION = 100000
 
 
 def main():
@@ -447,7 +447,7 @@ def main():
                 print(f"iterations limit ({args.iter_limit}) reached: {iters}.")
                 break
             try:
-                if args.plot_dashboard and (STEPS_PER_ITERATION * (iters - 1)) % args.dashboard_interval == 0:  # Only plot after the first iteration to avoid empty data
+                if args.plot_dashboard and iters > 1 and (STEPS_PER_ITERATION * (iters - 1)) % args.dashboard_interval == 0:  # Only plot after the first iteration to avoid empty data
                     try:
                         plot_dashboard(
                             env,
