@@ -70,6 +70,7 @@ def main():
     parser.add_argument("--drop-weight", type=float, default=0.0, help="Weight for lost jobs penalty (age expiry or queue-full rejection) (WIP - default 0.0)")
     parser.add_argument("--iter-limit", type=int, default=0, help=f"Max number of training iterations (1 iteration = {STEPS_PER_ITERATION} steps)")
     parser.add_argument("--session", default="default", help="Session ID")
+    parser.add_argument("--output-dir", default="sessions", help="Base directory for all output (models, logs, plots). Defaults to 'sessions'.")
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
     parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
     add_workloadgen_args(parser)
@@ -126,7 +127,7 @@ def main():
     )
 
     weights_prefix = f"e{weights.efficiency_weight}_p{weights.price_weight}_i{weights.idle_weight}_a{weights.job_age_weight}_d{weights.drop_weight}"
-    session_root = f"sessions/{args.session}"
+    session_root = os.path.join(args.output_dir, args.session)
     if args.seed_sweep and args.seed is not None:
         session_root = f"{session_root}/seed_{args.seed}"
 
@@ -174,9 +175,8 @@ def main():
                             evaluation_mode=args.evaluate_savings,
                             workload_gen=workload_gen,
                             job_arrival_scale=args.job_arrival_scale,
-                            jobs_exact_replay=args.jobs_exact_replay)
-    env.session_dir = session_root
-    env.plots_dir = plots_dir
+                            jobs_exact_replay=args.jobs_exact_replay,
+                            output_dir=args.output_dir)
     env.reset(seed=args.seed)
 
     # Check if there are any saved models in models_dir

@@ -74,7 +74,8 @@ class ComputeClusterEnv(gym.Env):
                  evaluation_mode: bool = False,
                  workload_gen: WorkloadGenerator | None = None,
                  job_arrival_scale: float = 1.0,
-                 jobs_exact_replay: bool = False) -> None:
+                 jobs_exact_replay: bool = False,
+                 output_dir: str = "sessions") -> None:
         super().__init__()
 
         self.weights = weights
@@ -96,8 +97,8 @@ class ComputeClusterEnv(gym.Env):
         self.metrics = MetricsTracker()
 
         # Initialize cost tracking for long-term analysis
-        self.session_dir = f"sessions/{session}"
-        self.plots_dir = f"sessions/{session}/plots/"
+        self.session_dir = f"{output_dir}/{session}"
+        self.plots_dir = f"{output_dir}/{session}/plots/"
 
         self.prices = Prices(self.external_prices)
 

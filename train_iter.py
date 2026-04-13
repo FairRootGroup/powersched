@@ -119,6 +119,7 @@ def build_command(
     evaluate_savings=False,
     eval_months=0,
     workloadgen_args=None,
+    output_dir=None,
 ):
     python_executable = sys.executable
     command = [
@@ -148,15 +149,17 @@ def build_command(
         command += ["--evaluate-savings", "--eval-months", str(eval_months)]
     if workloadgen_args:
         command += workloadgen_args
+    if output_dir is not None:
+        command += ["--output-dir", output_dir]
     return command
 
 
-def make_log_dir(session):
+def make_log_dir(session, output_dir="sessions"):
     ts = str(int(time.time()))
     if session:
-        log_dir = os.path.join("sessions", session, "proc_logs", ts)
+        log_dir = os.path.join(output_dir, session, "proc_logs", ts)
     else:
-        log_dir = os.path.join("proc_logs", ts)
+        log_dir = os.path.join(output_dir, "proc_logs", ts)
     os.makedirs(log_dir, exist_ok=True)
     return log_dir
 
@@ -364,10 +367,10 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, workloadgen_args,
-                     no_tui=False):
+                     no_tui=False, output_dir=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
-    log_dir = make_log_dir(session)
+    log_dir = make_log_dir(session, output_dir or "sessions")
     tasks = list(itertools.product(combinations, seeds))
 
     def launch(combo, seed):
@@ -381,6 +384,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
             job_arrival_scale, jobs_exact_replay,
             plot_dashboard, dashboard_hours, seed, seed_sweep,
             evaluate_savings, eval_months, workloadgen_args,
+            output_dir=output_dir,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -443,6 +447,7 @@ def main():
     add_workloadgen_args(parser)
 
     parser.add_argument("--session", help="Session ID")
+    parser.add_argument("--output-dir", default=None, help="Base directory for all output (models, logs, plots). Defaults to 'sessions'.")
 
     args = parser.parse_args()
 
@@ -504,6 +509,7 @@ def main():
         eval_months=args.eval_months,
         workloadgen_args=workloadgen_args,
         no_tui=args.no_tui,
+        output_dir=args.output_dir,
     )
     if failures:
         print(f"{failures} run(s) failed")
