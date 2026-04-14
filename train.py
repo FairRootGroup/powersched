@@ -135,14 +135,9 @@ def main():
     log_dir = f"{session_root}/logs/{weights_prefix}/"
     plots_dir = f"{session_root}/plots/"
 
-    if not os.path.exists(models_dir):
-        os.makedirs(models_dir)
-
-    if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
-
-    if not os.path.exists(plots_dir):
-        os.makedirs(plots_dir)
+    os.makedirs(models_dir, exist_ok=True)
+    os.makedirs(log_dir, exist_ok=True)
+    os.makedirs(plots_dir, exist_ok=True)
 
     # Load Workload Generator:
 
