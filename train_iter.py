@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import threading
+import glob
 from src.arrival_scale import validate_job_arrival_scale
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 
@@ -172,6 +173,41 @@ def make_log_dir(session, output_dir="sessions"):
 
 def label_to_filename(label):
     return label.replace(", ", "_").replace("=", "") + ".log"
+
+
+def format_combo_label(combo, seed=None, multi_seed=False):
+    efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
+    label = (
+        f"efficiency={efficiency_weight+0}, price={price_weight+0}, "
+        f"idle={idle_weight+0}, job_age={job_age_weight+0}, drop={drop_weight+0}"
+    )
+    if multi_seed:
+        label += f", seed={seed}"
+    return label
+
+
+def build_weights_prefix(combo):
+    efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
+    return (
+        f"e{efficiency_weight+0}_p{price_weight+0}_i{idle_weight+0}_"
+        f"a{job_age_weight+0}_d{drop_weight+0}"
+    )
+
+
+def build_session_root(session, output_dir="sessions", seed=None, seed_sweep=False):
+    session_root = os.path.join(output_dir, str(session))
+    if seed_sweep and seed is not None:
+        session_root = os.path.join(session_root, f"seed_{seed}")
+    return session_root
+
+
+def has_existing_model(combo, session, output_dir="sessions", seed=None, seed_sweep=False):
+    models_dir = os.path.join(
+        build_session_root(session, output_dir=output_dir, seed=seed, seed_sweep=seed_sweep),
+        "models",
+        build_weights_prefix(combo),
+    )
+    return any(glob.iglob(os.path.join(models_dir, "*.zip")))
 
 
 def _elapsed_str(seconds):
@@ -369,21 +405,18 @@ def _run_tui(stdscr, tasks, max_parallel, log_dir, launch):
     return failure_count
 
 
-def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, prices,
+def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
-                     no_tui=False, output_dir="sessions", oracle=False):
+                     multi_seed=False, no_tui=False, output_dir="sessions", oracle=False):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
-    tasks = list(itertools.product(combinations, seeds))
 
     def launch(combo, seed):
         efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
-        label = f"efficiency={efficiency_weight+0}, price={price_weight+0}, idle={idle_weight+0}, job_age={job_age_weight+0}, drop={drop_weight+0}"
-        if multi_seed:
-            label += f", seed={seed}"
+        label = format_combo_label(combo, seed=seed, multi_seed=multi_seed)
         command = build_command(
             efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight,
             iter_limit_per_step, session, prices, job_durations, jobs, hourly_jobs,
@@ -458,6 +491,11 @@ def main():
     )
     parser.add_argument("--oracle", action="store_true", help="Forward to train.py: enable both liquid and contiguous oracles alongside simulation.")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
+    parser.add_argument(
+        "--continue-existing-only",
+        action="store_true",
+        help="Only continue runs that already have a saved model; skip combinations without an existing checkpoint.",
+    )
     add_workloadgen_args(parser)
 
     parser.add_argument("--session", help="Session ID")
@@ -502,16 +540,37 @@ def main():
         print("No valid weight combinations found with the given constraints")
         return
 
-    print(f"Execution preview:")
-    for combo, seed in itertools.product(combinations, seeds):
-        efficiency_weight, price_weight, idle_weight, job_age_weight, drop_weight = combo
-        seed_str = f", seed={seed}" if len(seeds) > 1 else ""
-        print(f"    efficiency={efficiency_weight+0}, price={price_weight+0}, idle={idle_weight+0}, job_age={job_age_weight+0}, drop={drop_weight+0}{seed_str}")
+    multi_seed = len(seeds) > 1
+    tasks = list(itertools.product(combinations, seeds))
 
-    total_runs = len(combinations) * len(seeds)
-    print(f"Running {total_runs} combinations with up to {args.parallel} parallel processes")
+    if args.continue_existing_only:
+        runnable_tasks = []
+        skipped_tasks = []
+        for combo, seed in tasks:
+            if has_existing_model(
+                combo,
+                args.session,
+                output_dir=args.output_dir,
+                seed=seed,
+                seed_sweep=(args.seeds is not None),
+            ):
+                runnable_tasks.append((combo, seed))
+            else:
+                skipped_tasks.append((combo, seed))
+        tasks = runnable_tasks
+        print(f"Skipping {len(skipped_tasks)} run(s) without an existing model because --continue-existing-only was set")
+        if not tasks:
+            print("No matching existing models found; nothing to continue")
+            return
+
+    print(f"Execution preview:")
+    for combo, seed in tasks:
+        print(f"    {format_combo_label(combo, seed=seed, multi_seed=multi_seed)}")
+
+    total_runs = len(tasks)
+    print(f"Running {total_runs} run(s) with up to {args.parallel} parallel processes")
     failures = run_all_parallel(
-        combinations,
+        tasks,
         max_parallel=args.parallel,
         iter_limit_per_step=args.iter_limit_per_step,
         session=args.session,
@@ -523,12 +582,12 @@ def main():
         jobs_exact_replay=args.jobs_exact_replay,
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
-        seeds=seeds,
         seed_sweep=(args.seeds is not None),
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,
         workloadgen_args=workloadgen_args,
         flush_after_drop_streak=args.flush_after_drop_streak,
+        multi_seed=multi_seed,
         no_tui=args.no_tui,
         output_dir=args.output_dir,
         oracle=args.oracle,
