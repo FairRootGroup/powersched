@@ -815,13 +815,35 @@ def make_plot(
     if not ordered:
         return
 
+    def _minmax_error_array(sample_lists: list[list[float]], means: np.ndarray) -> np.ndarray:
+        errors = []
+        for mean, samples in zip(means, sample_lists):
+            vals = np.asarray(samples, dtype=float)
+            finite = vals[np.isfinite(vals)]
+            if finite.size == 0 or not np.isfinite(mean):
+                errors.append((np.nan, np.nan))
+                continue
+            errors.append(
+                (
+                    max(float(mean - np.min(finite)), 0.0),
+                    max(float(np.max(finite) - mean), 0.0),
+                )
+            )
+        return np.asarray(errors, dtype=float).T
+
     lambdas = np.array([s.lambda_value for s in ordered], dtype=float)
     occ_mean = np.array([s.occupancy_mean for s in ordered], dtype=float)
     occ_std = np.array([s.occupancy_std for s in ordered], dtype=float)
+    occ_minmax = _minmax_error_array([s.occupancy_samples for s in ordered], occ_mean)
     baseline_occ_mean = np.array([s.baseline_occupancy_mean for s in ordered], dtype=float)
     baseline_occ_std = np.array([s.baseline_occupancy_std for s in ordered], dtype=float)
+    baseline_occ_minmax = _minmax_error_array([s.baseline_occupancy_samples for s in ordered], baseline_occ_mean)
     baseline_off_occ_mean = np.array([s.baseline_off_occupancy_mean for s in ordered], dtype=float)
     baseline_off_occ_std = np.array([s.baseline_off_occupancy_std for s in ordered], dtype=float)
+    baseline_off_occ_minmax = _minmax_error_array(
+        [s.baseline_off_occupancy_samples for s in ordered],
+        baseline_off_occ_mean,
+    )
     arrivals_per_hour_mean = np.array([s.arrivals_per_hour_mean for s in ordered], dtype=float)
     arrivals_per_hour_std = np.array([s.arrivals_per_hour_std for s in ordered], dtype=float)
     dropped_jobs_delta_total = np.array([s.dropped_jobs_delta_total for s in ordered], dtype=float)
@@ -861,11 +883,58 @@ def make_plot(
     point_colors = cmap(norm(lambdas))
     colorbar_label = "Poisson lambda (point color)"
 
-    def _error_at(arr: np.ndarray | None, idx: int) -> float | None:
+    def _error_at(arr: np.ndarray | None, idx: int) -> float | np.ndarray | None:
         if arr is None:
             return None
-        v = float(arr[idx])
-        return v if np.isfinite(v) else None
+        if arr.ndim == 1:
+            v = float(arr[idx])
+            return v if np.isfinite(v) else None
+        if arr.ndim == 2:
+            lower = float(arr[0, idx])
+            upper = float(arr[1, idx])
+            if not (np.isfinite(lower) and np.isfinite(upper)):
+                return None
+            return np.asarray([[lower], [upper]], dtype=float)
+        raise ValueError("Expected 1D or 2D error array.")
+
+    def _draw_point(
+        ax: plt.Axes,
+        x: float,
+        y: float,
+        color: np.ndarray,
+        marker: str = "o",
+        xerr_std: float | np.ndarray | None = None,
+        yerr_std: float | np.ndarray | None = None,
+        xerr_range: float | np.ndarray | None = None,
+        yerr_range: float | np.ndarray | None = None,
+    ) -> None:
+        if xerr_range is not None or yerr_range is not None:
+            ax.errorbar(
+                x,
+                y,
+                xerr=xerr_range,
+                yerr=yerr_range,
+                fmt="none",
+                capsize=4,
+                ecolor=color,
+                elinewidth=0.9,
+                alpha=0.35,
+                zorder=1,
+            )
+        ax.errorbar(
+            x,
+            y,
+            xerr=xerr_std,
+            yerr=yerr_std,
+            fmt=marker,
+            markersize=6,
+            capsize=2.5,
+            color=color,
+            ecolor=color,
+            elinewidth=1.2,
+            alpha=0.95,
+            zorder=2,
+        )
 
     def _maybe_plot_fit(ax: plt.Axes, x: np.ndarray, y: np.ndarray) -> None:
         coeffs = None
@@ -887,22 +956,21 @@ def make_plot(
         y: np.ndarray,
         xerr: np.ndarray | None = None,
         yerr: np.ndarray | None = None,
+        xerr_range: np.ndarray | None = None,
+        yerr_range: np.ndarray | None = None,
     ) -> None:
         for i, (xi, yi, c) in enumerate(zip(x, y, point_colors)):
             if not (np.isfinite(xi) and np.isfinite(yi)):
                 continue
-            ax.errorbar(
+            _draw_point(
+                ax,
                 float(xi),
                 float(yi),
-                xerr=_error_at(xerr, i),
-                yerr=_error_at(yerr, i),
-                fmt="o",
-                markersize=6,
-                capsize=3,
-                color=c,
-                ecolor=c,
-                elinewidth=1.2,
-                alpha=0.95,
+                c,
+                xerr_std=_error_at(xerr, i),
+                yerr_std=_error_at(yerr, i),
+                xerr_range=_error_at(xerr_range, i),
+                yerr_range=_error_at(yerr_range, i),
             )
 
     def draw_baseline_occupancy_pair(ax: plt.Axes) -> None:
@@ -910,30 +978,24 @@ def make_plot(
             y_base = float(baseline_occ_mean[i])
             y_base_off = float(baseline_off_occ_mean[i])
             if np.isfinite(xv) and np.isfinite(y_base):
-                ax.errorbar(
+                _draw_point(
+                    ax,
                     xv,
                     y_base,
-                    yerr=_error_at(baseline_occ_std, i),
-                    fmt="o",
-                    markersize=6,
-                    capsize=3,
-                    color=c,
-                    ecolor=c,
-                    elinewidth=1.2,
-                    alpha=0.95,
+                    c,
+                    marker="o",
+                    yerr_std=_error_at(baseline_occ_std, i),
+                    yerr_range=_error_at(baseline_occ_minmax, i),
                 )
             if np.isfinite(xv) and np.isfinite(y_base_off):
-                ax.errorbar(
+                _draw_point(
+                    ax,
                     xv,
                     y_base_off,
-                    yerr=_error_at(baseline_off_occ_std, i),
-                    fmt="^",
-                    markersize=6,
-                    capsize=3,
-                    color=c,
-                    ecolor=c,
-                    elinewidth=1.2,
-                    alpha=0.95,
+                    c,
+                    marker="^",
+                    yerr_std=_error_at(baseline_off_occ_std, i),
+                    yerr_range=_error_at(baseline_off_occ_minmax, i),
                 )
         ax.scatter([], [], marker="o", color="black", label="Baseline")
         ax.scatter([], [], marker="^", color="black", label="Baseline_off")
@@ -961,7 +1023,10 @@ def make_plot(
         "Lambda vs Occupancy/Episode",
         "Poisson lambda (arrivals)",
         "Agent Occupancy (Nodes, %) / Episode",
-        lambda ax: (plot_colored_points(ax, lambdas, occ_mean, yerr=occ_std), _maybe_plot_fit(ax, lambdas, occ_mean)),
+        lambda ax: (
+            plot_colored_points(ax, lambdas, occ_mean, yerr=occ_std, yerr_range=occ_minmax),
+            _maybe_plot_fit(ax, lambdas, occ_mean),
+        ),
     )
     _panel(
         "02_occupancy_vs_prop_savings",
@@ -1015,14 +1080,26 @@ def make_plot(
         "Occupancy vs Cost/1k Delta vs Baseline",
         "Agent Occupancy (Nodes, %) / Episode",
         "(Baseline - Agent) / Baseline  [%]",
-        lambda ax: (plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std), _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_mean)),
+        lambda ax: (
+            plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std),
+            _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_mean),
+        ),
     )
     _panel(
         "08_occupancy_vs_cost_per_1k_delta_baseline_off",
         "Occupancy vs Cost/1k Delta vs Baseline_off",
         "Agent Occupancy (Nodes, %) / Episode",
         "(Baseline_off - Agent) / Baseline_off  [%]",
-        lambda ax: (plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_off_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_off_std), _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_off_mean)),
+        lambda ax: (
+            plot_colored_points(
+                ax,
+                occ_mean,
+                cost_per_1k_delta_base_off_mean,
+                xerr=occ_std,
+                yerr=cost_per_1k_delta_base_off_std,
+            ),
+            _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_off_mean),
+        ),
     )
     _panel(
         "09_occupancy_vs_prop_power_delta_baseline_off",
