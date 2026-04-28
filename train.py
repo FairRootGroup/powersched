@@ -329,12 +329,12 @@ def main():
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")
                 print(f"  Total Savings: €{results['total_savings']:,.0f}")
-                print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct']:.1f}%")
+                print(f"  Average Monthly Reduction (avg monthly flat-cost %): {results['avg_monthly_savings_pct']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
 
                 print(f"\nVs Baseline_off (no idle nodes):")
                 print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
-                print(f"  Average Monthly Reduction: {results['avg_monthly_savings_pct_off']:.1f}%")
+                print(f"  Average Monthly Reduction (avg monthly flat-cost %): {results['avg_monthly_savings_pct_off']:.1f}%")
                 print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
 
                 # Calculate job metrics across all episodes
@@ -426,6 +426,8 @@ def main():
                 print(f"  Agent:        Power={total_agent_prop_power_mwh:,.1f} MWh, Mean Price={total_agent_prop_mean_price:.2f} €/MWh")
                 print(f"  Baseline:     Power={total_baseline_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_prop_mean_price:.2f} €/MWh")
                 print(f"  Baseline_off: Power={total_baseline_off_prop_power_mwh:,.1f} MWh, Mean Price={total_baseline_off_prop_mean_price:.2f} €/MWh")
+                print("  Note: the monthly reduction above is an average of monthly flat-cost percentages;")
+                print("        the proportional savings below are total-over-evaluation ratios on proportional costs.")
                 print(f"\n=== PROPORTIONAL COST SAVINGS (TOTAL OVER EVALUATION) ===")
                 print(f"  Vs Baseline:     €{total_savings_prop_cost_vs_baseline:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline, 1)}%")
                 print(f"  Vs Baseline_off: €{total_savings_prop_cost_vs_baseline_off:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline_off, 1)}%")
