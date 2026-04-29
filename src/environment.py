@@ -32,6 +32,7 @@ from src.reward_calculation import RewardCalculator, power_consumption_mwh
 from src.baseline import baseline_step
 from src.workload_generator import generate_jobs
 from src.metrics_tracker import MetricsTracker
+from src.oracle import LiquidOracle, ContiguousOracle
 
 
 init()  # Initialize colorama
@@ -78,7 +79,8 @@ class ComputeClusterEnv(gym.Env):
                  jobs_exact_replay: bool = False,
                  output_dir: str = "sessions",
                  jobs_exact_replay_aggregate: bool = False,
-                 flush_after_drop_streak: int = 0) -> None:
+                 flush_after_drop_streak: int = 0,
+                 enable_oracle: bool = False) -> None:
         super().__init__()
 
         self.weights = weights
@@ -96,6 +98,8 @@ class ComputeClusterEnv(gym.Env):
         self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
         self.flush_after_drop_streak = max(0, int(flush_after_drop_streak))
         self.consecutive_drop_steps = 0
+        self.oracle = LiquidOracle() if enable_oracle else None
+        self.contiguous_oracle = ContiguousOracle() if enable_oracle else None
 
         self.next_plot_save = self.steps_per_iteration
 
@@ -451,6 +455,16 @@ class ComputeClusterEnv(gym.Env):
             self._update_pending_job_stats(job_queue_2d)
             self.state['predicted_prices'] = self.prices.predicted_prices.copy()
 
+        if self.oracle is not None or self.contiguous_oracle is not None:
+            job_queue_2d = self.state['job_queue'].reshape(-1, 4)
+            active_rows = job_queue_2d[job_queue_2d[:, 0] > 0]
+            carried: list = [(int(r[1]), int(r[0]), int(r[2]), int(r[3])) for r in active_rows]
+            carried += [(int(j[1]), int(j[0]), int(j[2]), int(j[3])) for j in self.backlog_queue]
+        if self.oracle is not None:
+            self.oracle.reset(carried_jobs=carried if carried else None)
+        if self.contiguous_oracle is not None:
+            self.contiguous_oracle.reset(carried_jobs=carried if carried else None)
+
         return self.state, {}
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
@@ -505,6 +519,12 @@ class ComputeClusterEnv(gym.Env):
             job_arrival_scale=self.job_arrival_scale,
             jobs_exact_replay=self.jobs_exact_replay,
         )
+
+        # Record arriving jobs for oracles (same data the baseline receives)
+        if self.oracle is not None:
+            self.oracle.record(current_price, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
+        if self.contiguous_oracle is not None:
+            self.contiguous_oracle.record(current_price, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
 
         # Add new jobs to queue (overflow goes to helper)
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
@@ -749,6 +769,12 @@ class ComputeClusterEnv(gym.Env):
 
         if terminated or truncated:
             # Record episode costs before reset so callbacks/evaluation can read the finished episode.
+            if self.oracle is not None:
+                self.metrics.episode_oracle_cost = self.oracle.solve()
+            if self.contiguous_oracle is not None:
+                self.metrics.episode_oracle_contiguous_cost = self.contiguous_oracle.solve()
+                self.metrics.episode_oracle_contiguous_unscheduled = self.contiguous_oracle.unscheduled_count
+                self.metrics.episode_oracle_contiguous_spillover = self.contiguous_oracle.spillover_count
             self.metrics.record_episode_completion(self.current_episode)
 
         # flatten job_queue again

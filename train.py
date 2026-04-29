@@ -73,6 +73,7 @@ def main():
     parser.add_argument("--session", default="default", help="Session ID")
     parser.add_argument("--output-dir", default="sessions", help="Base directory for all output (models, logs, plots). Defaults to 'sessions'.")
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
+    parser.add_argument("--oracle", action='store_true', help="Enable both liquid and contiguous oracles alongside simulation to compute theoretical minimum cost lower bounds.")
     parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
     add_workloadgen_args(parser)
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
@@ -183,7 +184,8 @@ def main():
                             jobs_exact_replay=args.jobs_exact_replay,
                             output_dir=args.output_dir,
                             jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate,
-                            flush_after_drop_streak=args.flush_after_drop_streak)
+                            flush_after_drop_streak=args.flush_after_drop_streak,
+                            enable_oracle=args.oracle)
     env.session_dir = session_root
     env.plots_dir = plots_dir
     env.reset(seed=args.seed)
@@ -291,17 +293,24 @@ def main():
             baseline_occupancy_cores_pct = mean_occupancy_pct(env.metrics.episode_baseline_used_cores, CORES_PER_NODE * MAX_NODES)
             agent_occupancy_nodes_pct = mean_occupancy_pct(env.metrics.episode_used_nodes, MAX_NODES)
             baseline_occupancy_nodes_pct = mean_occupancy_pct(env.metrics.episode_baseline_used_nodes, MAX_NODES)
-            print(
-                build_episode_summary_line(
-                    episode_number=episode + 1,
-                    episode_data=episode_data,
-                    timeline_max_queue=env.metrics.max_queue_size_reached,
-                    agent_occupancy_cores_pct=agent_occupancy_cores_pct,
-                    baseline_occupancy_cores_pct=baseline_occupancy_cores_pct,
-                    agent_occupancy_nodes_pct=agent_occupancy_nodes_pct,
-                    baseline_occupancy_nodes_pct=baseline_occupancy_nodes_pct,
-                )
+            summary_line = build_episode_summary_line(
+                episode_number=episode + 1,
+                episode_data=episode_data,
+                timeline_max_queue=env.metrics.max_queue_size_reached,
+                agent_occupancy_cores_pct=agent_occupancy_cores_pct,
+                baseline_occupancy_cores_pct=baseline_occupancy_cores_pct,
+                agent_occupancy_nodes_pct=agent_occupancy_nodes_pct,
+                baseline_occupancy_nodes_pct=baseline_occupancy_nodes_pct,
             )
+            if args.oracle:
+                liq = float(episode_data.get('oracle_cost', 0.0))
+                con = float(episode_data.get('oracle_contiguous_cost', 0.0))
+                if liq != 0.0:
+                    summary_line += f", OracleLiq=€{liq:.0f}"
+                if con != 0.0:
+                    above = float(episode_data['agent_cost']) - con
+                    summary_line += f", OracleCon=€{con:.0f}, AboveOracleCon=€{above:.0f}"
+            print(summary_line)
 
         print(f"\nEvaluation complete! Generated {num_episodes} episodes of cost data.")
 
@@ -414,6 +423,36 @@ def main():
                 print(f"\n=== PROPORTIONAL COST SAVINGS (TOTAL OVER EVALUATION) ===")
                 print(f"  Vs Baseline:     €{total_savings_prop_cost_vs_baseline:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline, 1)}%")
                 print(f"  Vs Baseline_off: €{total_savings_prop_cost_vs_baseline_off:,.0f}, {fmt_optional(prop_savings_pct_vs_baseline_off, 1)}%")
+
+                if args.oracle:
+                    total_oracle_liquid_cost = env.metrics.oracle_cost
+                    total_oracle_contiguous_cost = env.metrics.oracle_contiguous_cost
+                    print("\n=== ORACLE BENCHMARKS (THEORETICAL LOWER BOUNDS) ===")
+                    if total_oracle_liquid_cost != 0.0:
+                        print("\n  Liquid Oracle (optimistic — allows job splitting):")
+                        print(f"    Total Cost:                        €{total_oracle_liquid_cost:,.0f}")
+                        liq_window = total_baseline_off_cost - total_oracle_liquid_cost
+                        liq_capture = safe_ratio((total_baseline_off_cost - total_agent_cost) * 100.0, liq_window)
+                        print(f"    Max Shifting Window (fluid):       €{liq_window:,.0f}  (baseline_off - oracle_liq)")
+                        print(f"    Agent Capture Rate:                {fmt_optional(liq_capture, 1)}%")
+                    if total_oracle_contiguous_cost != 0.0:
+                        total_oracle_contiguous_unscheduled = env.metrics.oracle_contiguous_unscheduled
+                        print("\n  Contiguous Oracle (realistic — honors job continuity):")
+                        print(f"    Total Cost:                        €{total_oracle_contiguous_cost:,.0f}")
+                        con_window = total_baseline_off_cost - total_oracle_contiguous_cost
+                        con_capture = safe_ratio((total_baseline_off_cost - total_agent_cost) * 100.0, con_window)
+                        agent_above = total_agent_cost - total_oracle_contiguous_cost
+                        print(f"    Max Shifting Window (real jobs):   €{con_window:,.0f}  (baseline_off - oracle_jcg)")
+                        print(f"    Agent Gap to Oracle:               €{agent_above:,.0f}  (agent - oracle_jcg)")
+                        print(f"    Agent Capture Rate:                {fmt_optional(con_capture, 1)}%")
+                        total_oracle_contiguous_spillover = env.metrics.oracle_contiguous_spillover
+                        if total_oracle_contiguous_unscheduled > 0:
+                            print(f"    Unscheduled Jobs (oracle):         {total_oracle_contiguous_unscheduled}  (capacity-blocked)")
+                        if total_oracle_contiguous_spillover > 0:
+                            print(f"    Cross-Episode Spillover (oracle):  {total_oracle_contiguous_spillover}  (carried to next episode)")
+                    if total_oracle_liquid_cost != 0.0 and total_oracle_contiguous_cost != 0.0:
+                        continuity_cost = total_oracle_contiguous_cost - total_oracle_liquid_cost
+                        print(f"\n  Continuity Constraint Cost:        €{continuity_cost:,.0f}  (oracle_jcg - oracle_liq)")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 
