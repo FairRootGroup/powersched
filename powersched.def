@@ -1,0 +1,63 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%labels
+    Author powersched
+    Version 1.0
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+
+    # System packages + Python 3.12 + git
+    apt-get update && apt-get install -y \
+        software-properties-common \
+        curl \
+        unzip \
+        htop \
+        && add-apt-repository ppa:deadsnakes/ppa \
+        && apt-get update \
+        && apt-get install -y \
+            python3.12 \
+            python3.12-dev \
+            python3.12-venv \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Set python3.12 as default
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
+
+    # Install pip
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+
+    # Install powersched from GitHub master zip (no auth required for public download)
+    curl -sL https://github.com/FairRootGroup/powersched/archive/refs/heads/master.zip \
+        -o /tmp/powersched.zip
+    unzip /tmp/powersched.zip -d /tmp/
+    mv /tmp/powersched-master /opt/powersched
+    rm /tmp/powersched.zip
+
+    # Install PyTorch with ROCm 6.4 support
+    pip install --no-cache-dir torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/rocm6.4
+
+    # Install project dependencies from bundled requirements
+    pip install --no-cache-dir \
+        stable-baselines3 \
+        gymnasium \
+        tensorboard \
+        matplotlib \
+        colorama \
+        numpy \
+        pandas \
+        torchinfo \
+        "setuptools>=78.1.1,<82"
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export POWERSCHED_DIR=/opt/powersched
+
+%runscript
+    cd /opt/powersched
+    exec python "$@"
