@@ -112,8 +112,8 @@ class LiquidOracle:
 
 class ContiguousOracle:
     """
-    Achievable cost benchmark under perfect price foresight, respecting all real
-    job constraints:
+    Theoretical lower bound on electricity cost that respects all real job
+    constraints except perfect foresight:
 
       - Jobs cannot start before they arrive.
       - Each job runs continuously for its full duration (no splitting/preemption).
@@ -156,7 +156,6 @@ class ContiguousOracle:
         self._prices = []
         self._jobs = []
         self.unscheduled_count = 0
-        self.spillover_count = 0
         if carried_jobs:
             for age, duration, nodes, cores in carried_jobs:
                 self._jobs.append((-age, duration, float(nodes * cores)))
@@ -181,14 +180,13 @@ class ContiguousOracle:
 
     def solve(self) -> float:
         """
-        Compute a least-slack-first greedy schedule honoring job continuity,
-        arrival times, deadlines, and capacity constraints.
+        Compute the minimum cost schedule that honors job continuity, arrival
+        times, deadlines, and capacity constraints.
 
         Returns:
-            Schedule cost (euros) under perfect price foresight.  0.0 if no jobs
-            recorded.  Not guaranteed to be the global minimum.
-            Jobs that cannot be placed (expired or fully capacity-blocked) are
-            skipped; check unscheduled_count and spillover_count after calling.
+            Minimum achievable cost (euros).  0.0 if no jobs recorded.
+            Jobs that cannot be placed (expired window or fully capacity-blocked)
+            are skipped; check unscheduled_count after calling solve().
         """
         if not self._prices or not self._jobs:
             return 0.0
@@ -223,14 +221,10 @@ class ContiguousOracle:
             t_max = min(arrival + MAX_JOB_AGE, T) - duration
 
             if t_max < t_min:
-                # For non-carried jobs (arrival >= 0): deadline = arrival + MAX_JOB_AGE > T,
-                # so the job genuinely spills into the next episode.
-                # For carried-over jobs (arrival < 0): deadline = arrival + MAX_JOB_AGE <= T,
-                # so the job expired within this episode and cannot be scheduled.
-                if arrival + MAX_JOB_AGE > T:
-                    self.spillover_count += 1
-                else:
-                    self.unscheduled_count += 1
+                # Cross-episode spillover: job arrived too late to finish within
+                # this episode but hasn't expired — it will be carried into the
+                # next episode's oracle via the reset() carryover mechanism.
+                self.spillover_count += 1
                 continue
 
             n_candidates = t_max - t_min + 1
