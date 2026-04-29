@@ -38,6 +38,10 @@ class MetricsTracker:
         self.total_cost: float = 0.0
         self.baseline_cost: float = 0.0
         self.baseline_cost_off: float = 0.0
+        self.oracle_cost: float = 0.0
+        self.oracle_contiguous_cost: float = 0.0
+        self.oracle_contiguous_unscheduled: int = 0
+        self.oracle_contiguous_spillover: int = 0
         self.total_power_consumption_mwh: float = 0.0
         self.baseline_power_consumption_mwh: float = 0.0
         self.baseline_power_consumption_off_mwh: float = 0.0
@@ -85,6 +89,10 @@ class MetricsTracker:
         self.episode_total_cost: float = 0.0
         self.episode_baseline_cost: float = 0.0
         self.episode_baseline_cost_off: float = 0.0
+        self.episode_oracle_cost: float = 0.0
+        self.episode_oracle_contiguous_cost: float = 0.0
+        self.episode_oracle_contiguous_unscheduled: int = 0
+        self.episode_oracle_contiguous_spillover: int = 0
         self.episode_total_power_consumption_mwh: float = 0.0
         self.episode_baseline_power_consumption_mwh: float = 0.0
         self.episode_baseline_power_consumption_off_mwh: float = 0.0
@@ -230,6 +238,7 @@ class MetricsTracker:
         )
         savings_vs_baseline: float = self.episode_baseline_cost - self.episode_total_cost
         savings_vs_baseline_off: float = self.episode_baseline_cost_off - self.episode_total_cost
+        savings_vs_oracle: float = self.episode_total_cost - self.episode_oracle_cost
 
         # Proportional (per-core) power: idle_base for all on-nodes + compute delta scaled by core utilization.
         # Formula per step: COST_IDLE_MW * num_on + (COST_USED_MW - COST_IDLE_MW) * (cores_used / CORES_PER_NODE)
@@ -270,11 +279,21 @@ class MetricsTracker:
             float(self.episode_jobs_dropped), savings_vs_baseline_off
         ) if savings_vs_baseline_off > 0.0 else float("nan")
 
+        self.oracle_cost += self.episode_oracle_cost
+        self.oracle_contiguous_cost += self.episode_oracle_contiguous_cost
+        self.oracle_contiguous_unscheduled += self.episode_oracle_contiguous_unscheduled
+        self.oracle_contiguous_spillover += self.episode_oracle_contiguous_spillover
+
         episode_data: dict[str, float | int] = {
             'episode': current_episode,
             'agent_cost': self.episode_total_cost,
             'baseline_cost': self.episode_baseline_cost,
             'baseline_cost_off': self.episode_baseline_cost_off,
+            'oracle_cost': self.episode_oracle_cost,
+            'oracle_contiguous_cost': self.episode_oracle_contiguous_cost,
+            'oracle_contiguous_unscheduled': self.episode_oracle_contiguous_unscheduled,
+            'oracle_contiguous_spillover': self.episode_oracle_contiguous_spillover,
+            'savings_vs_oracle': savings_vs_oracle,
             'agent_power_consumption_mwh': self.episode_total_power_consumption_mwh,
             'baseline_power_consumption_mwh': self.episode_baseline_power_consumption_mwh,
             'baseline_power_consumption_off_mwh': self.episode_baseline_power_consumption_off_mwh,

@@ -121,6 +121,7 @@ def build_command(
     flush_after_drop_streak=0,
     workloadgen_args=None,
     output_dir=None,
+    oracle=False,
 ):
     python_executable = sys.executable
     command = [
@@ -150,6 +151,8 @@ def build_command(
         command += ["--evaluate-savings", "--eval-months", str(eval_months)]
     if flush_after_drop_streak > 0:
         command += ["--flush-after-drop-streak", str(flush_after_drop_streak)]
+    if oracle:
+        command += ["--oracle"]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -370,7 +373,7 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
-                     no_tui=False):
+                     no_tui=False, output_dir=None, oracle=False):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir or "sessions")
@@ -387,6 +390,8 @@ def run_all_parallel(combinations, max_parallel, iter_limit_per_step, session, p
             job_arrival_scale, jobs_exact_replay,
             plot_dashboard, dashboard_hours, seed, seed_sweep,
             evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
+            output_dir=output_dir,
+            oracle=oracle,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -451,6 +456,7 @@ def main():
         default=0,
         help="Forward to train.py: immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
+    parser.add_argument("--oracle", action="store_true", help="Forward to train.py: enable both liquid and contiguous oracles alongside simulation.")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     add_workloadgen_args(parser)
 
@@ -519,6 +525,7 @@ def main():
         flush_after_drop_streak=args.flush_after_drop_streak,
         no_tui=args.no_tui,
         output_dir=args.output_dir,
+        oracle=args.oracle,
     )
     if failures:
         print(f"{failures} run(s) failed")
