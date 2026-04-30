@@ -453,6 +453,13 @@ def main():
                         print(f"    Max Shifting Window (real jobs):   €{con_window:,.0f}  (baseline_off - oracle_jcg)")
                         print(f"    Agent Gap to Oracle:               €{agent_above:,.0f}  (agent - oracle_jcg)")
                         print(f"    Agent Capture Rate:                {fmt_optional(con_capture, 1)}%")
+                        agent_above_rel = safe_ratio((total_agent_cost - total_oracle_contiguous_cost) * 100.0, total_oracle_contiguous_cost)
+                        print(f"    Agent above oracle (rel):          {fmt_optional(agent_above_rel, 1)}%")
+                        oracle_below_rel = safe_ratio((total_agent_cost - total_oracle_contiguous_cost) * 100.0, total_agent_cost)
+                        print(f"    Oracle below agent (rel):          {fmt_optional(oracle_below_rel, 1)}%")
+                        oracle_below_bl_rel = safe_ratio((total_baseline_off_cost - total_oracle_contiguous_cost) * 100.0, total_baseline_off_cost)
+                        print(f"    Oracle below baseline (rel):          {fmt_optional(oracle_below_bl_rel, 1)}%")
+                        print(f"    oba vs obb:          {fmt_optional(oracle_below_rel/oracle_below_bl_rel * 100, 1)}%")
                         total_oracle_contiguous_spillover = env.metrics.oracle_contiguous_spillover
                         if total_oracle_contiguous_unscheduled > 0:
                             print(f"    Unscheduled Jobs (oracle):         {total_oracle_contiguous_unscheduled}  (capacity-blocked)")
