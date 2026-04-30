@@ -7,7 +7,7 @@ Sweep job-arrival-scale values in jobs exact-replay mode and analyze:
 4) job-arrival-scale -> completion rate
 5) occupancy -> proportional effective savings (%)
 6) occupancy -> proportional effective savings_off (%)
-7) occupancy -> (baseline - agent) cost_per_1000_completed_jobs / baseline
+7) occupancy -> average wait delta (agent - baseline)
 8) occupancy -> (baseline_off - agent) cost_per_1000_completed_jobs / baseline_off
 9) occupancy -> (baseline_off - agent) proportional power / baseline_off
 10) arrival-scale -> baseline and baseline_off occupancies
@@ -904,8 +904,7 @@ def make_plot(
     prop_eff_sav_pct_std = np.array([s.prop_effective_savings_pct_std for s in ordered], dtype=float)
     prop_eff_sav_pct_off_mean = np.array([s.prop_effective_savings_pct_off_mean for s in ordered], dtype=float)
     prop_eff_sav_pct_off_std = np.array([s.prop_effective_savings_pct_off_std for s in ordered], dtype=float)
-    cost_per_1k_delta_base_mean = np.array([s.cost_per_1k_delta_pct_baseline_mean for s in ordered], dtype=float)
-    cost_per_1k_delta_base_std = np.array([s.cost_per_1k_delta_pct_baseline_std for s in ordered], dtype=float)
+    wait_delta_hours = np.array([s.wait_delta_hours for s in ordered], dtype=float)
     cost_per_1k_delta_base_off_mean = np.array([s.cost_per_1k_delta_pct_baseline_off_mean for s in ordered], dtype=float)
     cost_per_1k_delta_base_off_std = np.array([s.cost_per_1k_delta_pct_baseline_off_std for s in ordered], dtype=float)
     power_delta_base_off_mean = np.array([s.power_delta_pct_baseline_off_mean for s in ordered], dtype=float)
@@ -1115,13 +1114,13 @@ def make_plot(
         ),
     )
     _panel(
-        "07_occupancy_vs_cost_per_1k_delta_baseline",
-        "Occupancy vs Cost/1k Delta vs Baseline",
+        "07_occupancy_vs_average_wait_delta",
+        "Occupancy vs Average Wait Delta",
         "Agent Occupancy (Nodes, %) / Episode",
-        "(Baseline - Agent) / Baseline  [%]",
+        "Average Wait Delta (Agent - Baseline, hours)",
         lambda ax: (
-            plot_colored_points(ax, occ_mean, cost_per_1k_delta_base_mean, xerr=occ_std, yerr=cost_per_1k_delta_base_std),
-            _maybe_plot_fit(ax, occ_mean, cost_per_1k_delta_base_mean),
+            plot_colored_points(ax, occ_mean, wait_delta_hours, xerr=occ_std),
+            _maybe_plot_fit(ax, occ_mean, wait_delta_hours),
         ),
     )
     _panel(
