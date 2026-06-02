@@ -541,8 +541,12 @@ def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str
         "--wg-burst-heavy-prob",
         str(args.wg_burst_heavy_prob),
     ]
+    if args.seed is not None:
+        cmd.extend(["--seed", str(args.seed)])
     if args.plot_dashboard:
         cmd.append("--plot-dashboard")
+    if args.oracle:
+        cmd.append("--oracle")
     if args.dashboard_hours is not None:
         cmd.extend(["--dashboard-hours", str(args.dashboard_hours)])
     return cmd
@@ -1277,6 +1281,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-logs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
+    parser.add_argument("--oracle", action="store_true", default=False, help="Enable oracle for evaluation")
+    parser.add_argument("--seed", type=int, default=None, help="Forwarded to train.py (sampling mode only).")
     return parser
 
 
