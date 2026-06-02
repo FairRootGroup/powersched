@@ -1,5 +1,5 @@
 """
-Report the maximum jobs-per-hour for a given log file across three views:
+Report jobs-per-hour statistics for a given log file across three views:
   1. Raw       – jobs as parsed, one entry per actual job
   2. Aggregated – jobs grouped by (nodes, cores, duration), one entry per unique profile
   3. Hourly    – aggregated jobs converted to 1-hour equivalents (what the env receives)
@@ -15,8 +15,18 @@ from src.sampler_jobs import DurationSampler
 from src.config import MAX_NODES_PER_JOB, CORES_PER_NODE
 
 
+def summarize_jobs_per_hour(counts: dict[str, int], bin_minutes: int) -> tuple[str, float, float, float]:
+    rates = [count * 60.0 / bin_minutes for count in counts.values()]
+    max_period = max(counts, key=counts.get)
+    return max_period, max(rates), statistics.mean(rates), statistics.pstdev(rates)
+
+
+def count_hourly_instances(jobs: list[dict[str, int]]) -> int:
+    return sum(max(1, int(job.get("instances", 1))) for job in jobs)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Report max jobs-per-hour from a Slurm log file.")
+    parser = argparse.ArgumentParser(description="Report jobs-per-hour statistics from a Slurm log file.")
     parser.add_argument("--file-path", required=True, help="Path to the job log file")
     parser.add_argument("--bin-minutes", type=int, default=60, help="Bin size in minutes (default: 60)")
     parser.add_argument("--cores-per-node", type=int, default=CORES_PER_NODE, help=f"Cores per node (default: {CORES_PER_NODE})")
@@ -33,20 +43,17 @@ def main() -> None:
 
     # --- Raw ---
     raw_counts = {period: len(jobs) for period, jobs in s.jobs.items()}
-    max_raw_period = max(raw_counts, key=raw_counts.get)
-    max_raw = raw_counts[max_raw_period]
+    max_raw_period, max_raw, mean_raw, std_raw = summarize_jobs_per_hour(raw_counts, args.bin_minutes)
     total_hours_raw = len(raw_counts)
 
     # --- Aggregated ---
     agg_counts = {period: len(jobs) for period, jobs in s.aggregated_jobs.items()}
-    max_agg_period = max(agg_counts, key=agg_counts.get)
-    max_agg = agg_counts[max_agg_period]
+    max_agg_period, max_agg, mean_agg, std_agg = summarize_jobs_per_hour(agg_counts, args.bin_minutes)
 
     # --- Hourly-converted ---
     s.precalculate_hourly_jobs(args.cores_per_node, args.max_nodes_per_job)
-    hourly_counts = {period: len(jobs) for period, jobs in s.hourly_jobs.items()}
-    max_hourly_period = max(hourly_counts, key=hourly_counts.get)
-    max_hourly = hourly_counts[max_hourly_period]
+    hourly_counts = {period: count_hourly_instances(jobs) for period, jobs in s.hourly_jobs.items()}
+    max_hourly_period, max_hourly, mean_hourly, std_hourly = summarize_jobs_per_hour(hourly_counts, args.bin_minutes)
 
     # --- Duration stats (from all raw jobs) ---
     all_durations = [job["duration_minutes"] for jobs in s.jobs.values() for job in jobs]
@@ -62,11 +69,11 @@ def main() -> None:
     print(f"Total jobs    : {total_jobs}")
     print(f"Cores/node    : {args.cores_per_node}  |  Max nodes/job: {args.max_nodes_per_job}")
     print()
-    print(f"{'View':<12}  {'Max jobs/hour':>14}  {'At period'}")
-    print("-" * 60)
-    print(f"{'Raw':<12}  {max_raw:>14}  {max_raw_period}")
-    print(f"{'Aggregated':<12}  {max_agg:>14}  {max_agg_period}")
-    print(f"{'Hourly':<12}  {max_hourly:>14}  {max_hourly_period}")
+    print(f"{'View':<12}  {'Max jobs/hour':>14}  {'Mean jobs/hour':>15}  {'Std jobs/hour':>14}  {'At period'}")
+    print("-" * 92)
+    print(f"{'Raw':<12}  {max_raw:>14.2f}  {mean_raw:>15.2f}  {std_raw:>14.2f}  {max_raw_period}")
+    print(f"{'Aggregated':<12}  {max_agg:>14.2f}  {mean_agg:>15.2f}  {std_agg:>14.2f}  {max_agg_period}")
+    print(f"{'Hourly':<12}  {max_hourly:>14.2f}  {mean_hourly:>15.2f}  {std_hourly:>14.2f}  {max_hourly_period}")
     print()
     print(f"{'Job duration':<10}  {'minutes':>10}  {'hours':>8}")
     print("-" * 32)
