@@ -54,8 +54,8 @@ class RewardCalculator:
     # Price scaling uses active used nodes as work proxy, matching efficiency semantics.
     PRICE_ADVANTAGE_GAIN = 4.0
     # Asymmetric node scaling: high-price execution ramps faster than low-price reward.
-    PRICE_NODE_TAU_POS = 70.0
-    PRICE_NODE_TAU_NEG = 40.0
+    PRICE_NODE_TAU_POS = 25.0
+    PRICE_NODE_TAU_NEG = 15.0
     NEGATIVE_PRICE_NODE_TAU = 14.0  # fast node saturation only for negative-price overdrive
     NEGATIVE_PRICE_TAU = 8.0
     # Overdrive terms for negative prices:
@@ -237,6 +237,7 @@ class RewardCalculator:
         Hence, here new efficiency definition.'''
         total_work = num_used_nodes * COST_USED_MW + num_idle_nodes * COST_IDLE_MW
         if total_work <= 0.0:
+            #return -0.5  # all nodes off: penalize to close the "all-off is safe" loophole
             return 0.0  # nothing on => no "efficiency" signal
         return 2*(float(np.clip((num_used_nodes * COST_USED_MW) / total_work, 0.0, 1.0))) - 1.0 # scale to [-1, 1] so that it can be weighted in either direction without exceeding bounds.
 
@@ -249,7 +250,7 @@ class RewardCalculator:
         """
         step_power_mwh = power_consumption_mwh(num_on_nodes, total_used_cores)
         if step_power_mwh <= 0.0:
-            return 0.0
+            return -0.5  # all nodes off: penalize to close the stay-dark loophole
 
         if total_used_cores <= 0.0:
             efficiency_ratio = 0.0
@@ -303,7 +304,7 @@ class RewardCalculator:
         Reward/penalty for full blackout (all nodes off).
         If queue is empty, reward the blackout. If jobs are waiting, apply a smooth penalty in [-1, 0].
         """
-        BLACKOUT_QUEUE_THRESHOLD = 10  # jobs waiting until penalty saturates to -1
+        BLACKOUT_QUEUE_THRESHOLD = 100  # jobs waiting until penalty saturates to -1
         SATURATION_FACTOR = 2
         on_nodes = num_used_nodes + num_idle_nodes
 
@@ -311,7 +312,7 @@ class RewardCalculator:
             return 0.0  # only care about full blackout
 
         if num_unprocessed_jobs <= 0:
-            return 1.0  # correct blackout
+            return 0.0  # correct blackout: neutral, no bonus (bonus was a loophole for drop-to-empty)
 
         ratio = num_unprocessed_jobs / max(BLACKOUT_QUEUE_THRESHOLD, 1)
         penalty = np.exp(-ratio * SATURATION_FACTOR) - 1.0
