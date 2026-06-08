@@ -73,7 +73,6 @@ def main():
     parser.add_argument("--session", default="default", help="Session ID")
     parser.add_argument(
         "--output-dir",
-        "--output_dir",
         dest="output_dir",
         default="sessions",
         help="Base directory for all output (models, logs, plots). Defaults to 'sessions'.",
@@ -459,7 +458,12 @@ def main():
                         print(f"    Oracle below agent (rel):          {fmt_optional(oracle_below_rel, 1)}%")
                         oracle_below_bl_rel = safe_ratio((total_baseline_off_cost - total_oracle_contiguous_cost) * 100.0, total_baseline_off_cost)
                         print(f"    Oracle below baseline (rel):          {fmt_optional(oracle_below_bl_rel, 1)}%")
-                        print(f"    oba vs obb:          {fmt_optional(oracle_below_rel/oracle_below_bl_rel * 100, 1)}%")
+                        oba_vs_obb = (
+                            safe_ratio(oracle_below_rel * 100.0, oracle_below_bl_rel)
+                            if (oracle_below_rel is not None and oracle_below_bl_rel is not None)
+                            else None
+                        )
+                        print(f"    oba vs obb:          {fmt_optional(oba_vs_obb, 1)}%")
                         total_oracle_contiguous_spillover = env.metrics.oracle_contiguous_spillover
                         if total_oracle_contiguous_unscheduled > 0:
                             print(f"    Unscheduled Jobs (oracle):         {total_oracle_contiguous_unscheduled}  (capacity-blocked)")

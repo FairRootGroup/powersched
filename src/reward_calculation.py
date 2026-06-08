@@ -325,12 +325,16 @@ class RewardCalculator:
     def _reward_price_quantile_utilization(self, current_price: float, used_cores: int) -> float:
         """
         Quantile-based price reward using the rolling forecast window the agent sees.
+        Reward useful work when the current hour sits in the cheap part of the forecast
+        band and penalize it when the hour sits in the expensive part.
 
         The reward is positive when running now is cheap relative to the upcoming
         forecast horizon, negative when it is expensive relative to better points
         later in the window, and smooth inside the quantile band.
         Useful work is still scaled via the existing equivalent-node saturation, and
         negative-price overdrive remains active regardless of the quantile band.
+        This term does not reward "doing nothing"; it only shapes *when* active work
+        should happen. Deferred-work pressure is handled separately by the backlog term.
         """
         if used_cores <= 0.0:
             return 0.0

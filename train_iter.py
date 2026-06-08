@@ -582,6 +582,7 @@ def main():
         jobs_exact_replay=args.jobs_exact_replay,
         plot_dashboard=args.plot_dashboard,
         dashboard_hours=args.dashboard_hours,
+        seeds=seeds,
         seed_sweep=(args.seeds is not None),
         evaluate_savings=args.evaluate_savings,
         eval_months=args.eval_months,

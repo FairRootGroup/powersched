@@ -156,6 +156,7 @@ class ContiguousOracle:
         self._prices = []
         self._jobs = []
         self.unscheduled_count = 0
+        self.spillover_count = 0
         if carried_jobs:
             for age, duration, nodes, cores in carried_jobs:
                 self._jobs.append((-age, duration, float(nodes * cores)))
@@ -189,6 +190,8 @@ class ContiguousOracle:
             are skipped; check unscheduled_count after calling solve().
         """
         if not self._prices or not self._jobs:
+            self.unscheduled_count = 0
+            self.spillover_count = 0
             return 0.0
 
         T = len(self._prices)
@@ -224,7 +227,14 @@ class ContiguousOracle:
                 # Cross-episode spillover: job arrived too late to finish within
                 # this episode but hasn't expired — it will be carried into the
                 # next episode's oracle via the reset() carryover mechanism.
-                self.spillover_count += 1
+                latest_start_deadline = arrival + MAX_JOB_AGE - duration
+                # If deadline already makes the window impossible, this job is
+                # genuinely unschedulable (not spillover).
+                if latest_start_deadline < t_min:
+                    self.unscheduled_count += 1
+                else:
+                    # Window is only impossible because the episode horizon ends.
+                    self.spillover_count += 1
                 continue
 
             n_candidates = t_max - t_min + 1

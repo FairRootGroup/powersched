@@ -454,17 +454,9 @@ class ComputeClusterEnv(gym.Env):
             self._mark_queue_backlog_mutation()
             self._update_pending_job_stats(job_queue_2d)
             self.state['predicted_prices'] = self.prices.predicted_prices.copy()
-        if self.oracle is not None or self.contiguous_oracle is not None:
-            job_queue_2d = self.state['job_queue'].reshape(-1, 4)
-            active_rows = job_queue_2d[job_queue_2d[:, 0] > 0]
-            carried: list = [(int(r[1]), int(r[0]), int(r[2]), int(r[3])) for r in active_rows]
-            carried += [(int(j[1]), int(j[0]), int(j[2]), int(j[3])) for j in self.backlog_queue]
-        if self.oracle is not None:
-            self.oracle.reset(carried_jobs=carried if carried else None)
-        if self.contiguous_oracle is not None:
-            self.contiguous_oracle.reset(carried_jobs=carried if carried else None)
+        
         if "price_start_index" in options:
-            if self.prices is not None and self.prices.external_prices is not None:
+            if self.prices.external_prices is not None:
                 n_prices = len(self.prices.external_prices)
                 start_index = int(options["price_start_index"]) % n_prices
             else:

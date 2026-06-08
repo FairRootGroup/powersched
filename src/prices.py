@@ -50,7 +50,7 @@ class Prices:
     
     
     def _synthetic_price_logic(self, t: int) -> float:
-        return 250.0 if (t % 24) < 12 else -10.0
+        return 250.0 if (t % 24) < 12 else 10.0
 
     def get_real_price(self, shifted_price: float) -> float:
         return shifted_price - self.price_shift
