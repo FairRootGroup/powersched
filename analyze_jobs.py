@@ -34,6 +34,9 @@ def main() -> None:
     parser.add_argument("--verbose", action="store_true", help="Print top-N hours for each view")
     parser.add_argument("--top", type=int, default=5, help="Number of top hours to show with --verbose (default: 5)")
     args = parser.parse_args()
+    if args.bin_minutes <= 0:
+        print("--bin-minutes must be a positive integer.", file=sys.stderr)
+        sys.exit(2)
 
     s = DurationSampler()
     result = s.parse_jobs(args.file_path, args.bin_minutes)
@@ -43,6 +46,9 @@ def main() -> None:
 
     # --- Raw ---
     raw_counts = {period: len(jobs) for period, jobs in s.jobs.items()}
+    if not raw_counts or all(v == 0 for v in raw_counts.values()):
+        print("No jobs found in parsed data; cannot compute statistics.", file=sys.stderr)
+        sys.exit(1)
     max_raw_period, max_raw, mean_raw, std_raw = summarize_jobs_per_hour(raw_counts, args.bin_minutes)
     total_hours_raw = len(raw_counts)
 
@@ -53,6 +59,9 @@ def main() -> None:
     # --- Hourly-converted ---
     s.precalculate_hourly_jobs(args.cores_per_node, args.max_nodes_per_job)
     hourly_counts = {period: count_hourly_instances(jobs) for period, jobs in s.hourly_jobs.items()}
+    if not hourly_counts or all(v == 0 for v in hourly_counts.values()):
+        print("No jobs found in parsed data; cannot compute statistics.", file=sys.stderr)
+        sys.exit(1)
     max_hourly_period, max_hourly, mean_hourly, std_hourly = summarize_jobs_per_hour(hourly_counts, args.bin_minutes)
 
     # --- Duration stats (from all raw jobs) ---

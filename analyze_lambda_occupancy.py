@@ -596,7 +596,7 @@ def run_lambda_eval(args: argparse.Namespace, project_root: Path, lambda_value: 
     if agent_wait_summary is None or baseline_wait_summary is None:
         print(f"[warn] lambda={lambda_value}: could not parse run-level wait summary; effective savings may be NaN.")
         agent_avg_wait_hours = float(np.mean(avg_wait))
-        baseline_avg_wait_hours = float(np.mean(avg_wait))
+        baseline_avg_wait_hours = float("nan")
     else:
         agent_avg_wait_hours = float(agent_wait_summary)
         baseline_avg_wait_hours = float(baseline_wait_summary)
