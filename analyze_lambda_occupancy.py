@@ -445,10 +445,6 @@ def make_plot(
             plt.close(fig_i)
 
 
-def unique_ints_sorted(values: list[int]) -> list[int]:
-    return metrics.unique_ints_sorted(values)
-
-
 def geometric_int_space(low: int, high: int, n: int) -> list[int]:
     if n <= 1 or low == high:
         return [int(low)]
