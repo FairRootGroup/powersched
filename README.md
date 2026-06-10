@@ -46,4 +46,4 @@ Current intended sequence:
 
 In short: more steps on the full problem mostly improve whatever basin the optimizer already occupies; the curriculum is meant to make the correct basin discoverable first.
 
-For a more formal write-up, see [analysis/curriculum_argument.md](analysis/curriculum_argument.md).
+For a more formal write-up, see [curriculum_argument.md](curriculum_argument.md) and [curriculum_setup.md](curriculum_setup.md).
