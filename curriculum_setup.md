@@ -160,9 +160,9 @@ Steps: 1M
 # next stage continues with --continue-existing-only
 ```
 
-## Stage C: Expensive-Half-Heavy or Bursty Arrivals + Logic Prices
+## Stage C: Bursty Arrivals + Logic Prices
 
-Goal: force deferral under pressure, then aggressive clearing in cheap hours.
+Goal: test queue-spike robustness while preserving the defer-then-clear pattern.
 
 Steps: 1M
 

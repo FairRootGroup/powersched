@@ -107,9 +107,9 @@ This stage isolates the phase rule itself. With deterministic 12-hour expensive 
 
 This removes excess slack. If the cheap half-day can clear everything trivially, the agent does not need to learn disciplined backlog management. Increasing load forces the price-timing decision to matter.
 
-### Stage C: expensive-half-heavy or bursty arrivals + logic prices
+### Stage C: bursty arrivals + logic prices
 
-This stage specifically targets the trickle policy. Concentrating or bursting arrivals into the expensive half creates a sharper test: the agent must wait under pressure, then ramp aggressively in the cheap window.
+This stage tests queue-spike robustness. A small per-hour probability of a burst injects sudden load spikes on top of base arrivals. Because the burst check is price-blind - applied with equal probability across all 336 hours - spikes are distributed roughly evenly between expensive and cheap periods. The agent must absorb unpredictable surges without destabilizing, while still maintaining the defer-then-clear pattern it learned in Stage B.
 
 ### Stage D: main arrivals + logic prices
 

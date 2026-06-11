@@ -39,7 +39,7 @@ Current intended sequence:
 
 1. Stage A: flat arrivals + logic prices.
 2. Stage B: high-load flat arrivals + logic prices.
-3. Stage C: expensive-half-heavy or bursty arrivals + logic prices.
+3. Stage C: bursty arrivals + logic prices.
 4. Stage D: main arrivals + logic prices.
 5. Stage E: main arrivals + noisy logic prices.
 6. Stage F: main arrivals + real prices.
