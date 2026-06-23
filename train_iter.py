@@ -123,6 +123,7 @@ def build_command(
     workloadgen_args=None,
     output_dir=None,
     oracle=False,
+    net_arch=None,
 ):
     python_executable = sys.executable
     command = [
@@ -154,6 +155,8 @@ def build_command(
         command += ["--flush-after-drop-streak", str(flush_after_drop_streak)]
     if oracle:
         command += ["--oracle"]
+    if net_arch is not None:
+        command += ["--net-arch", net_arch]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -409,7 +412,7 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
-                     multi_seed=False, no_tui=False, output_dir="sessions", oracle=False):
+                     multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -425,6 +428,7 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
             output_dir=output_dir,
             oracle=oracle,
+            net_arch=net_arch,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -490,6 +494,7 @@ def main():
         help="Forward to train.py: immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
     parser.add_argument("--oracle", action="store_true", help="Forward to train.py: enable both liquid and contiguous oracles alongside simulation.")
+    parser.add_argument("--net-arch", type=str, default=None, help="Forward to train.py: hidden layer sizes for policy/value networks (e.g. '256,256')")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -592,6 +597,7 @@ def main():
         no_tui=args.no_tui,
         output_dir=args.output_dir,
         oracle=args.oracle,
+        net_arch=args.net_arch,
     )
     if failures:
         print(f"{failures} run(s) failed")
