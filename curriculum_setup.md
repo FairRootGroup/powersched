@@ -25,55 +25,36 @@ Important repo-specific rules:
 
 ## Shared Setup
 
-### Working directory
+Fill in the variables below once; every stage command reuses them.
 
 ```bash
-# cd /path/to/powersched
-```
+cd /path/to/powersched
+source venv/bin/activate
 
-### Session / output naming
+# --- fill these in ---
+SESSION="curriculum_v1"
+OUTPUT_DIR="sessions"
+SEED=10
+HOURLY_JOBS="/path/to/allusers-main-30.log"
+ARRIVAL_SCALE=2.0
+# ---------------------
 
-Use one session name for the full curriculum run.
+COMMON_TRAIN_ARGS="
+  --fix-weights efficiency,price,idle,job-age,drop
+  --fix-values 0.3,0.5,0.0,0.2,0.0
+  --session $SESSION
+  --output-dir $OUTPUT_DIR
+  --parallel 10
+  --plot-dashboard
+  --seed $SEED
+  --net-arch 64,64
+  --flush-after-drop-streak 3
+"
+# --iter-limit-per-step is cumulative (counts total iters across all stages),
+# so each stage passes its own value; see per-stage commands below.
 
-```bash
-# session / output conventions
-```
-
-### Shared training arguments
-
-Arguments that should stay the same across all stages.
-
-```bash
-# python train_iter.py [COMMON_ARGS] [STAGE_ARGS]
-```
-
-```bash
-# COMMON_ARGS:
-# --fix-weights idle,drop
-# --fix-values 0.0,0.0
-# --iter-limit-per-step 10
-# --session [SESSION_NAME]
-# --output-dir [OUTPUT_DIR]
-# --parallel 10
-# --plot-dashboard
-# --seed 10
-# --flush-after-drop-streak 3
-```
-
-### Shared evaluation arguments
-
-Use the same pattern for stage evaluation.
-
-```bash
-# python train.py [COMMON_EVAL_ARGS] [STAGE_ARGS] --evaluate-savings
-```
-
-```bash
-# COMMON_EVAL_ARGS:
-# --session [SESSION_NAME]
-# --output-dir [OUTPUT_DIR]
-# --seed 10
-# --model [MODEL_ID]
+# --model <timestep> loads a specific checkpoint; omit to use the latest
+COMMON_EVAL_ARGS="--session $SESSION --output-dir $OUTPUT_DIR --seed $SEED"
 ```
 
 ### Shared checkpoint management
@@ -81,11 +62,13 @@ Use the same pattern for stage evaluation.
 These are the manual intervention points between stages.
 
 ```bash
-# backup models / model directories after each stage
-```
+# backup models after a stage (substitute STAGE_NAME)
+cp -r $OUTPUT_DIR/$SESSION/models  $OUTPUT_DIR/${SESSION}_stage_STAGENAME_backup
 
-```bash
 # prune non-promising models from the active session directory
+rm $OUTPUT_DIR/$SESSION/models/<weights_prefix>/<timestep>.zip
+
+# next stage continues with survivors only (--continue-existing-only is already in stage B+ commands)
 ```
 
 ### Stage execution template
@@ -94,100 +77,94 @@ Repeat this for every stage, substituting the stage-specific arguments:
 
 1. Train:
    ```bash
-   # python train_iter.py [COMMON_ARGS] [STAGE_X_ARGS]
+   python train_iter.py $COMMON_TRAIN_ARGS $STAGE_ARGS
    ```
 
 2. Evaluate (optional):
    ```bash
-   # python train.py [COMMON_EVAL_ARGS] [STAGE_X_ARGS] --evaluate-savings
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
    ```
 
 3. Promote:
    ```bash
    # backup checkpoints
    # prune rejected checkpoints from active session
-   # next stage continues with --continue-existing-only
    ```
 
 ## Stage A: Flat Arrivals + Logic Prices
 
 1. Goal: learn the basic defer-then-clear timing under simple price phases.
-2. Steps: 1M
-3. Stage-specific arguments:
+2. Steps: 1M (cumulative: 1M = 10 iters)
+3. Commands:
    ```bash
-   # --workload-gen flat
-   # --wg-flat-targets4 150,1,1,2
-   # --wg-burst-small-prob 0.0
-   # --wg-burst-heavy-prob 0.0
-   # --prices ""
+   STAGE_ARGS="--workload-gen flat --wg-flat-targets4 150,1,1,2 --wg-burst-small-prob 0.0 --wg-burst-heavy-prob 0.0"
+
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 10 $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
    ```
-4. Follow the [stage execution template](#stage-execution-template).
 
 ## Stage B: High-Load Flat Arrivals + Logic Prices
 
 1. Goal: keep the same timing behavior, but under less slack.
-2. Steps: 1M
-3. Stage-specific arguments:
+2. Steps: 1M (cumulative: 2M = 20 iters)
+3. Commands:
    ```bash
-   # --workload-gen flat
-   # --wg-flat-targets4 1200,1,1,2
-   # --wg-burst-small-prob 0.0
-   # --wg-burst-heavy-prob 0.0
-   # --prices ""
+   STAGE_ARGS="--workload-gen flat --wg-flat-targets4 1200,1,1,2 --wg-burst-small-prob 0.0 --wg-burst-heavy-prob 0.0"
+
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 20 --continue-existing-only $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
    ```
-4. Follow the [stage execution template](#stage-execution-template).
 
 ## Stage C: Bursty Arrivals + Logic Prices
 
 1. Goal: test queue-spike robustness while preserving the defer-then-clear pattern.
-2. Steps: 1M
-3. Stage-specific arguments:
+2. Steps: 1M (cumulative: 3M = 30 iters)
+3. Commands:
    ```bash
-   # --workload-gen flat
-   # --wg-flat-targets4 600,1,1,2
-   # --wg-burst-small-prob 0.05
-   # --wg-burst-heavy-prob 0.0
-   # --prices ""
-   ```
-4. Follow the [stage execution template](#stage-execution-template).
+   STAGE_ARGS="--workload-gen flat --wg-flat-targets4 600,1,1,2 --wg-burst-small-prob 0.05 --wg-burst-heavy-prob 0.0"
 
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 30 --continue-existing-only $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
+   ```
 
 ## Stage D: Main Arrivals + Logic Prices
 
 1. Goal: move to the real workload structure while keeping simple price phases.
-2. Steps: 2M+
-3. Stage-specific arguments:
+2. Steps: 2M+ (cumulative: 5M+ = 50+ iters)
+3. Note: trained on `ARRIVAL_SCALE=2.0`, but staged scaling such as `1.0 -> 2.0` is also possible.
+4. Commands:
    ```bash
-   # --hourly-jobs [PATH_TO_MAIN_LOG]
-   # --prices ""
-   # --job-arrival-scale [SCALE]
+   STAGE_ARGS="--hourly-jobs $HOURLY_JOBS --job-arrival-scale $ARRIVAL_SCALE"
+
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 50 --continue-existing-only $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
    ```
-   Note: trained on `2.0`, but staged scaling such as `1.0 -> 2.0` is also possible.
-4. Follow the [stage execution template](#stage-execution-template).
 
 ## Stage E: Main Arrivals + Noisy Logic Prices (Optional)
 
 1. Goal: keep the learned policy while adding moderate price irregularity.
 2. Note: usually skipped — another run with higher job scale is often used instead. The idea remains valid but does not change much in practice.
-3. Stage-specific arguments:
+3. Commands:
    ```bash
-   # [fill in noisy-logic-price setup]
+   STAGE_ARGS="[fill in noisy-logic-price setup]"
+
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step [cumulative] --continue-existing-only $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
    ```
-4. Follow the [stage execution template](#stage-execution-template).
 
 ## Stage F: Main Arrivals + Real Prices
 
 1. Goal: final fine-tuning on the full target setup.
-2. Steps: 5M+ (up to 10M)
-3. Stage-specific arguments:
+2. Steps: 5M+ up to 10M (cumulative: 100–150 iters from stage D baseline)
+3. Commands:
    ```bash
-   # --hourly-jobs [PATH_TO_MAIN_LOG]
-   # --prices "data/prices_2023.csv"
-   # --job-arrival-scale [SCALE]
-   ```
-4. Follow the [stage execution template](#stage-execution-template), then for the final selection:
-   ```bash
+   STAGE_ARGS="--hourly-jobs $HOURLY_JOBS --prices data/prices_2023.csv --job-arrival-scale $ARRIVAL_SCALE"
+
+   python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 100 --continue-existing-only $STAGE_ARGS
+   python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
+
    # final checkpoint backup
+   cp -r $OUTPUT_DIR/$SESSION/models  $OUTPUT_DIR/${SESSION}_final_backup
    # final evaluation / comparison command
    ```
 
