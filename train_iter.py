@@ -9,6 +9,7 @@ import threading
 import glob
 from src.arrival_scale import validate_job_arrival_scale
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
+from src.session_log import log_invocation
 
 
 def norm_path(x):
@@ -537,6 +538,9 @@ def main():
             parser.error("--seeds must be a comma-separated list of integers (e.g. 42,123,456)")
     else:
         seeds = [args.seed]  # may be None (no seed)
+
+    session_root = os.path.join(args.output_dir, args.session) if args.session else args.output_dir
+    log_invocation(session_root)
 
     combinations = generate_weight_combinations(step=args.step, fixed_weights=fixed_weights)
     workloadgen_args = build_workloadgen_cli_args(args)

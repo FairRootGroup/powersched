@@ -17,6 +17,7 @@ from src.evaluation_summary import build_episode_summary_line, mean_occupancy_pc
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
+from src.session_log import log_invocation
 import time
 
 
@@ -154,6 +155,7 @@ def main():
     os.makedirs(models_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
+    log_invocation(session_root)
 
     # Load Workload Generator:
 
