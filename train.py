@@ -87,6 +87,10 @@ def main():
     parser.add_argument("--dashboard-interval", type=int, default=10000, help="Hours between dashboard plots (default: 10000).")
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
+    parser.add_argument("--n-steps", type=int, default=64, help="Number of environment steps collected per PPO rollout (default: 64). Increase for larger networks (e.g. 512 for 256x256).")
+    parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size for PPO gradient updates (default: 64). Should be <= --n-steps. Increase for larger networks (e.g. 256 for 256x256).")
+    parser.add_argument("--learning-rate", type=float, default=3e-4, help="PPO learning rate (default: 3e-4). Reduce for larger networks (e.g. 1e-4 for 256x256).")
+    parser.add_argument("--clip-range", type=float, default=0.2, help="PPO clip range for policy updates (default: 0.2). Tighten for larger networks (e.g. 0.1 for 256x256).")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
     parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
@@ -231,7 +235,7 @@ def main():
                 job_age_weight=weights.job_age_weight,
             ) + seed_suffix,
         )
-        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=64, batch_size=64, device=args.device)
+        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device)
     else:
         print(f"Starting a new model training...")
         # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
@@ -241,7 +245,7 @@ def main():
             net_arch=dict(pi=net_arch_layers, vf=net_arch_layers)
         )
         print(f"Network architecture: {net_arch_layers}")
-        model = PPO('MultiInputPolicy', env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=64, batch_size=64, device=args.device, verbose=1)
+        model = PPO('MultiInputPolicy', env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device, verbose=1)
 
     print(f"Device: {model.device}")
     if args.print_policy:

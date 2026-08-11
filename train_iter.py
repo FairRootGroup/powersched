@@ -125,6 +125,11 @@ def build_command(
     output_dir=None,
     oracle=False,
     net_arch=None,
+    n_steps=None,
+    batch_size=None,
+    learning_rate=None,
+    clip_range=None,
+    ent_coef=None,
 ):
     python_executable = sys.executable
     command = [
@@ -158,6 +163,16 @@ def build_command(
         command += ["--oracle"]
     if net_arch is not None:
         command += ["--net-arch", net_arch]
+    if n_steps is not None:
+        command += ["--n-steps", str(n_steps)]
+    if batch_size is not None:
+        command += ["--batch-size", str(batch_size)]
+    if learning_rate is not None:
+        command += ["--learning-rate", str(learning_rate)]
+    if clip_range is not None:
+        command += ["--clip-range", str(clip_range)]
+    if ent_coef is not None:
+        command += ["--ent-coef", str(ent_coef)]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -413,7 +428,8 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      job_durations, jobs, hourly_jobs, job_arrival_scale, jobs_exact_replay,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
-                     multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None):
+                     multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None,
+                     n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -430,6 +446,11 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             output_dir=output_dir,
             oracle=oracle,
             net_arch=net_arch,
+            n_steps=n_steps,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            clip_range=clip_range,
+            ent_coef=ent_coef,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -496,6 +517,11 @@ def main():
     )
     parser.add_argument("--oracle", action="store_true", help="Forward to train.py: enable both liquid and contiguous oracles alongside simulation.")
     parser.add_argument("--net-arch", type=str, default=None, help="Forward to train.py: hidden layer sizes for policy/value networks (e.g. '256,256')")
+    parser.add_argument("--n-steps", type=int, default=None, help="Forward to train.py: PPO rollout length (default: 64; try 512 for 256x256 networks).")
+    parser.add_argument("--batch-size", type=int, default=None, help="Forward to train.py: PPO mini-batch size (default: 64; try 256 for 256x256 networks).")
+    parser.add_argument("--learning-rate", type=float, default=None, help="Forward to train.py: PPO learning rate (default: 3e-4; try 1e-4 for 256x256 networks).")
+    parser.add_argument("--clip-range", type=float, default=None, help="Forward to train.py: PPO clip range (default: 0.2; try 0.1 for 256x256 networks).")
+    parser.add_argument("--ent-coef", type=float, default=None, help="Forward to train.py: PPO entropy coefficient (default: 0.0; try 0.01 for 256x256 networks).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -602,6 +628,11 @@ def main():
         output_dir=args.output_dir,
         oracle=args.oracle,
         net_arch=args.net_arch,
+        n_steps=args.n_steps,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        clip_range=args.clip_range,
+        ent_coef=args.ent_coef,
     )
     if failures:
         print(f"{failures} run(s) failed")
