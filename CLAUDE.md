@@ -132,7 +132,7 @@ python -m test.test_env
 # Environment sanity tests (three modes)
 python -m test.test_sanity_env --steps 200                                    # Quick invariants
 python -m test.test_sanity_env --check-gym --check-determinism --steps 300    # Full checks
-python -m test.test_sanity_env --prices data/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300  # With external data
+python -m test.test_sanity_env --prices data-external/prices_2023.csv --hourly-jobs data/allusers-gpu-30.log --steps 300  # With external data
 
 # Workload generator tests
 python -m test.test_sanity_workloadgen

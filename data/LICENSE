@@ -1,0 +1,27 @@
+Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International (CC BY-NC-ND 4.0)
+
+This license applies to the contents of the `data/` directory (anonymized/
+derived HPC job trace data, e.g. the `allusers-*-30.log`,
+`jobs_default_cleaned.txt`, and `durations_*.txt` files, derived from
+internal production Slurm logs at GSI/FAIR), and does not apply to the
+source code of this repository, which is licensed separately (see the
+top-level LICENSE file, GPL-3.0). Third-party data with its own license
+(e.g. electricity price data) lives under `data-external/` instead, each
+with its own LICENSE file.
+
+You are free to:
+  - Share — copy and redistribute the material in any medium or format,
+    for any non-commercial purpose.
+
+Under the following terms:
+  - Attribution — You must give appropriate credit, provide a link to the
+    license, and indicate if changes were made.
+  - NonCommercial — You may not use the material for commercial purposes.
+  - NoDerivatives — If you remix, transform, or build upon the material,
+    you may not distribute the modified material.
+  - No additional restrictions — You may not apply legal terms or
+    technological measures that legally restrict others from doing
+    anything the license permits.
+
+Full license text: https://creativecommons.org/licenses/by-nc-nd/4.0/legalcode
+Human-readable summary: https://creativecommons.org/licenses/by-nc-nd/4.0/

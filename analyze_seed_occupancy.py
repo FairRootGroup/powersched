@@ -469,7 +469,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Sweep random seeds in --hourly-jobs mode and fit occupancy/savings trend lines."
     )
 
-    parser.add_argument("--prices", default="./data/prices_2023.csv")
+    parser.add_argument("--prices", default="./data-external/prices_2023.csv")
     parser.add_argument("--hourly-jobs", required=True, help="Path forwarded to train.py --hourly-jobs")
     parser.add_argument("--session", default="")
     parser.add_argument("--efficiency-weight", type=float, default=0.6)

@@ -547,7 +547,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     # Core train.py params (default values mirror the command from the request).
-    parser.add_argument("--prices", default="./data/prices_2023.csv")
+    parser.add_argument("--prices", default="./data-external/prices_2023.csv")
     parser.add_argument("--session", default="")
     parser.add_argument("--efficiency-weight", type=float, default=0.6)
     parser.add_argument("--price-weight", type=float, default=0.1)

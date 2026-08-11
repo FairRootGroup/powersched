@@ -158,7 +158,7 @@ Repeat this for every stage, substituting the stage-specific arguments:
 2. Steps: 5M+ up to 10M (cumulative: 100–150 iters from stage D baseline)
 3. Commands:
    ```bash
-   STAGE_ARGS="--hourly-jobs $HOURLY_JOBS --prices data/prices_2023.csv --job-arrival-scale $ARRIVAL_SCALE"
+   STAGE_ARGS="--hourly-jobs $HOURLY_JOBS --prices data-external/prices_2023.csv --job-arrival-scale $ARRIVAL_SCALE"
 
    python train_iter.py $COMMON_TRAIN_ARGS --iter-limit-per-step 100 --continue-existing-only $STAGE_ARGS
    python train.py $COMMON_EVAL_ARGS $STAGE_ARGS --evaluate-savings
