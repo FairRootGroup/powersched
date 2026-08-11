@@ -1,0 +1,26 @@
+{
+    "creators": [
+        {
+            "orcid": "0000-0002-6249-155X",
+            "name": "Rybalchenko, Alexey"
+        },
+        {
+            "name": "Lorenz, Enis"
+        },
+        {
+            "name": "Kollegger, Thorsten"
+        }
+    ],
+    "description": "<p>Reinforcement-learning-based compute cluster scheduler optimizing electricity cost and job efficiency via PPO.</p>",
+    "related_identifiers": [
+        {
+            "identifier": "https://github.com/FairRootGroup/powersched/",
+            "relation": "isSupplementTo",
+            "resource_type": "software",
+            "scheme": "url"
+        }
+    ],
+    "title": "PowerSched",
+    "license": "GPL-3.0-only",
+    "upload_type": "software"
+}
