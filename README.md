@@ -1,3 +1,5 @@
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21888087.svg)](https://doi.org/10.5281/zenodo.21888087)
+
 #### powersched
 
 `python ./checkenv.py` - Check the environment.
