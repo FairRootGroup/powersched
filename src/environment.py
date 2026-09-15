@@ -477,6 +477,16 @@ class ComputeClusterEnv(gym.Env):
         return self.state, {}
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
+        # Timing convention: `action` was chosen by the policy from the observation
+        # returned at the end of the previous step()/reset(). That observation's
+        # predicted_prices already forecasts this hour's price (get_current_price() below
+        # just reads predicted_prices[0]), so price is known when the action is chosen.
+        # Job arrivals are not: this hour's new jobs are generated below, *after* that
+        # choice was made, so the action cannot react to them directly. It still affects
+        # whether they launch this step (node capacity is adjusted before dispatch), and
+        # their downstream consequences (remaining queue/backlog) are reflected in the
+        # observation returned at the end of this step, which is what the *next* action
+        # will be chosen from.
         self.current_step += 1
         self.metrics.current_hour += 1
         self.metrics.total_time_hours += 1
@@ -555,7 +565,9 @@ class ComputeClusterEnv(gym.Env):
         self.env_print(f">>> adding {len(new_jobs)} new jobs to the queue: {' '.join(['[{}h {} {}x{}]'.format(d, a, n, c) for d, a, n, c in new_jobs])}")
         self.env_print("job_queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
 
-        # Snapshot the pending queue the agent is deciding about *before* launching jobs.
+        # Snapshot the pending queue before launching jobs, for the reward calculation's
+        # decision_pending_core_demand input (not something the agent observed when it chose
+        # `action` — that choice was already made from the previous step's observation).
         decision_pending_summary = self._pending_work_summary(job_queue_2d)
 
         action_type, action_magnitude, do_refill = action
