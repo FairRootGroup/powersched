@@ -18,6 +18,10 @@ For each scale, this script runs train.py in evaluation mode for one year
 (12 months = 24 episodes), parses per-episode metrics from stdout, computes
 mean/std, and fits optional polynomial trend lines.
 
+Reference-compatible aggregate rows are checkpointed after each run to
+eval_main.csv for sampling mode and eval_main_exact_replay_aggregate.csv for
+exact replay. The existing detailed summary.csv is also retained.
+
 Runs both modes:
 - exact replay (aggregated): --jobs --jobs-exact-replay --jobs-exact-replay-aggregate --job-arrival-scale <scale>
 - sampling mode: --hourly-jobs --job-arrival-scale <scale>
@@ -50,6 +54,7 @@ from src.analysis_naming import build_analysis_dir_name
 from src import analysis_metrics as metrics
 from src.analysis_metrics import RunStats
 from src.job_management import DISPATCHERS
+from src.evaluation_csv import build_evaluation_csv_row, write_evaluation_csv
 
 
 def build_train_command(args: argparse.Namespace, job_arrival_scale: float, replay_mode: str) -> list[str]:
@@ -629,6 +634,23 @@ def main() -> None:
     scales = with_scale_one_first(selected_scales)
 
     all_stats: list[RunStats] = []
+    evaluation_csv_paths = {
+        replay_mode: out_dir / (
+            "eval_main.csv"
+            if replay_mode == "sampling"
+            else f"eval_main_{replay_mode}.csv"
+        )
+        for replay_mode in mode_names
+    }
+    evaluation_rows_by_mode: dict[
+        str, list[dict[str, str | float | int | None]]
+    ] = {replay_mode: [] for replay_mode in mode_names}
+    for evaluation_csv_path in evaluation_csv_paths.values():
+        write_evaluation_csv(
+            evaluation_csv_path,
+            [],
+            sweep_parameter="scale",
+        )
 
     for replay_mode in mode_names:
         for scale in scales:
@@ -638,6 +660,20 @@ def main() -> None:
                 scale_part = format_scale_for_filename(scale)
                 log_path = logs_dir / f"{replay_mode}_scale_{scale_part}.log"
                 log_path.write_text(raw_output)
+            evaluation_rows_by_mode[replay_mode].append(
+                build_evaluation_csv_row(
+                    raw_output,
+                    sweep_parameter="scale",
+                    sweep_value=scale,
+                    oracle_enabled=args.oracle,
+                    model=str(args.model),
+                )
+            )
+            write_evaluation_csv(
+                evaluation_csv_paths[replay_mode],
+                evaluation_rows_by_mode[replay_mode],
+                sweep_parameter="scale",
+            )
 
     csv_path = out_dir / "summary.csv"
     json_path = out_dir / "summary.json"
@@ -649,6 +685,10 @@ def main() -> None:
                 "selected_scales": selected_scales,
                 "scales": scales,
                 "modes": mode_names,
+                "evaluation_csvs": {
+                    replay_mode: str(path)
+                    for replay_mode, path in evaluation_csv_paths.items()
+                },
                 "args": vars(args),
                 "results": [asdict(s) for s in all_stats],
             },
@@ -671,6 +711,8 @@ def main() -> None:
     print(f"  Modes: {mode_names}")
     print(f"  Evaluation months: {args.eval_months}")
     print(f"  CSV: {csv_path}")
+    for replay_mode, path in evaluation_csv_paths.items():
+        print(f"  Evaluation CSV ({replay_mode}): {path}")
     print(f"  JSON: {json_path}")
     for p in plot_paths:
         print(f"  Plot: {p}")

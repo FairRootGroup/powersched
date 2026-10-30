@@ -17,6 +17,8 @@ Sweep workload Poisson lambda values and analyze:
 For each lambda, this script runs train.py in evaluation mode for one year
 (12 months = 24 episodes), parses per-episode metrics from stdout, computes
 mean/std, and fits 3rd-order polynomial trend lines.
+Reference-compatible aggregate rows are checkpointed to ``eval_poisson.csv``
+after every completed lambda, alongside the existing detailed summary files.
 
 FAST DEBUG MODE: python analyze_lambda_occupancy.py --eval-months 1 --lambdas 1200,2000,3500 --no-plot-dashboard
 """
@@ -43,6 +45,7 @@ from src.analysis_naming import build_analysis_dir_name
 from src import analysis_metrics as metrics
 from src.analysis_metrics import RunStats
 from src.job_management import DISPATCHERS
+from src.evaluation_csv import build_evaluation_csv_row, write_evaluation_csv
 
 
 def build_train_command(args: argparse.Namespace, lambda_value: int) -> list[str]:
@@ -633,16 +636,39 @@ def main() -> None:
         logs_dir.mkdir(parents=True, exist_ok=True)
 
     cache: dict[int, RunStats] = {}
+    evaluation_csv_path = out_dir / "eval_poisson.csv"
+    evaluation_csv_rows: list[dict[str, str | float | int | None]] = []
+    # Create the artifact up front and checkpoint it after every completed run,
+    # matching the reference sweep's interruption-safe behavior.
+    write_evaluation_csv(
+        evaluation_csv_path,
+        evaluation_csv_rows,
+        sweep_parameter="lambda",
+    )
 
     def evaluate(lam: int) -> RunStats:
         lam = clamp_int(lam, args.min_lambda, args.max_lambda)
         if lam in cache:
             return cache[lam]
         stats, raw_output = run_lambda_eval(args, project_root, lam)
-        cache[lam] = stats
         if args.save_logs:
             log_path = logs_dir / f"lambda_{lam}.log"
             log_path.write_text(raw_output)
+        evaluation_csv_rows.append(
+            build_evaluation_csv_row(
+                raw_output,
+                sweep_parameter="lambda",
+                sweep_value=lam,
+                model=str(args.model),
+                oracle_enabled=args.oracle,
+            )
+        )
+        write_evaluation_csv(
+            evaluation_csv_path,
+            evaluation_csv_rows,
+            sweep_parameter="lambda",
+        )
+        cache[lam] = stats
         return stats
 
     # Attach cache reader for select_lambda_schedule().
@@ -662,6 +688,7 @@ def main() -> None:
             {
                 "created_at": datetime.now().isoformat(),
                 "selected_lambdas": selected_lambdas,
+                "evaluation_csv": str(evaluation_csv_path),
                 "args": vars(args),
                 "results": [asdict(s) for s in stats_ordered],
             },
@@ -673,6 +700,7 @@ def main() -> None:
     print("\nSweep complete.")
     print(f"  Lambdas: {selected_lambdas}")
     print(f"  Evaluation months: {args.eval_months}")
+    print(f"  Evaluation CSV: {evaluation_csv_path}")
     print(f"  CSV: {csv_path}")
     print(f"  JSON: {json_path}")
     print(f"  Plot: {plot_path}")
