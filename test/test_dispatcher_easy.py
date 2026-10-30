@@ -178,6 +178,24 @@ def test_easy_never_delays_the_oldest_blocked_job():
     assert checked > 50, checked
 
 
+def test_env_rejects_reservation_depth_below_one():
+    from src.environment import ComputeClusterEnv, Weights
+    from src.plot_config import PlotConfig
+
+    for depth in (0, -1):
+        try:
+            ComputeClusterEnv(
+                weights=Weights(efficiency_weight=0.7, price_weight=0.2, idle_weight=0.1,
+                                job_age_weight=0.0, drop_weight=0.0),
+                session="test", render_mode="none", external_prices=None, external_durations=None,
+                external_jobs=None, external_hourly_jobs=None, plot_config=PlotConfig(),
+                steps_per_iteration=1, dispatcher="easy", reservation_depth=depth,
+            )
+        except ValueError:
+            continue
+        raise AssertionError(f"reservation_depth={depth} was accepted")
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items()) if name.startswith("test_") and callable(fn)]
     for name, fn in tests:
