@@ -17,6 +17,7 @@ from src.evaluation_summary import build_episode_summary_line, mean_occupancy_pc
 from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
+from src.job_management import DISPATCHERS
 from src.session_log import log_invocation
 import time
 
@@ -102,8 +103,12 @@ def main():
         default=0,
         help="Immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
+    parser.add_argument("--dispatcher", type=str, default="firstfit", choices=DISPATCHERS, help="Job dispatcher for agent and baselines: 'firstfit' starts every queued job that fits now, in slot order; 'easy' goes oldest first with EASY backfilling (default: firstfit).")
+    parser.add_argument("--reservation-depth", type=int, default=1, help="With --dispatcher easy: number of oldest blocked jobs that get a reservation (1 = EASY, larger approaches conservative backfilling).")
 
     args = parser.parse_args()
+    if args.reservation_depth < 1:
+        parser.error("--reservation-depth must be at least 1")
     try:
         args.job_arrival_scale = validate_job_arrival_scale(args.job_arrival_scale)
     except ValueError as exc:
@@ -196,7 +201,9 @@ def main():
                             output_dir=args.output_dir,
                             jobs_exact_replay_aggregate=args.jobs_exact_replay_aggregate,
                             flush_after_drop_streak=args.flush_after_drop_streak,
-                            enable_oracle=args.oracle)
+                            enable_oracle=args.oracle,
+                            dispatcher=args.dispatcher,
+                            reservation_depth=args.reservation_depth)
     env.session_dir = session_root
     env.plots_dir = plots_dir
     env.reset(seed=args.seed)
@@ -223,6 +230,9 @@ def main():
         seed_suffix = ""
         if args.seed_path != "":
             seed_suffix = "_train" + args.seed_path + "_evalseed_" + str(args.seed)
+        # Keep evaluations under other dispatchers apart from the default firstfit ones.
+        if args.dispatcher != "firstfit":
+            seed_suffix += f"_{args.dispatcher}{args.reservation_depth}"
 
         evaluation_plots_dir = os.path.join(
             session_root,

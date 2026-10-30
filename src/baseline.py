@@ -31,6 +31,8 @@ def baseline_step(
         metrics: MetricsTracker,
         env_print: Callable[..., None],
         baseline_backlog_queue: deque,
+        dispatcher: str = "firstfit",
+        reservation_depth: int = 1,
 ) -> tuple[float, float, float, float, int, int, int, int]:
     """
     Run one step of the baseline simulation for comparison.
@@ -51,6 +53,8 @@ def baseline_step(
         metrics: MetricsTracker object to update with baseline job metrics
         env_print: Print function for logging
         baseline_backlog_queue: Overflow queue for jobs that don't fit in the main queue
+        dispatcher: Job dispatcher, same as the agent's (see job_management.DISPATCHERS)
+        reservation_depth: Number of reservations for the "easy" dispatcher
 
     Returns:
         Tuple of (
@@ -90,7 +94,8 @@ def baseline_step(
     total_dropped = queue_aged_dropped + backlog_aged_dropped + baseline_backlog_dropped
     num_launched, baseline_next_empty_slot, queue_dropped, next_job_id = assign_jobs_to_available_nodes(
         job_queue_2d, baseline_state['nodes'], baseline_cores_available,
-        baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
+        baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True,
+        dispatcher=dispatcher, reservation_depth=reservation_depth
     )
     total_dropped += queue_dropped
 
@@ -101,7 +106,8 @@ def baseline_step(
             break
         num_launched, baseline_next_empty_slot, queue_dropped, next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, baseline_state['nodes'], baseline_cores_available,
-            baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True
+            baseline_running_jobs, baseline_next_empty_slot, next_job_id, metrics, is_baseline=True,
+            dispatcher=dispatcher, reservation_depth=reservation_depth
         )
         total_dropped += queue_dropped
 

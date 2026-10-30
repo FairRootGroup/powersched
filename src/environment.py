@@ -25,7 +25,7 @@ from src.config import (
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
     assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue,
-    age_job_queue,
+    age_job_queue, DISPATCHERS,
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator, power_consumption_mwh
@@ -80,8 +80,16 @@ class ComputeClusterEnv(gym.Env):
                  output_dir: str = "sessions",
                  jobs_exact_replay_aggregate: bool = False,
                  flush_after_drop_streak: int = 0,
-                 enable_oracle: bool = False) -> None:
+                 enable_oracle: bool = False,
+                 dispatcher: str = "firstfit",
+                 reservation_depth: int = 1) -> None:
         super().__init__()
+
+        if dispatcher not in DISPATCHERS:
+            raise ValueError(f"Unknown dispatcher {dispatcher!r}, expected one of {DISPATCHERS}")
+        # Agent and baselines always share the dispatcher, so comparisons stay like for like.
+        self.dispatcher = dispatcher
+        self.reservation_depth = int(reservation_depth)
 
         self.weights = weights
         self.session = session
@@ -583,7 +591,8 @@ class ComputeClusterEnv(gym.Env):
         num_dropped_this_step = queue_aged_dropped + backlog_aged_dropped + backlog_dropped
         num_launched_jobs, self.next_empty_slot, queue_dropped, self.next_job_id = assign_jobs_to_available_nodes(
             job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
+            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False,
+            dispatcher=self.dispatcher, reservation_depth=self.reservation_depth
         )
         if num_launched_jobs > 0 or queue_dropped > 0:
             queue_backlog_mutated = True
@@ -600,7 +609,8 @@ class ComputeClusterEnv(gym.Env):
                 # Try to assign the newly queued jobs
                 extra_launched, self.next_empty_slot, extra_dropped, self.next_job_id = assign_jobs_to_available_nodes(
                     job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-                    self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False
+                    self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False,
+                    dispatcher=self.dispatcher, reservation_depth=self.reservation_depth
                 )
                 if extra_launched > 0 or extra_dropped > 0:
                     queue_backlog_mutated = True
@@ -672,7 +682,7 @@ class ComputeClusterEnv(gym.Env):
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
             current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
             self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print,
-            self.baseline_backlog_queue
+            self.baseline_backlog_queue, self.dispatcher, self.reservation_depth
         )
 
         self.metrics.baseline_cost += baseline_cost
