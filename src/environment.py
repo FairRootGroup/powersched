@@ -90,6 +90,8 @@ class ComputeClusterEnv(gym.Env):
         # Agent and baselines always share the dispatcher, so comparisons stay like for like.
         self.dispatcher = dispatcher
         self.reservation_depth = int(reservation_depth)
+        if self.reservation_depth < 1:
+            raise ValueError(f"reservation_depth must be at least 1, got {reservation_depth!r}")
 
         self.weights = weights
         self.session = session
