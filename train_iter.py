@@ -10,6 +10,7 @@ import glob
 from src.arrival_scale import validate_job_arrival_scale
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_cli_args
 from src.session_log import log_invocation
+from src.job_management import DISPATCHERS
 
 
 def norm_path(x):
@@ -130,6 +131,8 @@ def build_command(
     learning_rate=None,
     clip_range=None,
     ent_coef=None,
+    dispatcher=None,
+    reservation_depth=None,
 ):
     python_executable = sys.executable
     command = [
@@ -173,6 +176,10 @@ def build_command(
         command += ["--clip-range", str(clip_range)]
     if ent_coef is not None:
         command += ["--ent-coef", str(ent_coef)]
+    if dispatcher is not None:
+        command += ["--dispatcher", dispatcher]
+    if reservation_depth is not None:
+        command += ["--reservation-depth", str(reservation_depth)]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -429,7 +436,8 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      plot_dashboard, dashboard_hours,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
                      multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None,
-                     n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None):
+                     n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None,
+                     dispatcher=None, reservation_depth=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -451,6 +459,8 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             learning_rate=learning_rate,
             clip_range=clip_range,
             ent_coef=ent_coef,
+            dispatcher=dispatcher,
+            reservation_depth=reservation_depth,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -522,6 +532,8 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=None, help="Forward to train.py: PPO learning rate (default: 3e-4; try 1e-4 for 256x256 networks).")
     parser.add_argument("--clip-range", type=float, default=None, help="Forward to train.py: PPO clip range (default: 0.2; try 0.1 for 256x256 networks).")
     parser.add_argument("--ent-coef", type=float, default=None, help="Forward to train.py: PPO entropy coefficient (default: 0.0; try 0.01 for 256x256 networks).")
+    parser.add_argument("--dispatcher", type=str, default=None, choices=DISPATCHERS, help="Forward to train.py: job dispatcher for agent and baselines (default: firstfit).")
+    parser.add_argument("--reservation-depth", type=int, default=None, help="Forward to train.py: reservations for --dispatcher easy (default: 1).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -633,6 +645,8 @@ def main():
         learning_rate=args.learning_rate,
         clip_range=args.clip_range,
         ent_coef=args.ent_coef,
+        dispatcher=args.dispatcher,
+        reservation_depth=args.reservation_depth,
     )
     if failures:
         print(f"{failures} run(s) failed")

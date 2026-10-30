@@ -44,6 +44,7 @@ import numpy as np
 from src.analysis_naming import build_analysis_dir_name
 from src import analysis_metrics as metrics
 from src.analysis_metrics import RunStats
+from src.job_management import DISPATCHERS
 
 
 FIXED_JOB_ARRIVAL_SCALE = 1.0
@@ -85,6 +86,7 @@ def build_train_command(args: argparse.Namespace, seed: int) -> list[str]:
         cmd.append("--plot-dashboard")
     if args.dashboard_hours is not None:
         cmd.extend(["--dashboard-hours", str(args.dashboard_hours)])
+    cmd.extend(["--dispatcher", args.dispatcher, "--reservation-depth", str(args.reservation_depth)])
     return cmd
 
 
@@ -498,6 +500,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
     parser.add_argument("--seed-path", default="", help="Path if models are saved by seed (forwarded to train.py)")
+    parser.add_argument("--dispatcher", default="firstfit", choices=DISPATCHERS, help="Forwarded to train.py.")
+    parser.add_argument("--reservation-depth", type=int, default=1, help="Forwarded to train.py (easy dispatcher only).")
     return parser
 
 
@@ -529,6 +533,8 @@ def main() -> None:
         prefix = "hourlyjobs_seed_occupancy_sweep"
         if args.seed_path != "":
             prefix += "_train" + args.seed_path
+        if args.dispatcher != "firstfit":
+            prefix += f"_{args.dispatcher}{args.reservation_depth}"
         out_dir_name = build_analysis_dir_name(
             prefix=prefix,
             timestamp=timestamp,
