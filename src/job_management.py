@@ -4,10 +4,15 @@ from collections import deque
 from typing import Any
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from src.config import (
-    MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE, MAX_JOB_AGE
+    MAX_NODES, CORES_PER_NODE, MAX_BACKLOG_SIZE, MAX_JOB_AGE, MAX_JOB_DURATION
 )
 from src.metrics_tracker import MetricsTracker
+
+# firstfit: scan queue slots in order and start every job that fits now.
+# easy:     oldest job first, with EASY backfilling (reservations for the oldest blocked jobs).
+DISPATCHERS: tuple[str, ...] = ("firstfit", "easy")
 
 
 def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseline: bool = False) -> int:
@@ -215,6 +220,166 @@ def add_new_jobs(
     return new_jobs, next_empty_slot, num_dropped
 
 
+def _start_job(
+        job_queue_2d: np.ndarray,
+        job_idx: int,
+        chosen_nodes: np.ndarray,
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        job_id: int,
+        metrics: MetricsTracker,
+        is_baseline: bool,
+) -> None:
+    """Start the queued job at ``job_idx`` on ``chosen_nodes`` and clear its queue slot."""
+    job_duration, job_age, _job_nodes, job_cores_per_node = job_queue_2d[job_idx]
+
+    job_allocation = []
+    for node_idx in chosen_nodes:
+        cores_available[node_idx] -= job_cores_per_node
+        nodes[node_idx] = max(nodes[node_idx], job_duration)
+        job_allocation.append((node_idx, job_cores_per_node))
+
+    running_jobs[job_id] = {
+        "duration": job_duration,
+        "allocation": job_allocation,
+        "wait_time": int(job_age),
+    }
+    # Record scheduling delay when the job starts.
+    # Completion metrics are tracked separately when the job actually finishes.
+    if is_baseline:
+        metrics.baseline_jobs_launched += 1
+        metrics.baseline_total_job_wait_time_launch += int(job_age)
+        metrics.episode_baseline_jobs_launched += 1
+        metrics.episode_baseline_total_job_wait_time_launch += int(job_age)
+    else:
+        metrics.jobs_launched += 1
+        metrics.total_job_wait_time_launch += int(job_age)
+        metrics.episode_jobs_launched += 1
+        metrics.episode_total_job_wait_time_launch += int(job_age)
+
+    # Clear job from queue
+    job_queue_2d[job_idx] = [0, 0, 0, 0]
+
+
+def _free_core_timeline(
+        nodes: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        horizon: int,
+) -> np.ndarray:
+    """
+    Free cores per (hour from now, node) over ``horizon`` hours, from the running jobs.
+
+    A running job with ``duration`` d holds its cores for hours [0, d). Offline nodes have no free cores.
+    """
+    change = np.zeros((horizon + 1, len(nodes)), dtype=np.int32)
+    change[0] = np.where(nodes >= 0, CORES_PER_NODE, 0)
+    for job_data in running_jobs.values():
+        release = int(job_data['duration'])
+        for node_idx, cores_used in job_data['allocation']:
+            change[0, node_idx] -= cores_used
+            change[release, node_idx] += cores_used
+    return np.cumsum(change[:-1], axis=0)
+
+
+def _earliest_start(
+        timeline: np.ndarray,
+        job_duration: int,
+        job_nodes: int,
+        job_cores_per_node: int,
+        monotone: bool,
+) -> int | None:
+    """
+    Earliest hour at which ``job_nodes`` nodes each keep ``job_cores_per_node`` free cores
+    for ``job_duration`` hours, or None if that never happens within the timeline.
+    """
+    if monotone:
+        # Without reservations free cores never drop, so a window's minimum is its first hour.
+        window_min = timeline[:len(timeline) - job_duration + 1]
+    else:
+        window_min = sliding_window_view(timeline, job_duration, axis=0).min(axis=-1)
+    fits = np.count_nonzero(window_min >= job_cores_per_node, axis=1) >= job_nodes
+    starts = np.flatnonzero(fits)
+    return int(starts[0]) if len(starts) else None
+
+
+def _assign_jobs_easy(
+        job_queue_2d: np.ndarray,
+        nodes: np.ndarray,
+        cores_available: np.ndarray,
+        running_jobs: dict[int, dict[str, Any]],
+        next_empty_slot: int,
+        next_job_id: int,
+        metrics: MetricsTracker,
+        is_baseline: bool,
+        reservation_depth: int,
+) -> tuple[int, int, int, int]:
+    """
+    EASY backfilling over the visible queue, oldest job first.
+
+    A job starts if it fits now without delaying a reservation made for an older job. The first
+    ``reservation_depth`` jobs that cannot start get a reservation at their earliest possible start
+    (1 = EASY; larger values approach conservative backfilling). Reservations are planned on the online
+    nodes only: a job that cannot fit on them at any time gets no reservation and does not hold back
+    younger jobs, since providing enough online capacity is the capacity controller's job.
+    Reservations are recomputed on every call, i.e. at every scheduling pass.
+    """
+    num_processed_jobs = 0
+
+    waiting = np.flatnonzero(job_queue_2d[:, 0] > 0)
+    # Oldest first; jobs of equal age keep their slot order.
+    order = waiting[np.argsort(-job_queue_2d[waiting, 1], kind="stable")]
+
+    # Built on the first reservation; from then on it also tracks jobs started in this pass.
+    timeline = None
+    reservation_starts: list[int] = []
+
+    for job_idx in order:
+        job_duration, _job_age, job_nodes, job_cores_per_node = (int(v) for v in job_queue_2d[job_idx])
+
+        if reservation_starts:
+            # Free cores only drop where a reservation begins, so checking those hours
+            # (and now) gives each node's minimum over the job's runtime.
+            checkpoints = [0] + [t for t in reservation_starts if t < job_duration]
+            free_cores = timeline[checkpoints].min(axis=0)
+        else:
+            free_cores = cores_available
+
+        candidate_nodes = np.flatnonzero((nodes >= 0) & (free_cores >= job_cores_per_node))
+        if len(candidate_nodes) >= job_nodes:
+            chosen_nodes = candidate_nodes[:job_nodes]
+            _start_job(job_queue_2d, job_idx, chosen_nodes, nodes, cores_available,
+                       running_jobs, next_job_id, metrics, is_baseline)
+            if timeline is not None:
+                timeline[:job_duration, chosen_nodes] -= job_cores_per_node
+            next_job_id += 1
+            num_processed_jobs += 1
+            if job_idx < next_empty_slot:
+                next_empty_slot = job_idx
+            continue
+
+        if len(reservation_starts) >= reservation_depth:
+            continue
+
+        if timeline is None:
+            # Each reservation starts once running jobs and earlier reservations end at the latest.
+            max_running = max((int(j['duration']) for j in running_jobs.values()), default=0)
+            timeline = _free_core_timeline(nodes, running_jobs,
+                                           max_running + (reservation_depth + 1) * MAX_JOB_DURATION)
+
+        start = _earliest_start(timeline, job_duration, job_nodes, job_cores_per_node,
+                                monotone=not reservation_starts)
+        if start is None:
+            continue  # never fits on the online nodes: no reservation
+
+        window_free = timeline[start:start + job_duration].min(axis=0)
+        reserved_nodes = np.flatnonzero(window_free >= job_cores_per_node)[:job_nodes]
+        timeline[start:start + job_duration, reserved_nodes] -= job_cores_per_node
+        reservation_starts.append(start)
+
+    return num_processed_jobs, next_empty_slot, 0, next_job_id
+
+
 def assign_jobs_to_available_nodes(
         job_queue_2d: np.ndarray,
         nodes: np.ndarray,
@@ -224,6 +389,8 @@ def assign_jobs_to_available_nodes(
         next_job_id: int,
         metrics: MetricsTracker,
         is_baseline: bool = False,
+        dispatcher: str = "firstfit",
+        reservation_depth: int = 1,
 ) -> tuple[int, int, int, int]:
     """
     Assign jobs from queue to available nodes.
@@ -237,11 +404,19 @@ def assign_jobs_to_available_nodes(
         next_job_id: Next available job ID
         metrics: MetricsTracker object to update with completion/wait-time metrics
         is_baseline: Whether this is baseline simulation
+        dispatcher: One of DISPATCHERS
+        reservation_depth: Number of reservations for the "easy" dispatcher (1 = EASY)
 
     Returns:
         Tuple of (num_processed_jobs, updated next_empty_slot, num_dropped, updated next_job_id).
         Callers are responsible for recording ``num_dropped`` exactly once.
     """
+    if dispatcher == "easy":
+        return _assign_jobs_easy(job_queue_2d, nodes, cores_available, running_jobs, next_empty_slot,
+                                 next_job_id, metrics, is_baseline, reservation_depth)
+    if dispatcher != "firstfit":
+        raise ValueError(f"Unknown dispatcher {dispatcher!r}, expected one of {DISPATCHERS}")
+
     num_processed_jobs = 0
     num_dropped = 0
 
@@ -257,34 +432,9 @@ def assign_jobs_to_available_nodes(
 
         if len(candidate_nodes) >= job_nodes:
             # Assign job to first job_nodes candidates
-            job_allocation = []
-            for i in range(job_nodes):
-                node_idx = candidate_nodes[i]
-                cores_available[node_idx] -= job_cores_per_node
-                nodes[node_idx] = max(nodes[node_idx], job_duration)
-                job_allocation.append((node_idx, job_cores_per_node))
-
-            running_jobs[next_job_id] = {
-                "duration": job_duration,
-                "allocation": job_allocation,
-                "wait_time": int(job_age),
-            }
-            # Record scheduling delay when the job starts.
-            # Completion metrics are tracked separately when the job actually finishes.
-            if is_baseline:
-                metrics.baseline_jobs_launched += 1
-                metrics.baseline_total_job_wait_time_launch += int(job_age)
-                metrics.episode_baseline_jobs_launched += 1
-                metrics.episode_baseline_total_job_wait_time_launch += int(job_age)
-            else:
-                metrics.jobs_launched += 1
-                metrics.total_job_wait_time_launch += int(job_age)
-                metrics.episode_jobs_launched += 1
-                metrics.episode_total_job_wait_time_launch += int(job_age)
+            _start_job(job_queue_2d, job_idx, candidate_nodes[:job_nodes], nodes, cores_available,
+                       running_jobs, next_job_id, metrics, is_baseline)
             next_job_id += 1
-
-            # Clear job from queue
-            job_queue_2d[job_idx] = [0, 0, 0, 0]
 
             # Update next_empty_slot if we cleared a slot before it
             if job_idx < next_empty_slot:

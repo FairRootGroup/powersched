@@ -15,6 +15,7 @@ import numpy as np
 
 
 from src.environment import ComputeClusterEnv, Weights
+from src.job_management import DISPATCHERS
 from src.plot_config import PlotConfig
 import pandas as pd
 from src.workloadgen import WorkloadGenerator
@@ -219,6 +220,8 @@ def parse_args():
     p.add_argument("--idle-weight", type=float, default=0.1)
     p.add_argument("--job-age-weight", type=float, default=0.1)
     p.add_argument("--drop-weight", type=float, default=0.1)
+    p.add_argument("--dispatcher", default="firstfit", choices=DISPATCHERS)
+    p.add_argument("--reservation-depth", type=int, default=1)
     add_workloadgen_args(p)
     p.add_argument("--print-job-every", type=int, default=0, help="Print one sample job every N steps (0 disables).")
     p.add_argument("--print-job-kind", choices=["queue", "running", "both"], default="queue", help="Where to sample the job from.")
@@ -261,6 +264,8 @@ def make_env_from_args(args, env_cls=ComputeClusterEnv):
         steps_per_iteration=EPISODE_HOURS,  # prevent plot cadence surprises
         evaluation_mode=False,
         workload_gen=workload_gen,
+        dispatcher=args.dispatcher,
+        reservation_depth=args.reservation_depth,
     )
 
 def maybe_print_job(env, obs, step_idx, every, kind="queue", job_index=-1):
