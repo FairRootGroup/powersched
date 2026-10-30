@@ -599,6 +599,8 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    if args.reservation_depth < 1:
+        parser.error("--reservation-depth must be at least 1")
     if args.num_points < 2:
         parser.error("--num-points must be >= 2")
     if args.eval_months <= 0:

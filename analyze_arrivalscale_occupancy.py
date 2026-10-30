@@ -520,7 +520,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     # Core train.py params.
     parser.add_argument("--prices", default="")
-    parser.add_argument("--jobs", required=True, help="Path forwarded to train.py --jobs")
+    parser.add_argument(
+        "--jobs",
+        default="",
+        help="Path forwarded to train.py --jobs. Required when exact replay mode is enabled.",
+    )
     parser.add_argument(
         "--hourly-jobs",
         default="",
@@ -574,6 +578,8 @@ def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
 
+    if args.reservation_depth < 1:
+        parser.error("--reservation-depth must be at least 1")
     if args.num_points < 2 and not args.scales:
         parser.error("--num-points must be >= 2 when --scales is not provided")
     if args.eval_months <= 0:
@@ -588,9 +594,6 @@ def main() -> None:
     if not train_py.exists():
         raise FileNotFoundError(f"Could not find train.py at: {train_py}")
 
-    jobs_path = Path(args.jobs).expanduser()
-    if not jobs_path.exists():
-        raise FileNotFoundError(f"Could not find jobs file: {jobs_path}")
     if args.replay or args.sampler:
         mode_names = []
         if args.replay:
@@ -600,9 +603,18 @@ def main() -> None:
     else:
         mode_names = ["exact_replay_aggregate", "sampling"]
 
+    if "exact_replay_aggregate" in mode_names:
+        if not args.jobs:
+            parser.error("--jobs is required when exact replay mode is enabled")
+        jobs_path = Path(args.jobs).expanduser()
+        if not jobs_path.exists():
+            raise FileNotFoundError(f"Could not find jobs file: {jobs_path}")
+
     if "sampling" in mode_names:
         if not args.hourly_jobs:
-            args.hourly_jobs = str(jobs_path)
+            if not args.jobs:
+                parser.error("sampling mode requires --hourly-jobs or --jobs")
+            args.hourly_jobs = str(Path(args.jobs).expanduser())
             print(f"[info] sampling mode will reuse --jobs as --hourly-jobs: {args.hourly_jobs}")
         hourly_jobs_path = Path(args.hourly_jobs).expanduser()
         if not hourly_jobs_path.exists():
