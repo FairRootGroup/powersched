@@ -1,10 +1,10 @@
 """Baseline comparison simulation logic for the PowerSched environment."""
 
-from collections import deque
 from typing import Any, Callable
 
 import numpy as np
 from src.job_management import (
+    Backlog,
     process_ongoing_jobs,
     add_new_jobs,
     assign_jobs_to_available_nodes,
@@ -30,7 +30,7 @@ def baseline_step(
         next_job_id: int,
         metrics: MetricsTracker,
         env_print: Callable[..., None],
-        baseline_backlog_queue: deque,
+        baseline_backlog_queue: Backlog,
         dispatcher: str = "firstfit",
         reservation_depth: int = 1,
 ) -> tuple[float, float, float, float, int, int, int, int]:

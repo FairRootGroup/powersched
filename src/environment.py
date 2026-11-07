@@ -1,5 +1,4 @@
 import time
-from collections import deque
 from typing import Any
 
 from gymnasium import spaces
@@ -25,7 +24,7 @@ from src.config import (
 from src.job_management import (
     process_ongoing_jobs, add_new_jobs,
     assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue,
-    age_job_queue, DISPATCHERS,
+    age_job_queue, Backlog, DISPATCHERS,
 )
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator, power_consumption_mwh
@@ -234,8 +233,8 @@ class ComputeClusterEnv(gym.Env):
         self.running_jobs = {}
         self.baseline_running_jobs = {}
 
-        self.backlog_queue = deque()
-        self.baseline_backlog_queue = deque()
+        self.backlog_queue = Backlog()
+        self.baseline_backlog_queue = Backlog()
 
         self.next_job_id = 0  # shared between baseline and normal jobs
 
@@ -251,7 +250,7 @@ class ComputeClusterEnv(gym.Env):
         """Invalidate pending-job stats cache after queue/backlog content changes."""
         self._queue_backlog_version += 1
 
-    def _pending_work_summary(self, job_queue_2d: np.ndarray, backlog_queue: deque | None = None) -> dict[str, float | int]:
+    def _pending_work_summary(self, job_queue_2d: np.ndarray, backlog_queue: Backlog | None = None) -> dict[str, float | int]:
         """
         Summarize currently pending work across the visible queue and the overflow backlog.
 
@@ -267,7 +266,7 @@ class ComputeClusterEnv(gym.Env):
         queue_rows = job_queue_2d[active_jobs_mask].astype(np.float32, copy=False)
 
         if backlog_queue:
-            backlog_rows = np.asarray(list(backlog_queue), dtype=np.float32)
+            backlog_rows = backlog_queue.rows().astype(np.float32)
         else:
             backlog_rows = np.empty((0, 4), dtype=np.float32)
 
@@ -343,7 +342,7 @@ class ComputeClusterEnv(gym.Env):
         nodes: np.ndarray,
         cores_available: np.ndarray,
         running_jobs: dict[int, dict[str, Any]],
-        backlog_queue: deque,
+        backlog_queue: Backlog,
     ) -> int:
         """
         Drop all outstanding work for one side of the simulation and reset its cluster.

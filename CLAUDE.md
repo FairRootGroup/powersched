@@ -138,6 +138,9 @@ python -m test.test_sanity_env --dispatcher easy --check-determinism --steps 300
 # Dispatcher tests (EASY backfilling)
 python -m test.test_dispatcher_easy
 
+# Backlog (numpy-backed overflow queue) equivalence tests
+python -m test.test_backlog
+
 # Workload generator tests
 python -m test.test_sanity_workloadgen
 python -m test.test_determinism_workloadgen

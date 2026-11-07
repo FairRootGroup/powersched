@@ -1,7 +1,6 @@
 """Job queue management and scheduling logic for the PowerSched environment."""
 
-from collections import deque
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
@@ -15,7 +14,71 @@ from src.metrics_tracker import MetricsTracker
 DISPATCHERS: tuple[str, ...] = ("firstfit", "easy")
 
 
-def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseline: bool = False) -> int:
+class Backlog:
+    """
+    FIFO overflow queue of [duration, age, nodes, cores_per_node] rows.
+
+    Rows live in a numpy buffer so that ageing and summarizing a large backlog are
+    vectorized; live rows are ``_buf[_start:_end]``, oldest first.
+    """
+
+    def __init__(self, capacity: int = MAX_BACKLOG_SIZE) -> None:
+        # Twice the capacity, so popping from the front only needs an occasional compaction.
+        self._buf = np.zeros((2 * capacity, 4), dtype=np.int32)
+        self._start = 0
+        self._end = 0
+
+    def __len__(self) -> int:
+        return self._end - self._start
+
+    def __bool__(self) -> bool:
+        return self._end > self._start
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        return iter(self.rows())
+
+    def rows(self) -> np.ndarray:
+        """View of the live rows, oldest first."""
+        return self._buf[self._start:self._end]
+
+    def append(self, job) -> None:
+        if self._end == len(self._buf):
+            self._compact()
+        self._buf[self._end] = job
+        self._end += 1
+
+    def pop_front(self, count: int) -> np.ndarray:
+        """Remove and return (a copy of) the ``count`` oldest rows."""
+        count = min(count, len(self))
+        popped = self._buf[self._start:self._start + count].copy()
+        self._start += count
+        return popped
+
+    def clear(self) -> None:
+        self._start = 0
+        self._end = 0
+
+    def age(self, max_age: int) -> int:
+        """Add one hour to every job's age and drop those older than ``max_age``. Returns the drop count."""
+        rows = self.rows()
+        rows[:, 1] += 1
+        keep = rows[:, 1] <= max_age
+        dropped = len(rows) - int(np.count_nonzero(keep))
+        if dropped:
+            kept = rows[keep]
+            self._buf[:len(kept)] = kept
+            self._start = 0
+            self._end = len(kept)
+        return dropped
+
+    def _compact(self) -> None:
+        n = len(self)
+        self._buf[:n] = self._buf[self._start:self._end]
+        self._start = 0
+        self._end = n
+
+
+def age_backlog_queue(backlog_queue: Backlog, _metrics: MetricsTracker, _is_baseline: bool = False) -> int:
     """
     Age jobs waiting in the backlog queue.
 
@@ -24,19 +87,7 @@ def age_backlog_queue(backlog_queue: deque, _metrics: MetricsTracker, _is_baseli
     """
     if not backlog_queue:
         return 0
-
-    dropped = 0
-    kept = []
-    for job in backlog_queue:
-        job[1] += 1
-        if job[1] > MAX_JOB_AGE:
-            dropped += 1
-        else:
-            kept.append(job)
-
-    backlog_queue.clear()
-    backlog_queue.extend(kept)
-    return dropped
+    return backlog_queue.age(MAX_JOB_AGE)
 
 
 def age_job_queue(job_queue_2d: np.ndarray, next_empty_slot: int) -> tuple[int, int]:
@@ -63,22 +114,22 @@ def age_job_queue(job_queue_2d: np.ndarray, next_empty_slot: int) -> tuple[int, 
     return next_empty_slot, dropped
 
 
-def fill_queue_from_backlog(job_queue_2d: np.ndarray, backlog_queue: deque, next_empty_slot: int) -> tuple[int, int]:
+def fill_queue_from_backlog(job_queue_2d: np.ndarray, backlog_queue: Backlog, next_empty_slot: int) -> tuple[int, int]:
     """
     Move jobs from backlog queue into the real queue (FIFO) until full.
+
+    Fills ``next_empty_slot`` and then the empty slots after it, in slot order, and
+    returns the next empty slot after the last one filled (``len(job_queue_2d)`` if none).
     """
-    if not backlog_queue:
+    if not backlog_queue or next_empty_slot >= len(job_queue_2d):
         return next_empty_slot, 0
 
-    moved = 0
-    while backlog_queue and next_empty_slot < len(job_queue_2d):
-        job_queue_2d[next_empty_slot] = backlog_queue.popleft()
-        moved += 1
+    later_empty = np.flatnonzero(job_queue_2d[next_empty_slot + 1:, 0] == 0) + next_empty_slot + 1
+    slots = np.concatenate(([next_empty_slot], later_empty))
+    moved = min(len(backlog_queue), len(slots))
+    job_queue_2d[slots[:moved]] = backlog_queue.pop_front(moved)
 
-        next_empty_slot += 1
-        while next_empty_slot < len(job_queue_2d) and job_queue_2d[next_empty_slot][0] != 0:
-            next_empty_slot += 1
-
+    next_empty_slot = int(slots[moved]) if moved < len(slots) else len(job_queue_2d)
     return next_empty_slot, moved
 
 
@@ -166,7 +217,7 @@ def add_new_jobs(
         new_jobs_nodes: list[int],
         new_jobs_cores: list[int],
         next_empty_slot: int,
-        backlog_queue: deque | None = None,
+        backlog_queue: Backlog | None = None,
 ) -> tuple[list[Any], int, int]:
     """
     Add new jobs to the queue.
@@ -178,7 +229,7 @@ def add_new_jobs(
         new_jobs_nodes: List of nodes required per job
         new_jobs_cores: List of cores per node required per job
         next_empty_slot: Index of next empty slot in queue
-        backlog_queue: Optional deque for overflow jobs
+        backlog_queue: Optional Backlog for overflow jobs
 
     Returns:
         Tuple of (list of added jobs, updated next_empty_slot, num_dropped)
