@@ -51,6 +51,7 @@ powersched/
 ├── analyze_arrivalscale_occupancy.py  # Analysis: arrival scale effects on occupancy
 ├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
 ├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
+├── analyze_obs_probe.py               # Analysis: which observation parts a trained policy uses (masking probe)
 ├── data/                   # Sample data
 │   └── workload_statistics/ # Workload log analysis scripts and aggregate stats
 ├── data-internal/          # Full Slurm logs
