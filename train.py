@@ -1,5 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from torchinfo import summary
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
@@ -41,6 +43,11 @@ def fmt_optional(value: float | None, precision: int = 2, thousands: bool = Fals
 
 
 STEPS_PER_ITERATION = 100000
+
+
+def vecnormalize_stats_file(model_file: str) -> str:
+    """Path of the VecNormalize statistics saved alongside a model checkpoint."""
+    return model_file[:-len(".zip")] + "_vecnormalize.pkl"
 
 
 def main():
@@ -92,6 +99,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size for PPO gradient updates (default: 64). Should be <= --n-steps. Increase for larger networks (e.g. 256 for 256x256).")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="PPO learning rate (default: 3e-4). Reduce for larger networks (e.g. 1e-4 for 256x256).")
     parser.add_argument("--clip-range", type=float, default=0.2, help="PPO clip range for policy updates (default: 0.2). Tighten for larger networks (e.g. 0.1 for 256x256).")
+    parser.add_argument("--normalize-reward", action="store_true", help="Train on rewards scaled by a running estimate of the return's std (VecNormalize, observations untouched). Its statistics are saved next to each checkpoint. Evaluation is unaffected.")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
     parser.add_argument("--seed-sweep", action="store_true", help="Treat this run as part of a --seeds sweep and isolate outputs under a seed-specific session subdirectory.")
@@ -208,6 +216,12 @@ def main():
     env.plots_dir = plots_dir
     env.reset(seed=args.seed)
 
+    # Train on a VecNormalize wrapper when asked. env itself stays unwrapped: evaluation,
+    # set_progress and the metrics all use it directly, and see raw rewards.
+    train_env = env
+    if args.normalize_reward and not args.evaluate_savings:
+        train_env = DummyVecEnv([lambda: Monitor(env)])
+
     # Check if there are any saved models in models_dir
     model_files = glob.glob(models_dir + "*.zip")
     latest_model_file = None
@@ -245,8 +259,18 @@ def main():
                 job_age_weight=weights.job_age_weight,
             ) + seed_suffix,
         )
-        model = PPO.load(latest_model_file, env=env, tensorboard_log=log_dir, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device)
+        if train_env is not env:
+            stats_file = vecnormalize_stats_file(latest_model_file)
+            if os.path.exists(stats_file):
+                train_env = VecNormalize.load(stats_file, train_env)
+                print(f"Loaded reward normalization statistics: {stats_file}")
+            else:
+                train_env = VecNormalize(train_env, norm_obs=False, norm_reward=True)
+                print(f"No reward normalization statistics next to the model ({stats_file}); starting fresh ones.")
+        model = PPO.load(latest_model_file, env=train_env, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device)
     else:
+        if train_env is not env:
+            train_env = VecNormalize(train_env, norm_obs=False, norm_reward=True)
         print(f"Starting a new model training...")
         # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
         net_arch_layers = [int(x) for x in args.net_arch.split(',')]
@@ -255,7 +279,7 @@ def main():
             net_arch=dict(pi=net_arch_layers, vf=net_arch_layers)
         )
         print(f"Network architecture: {net_arch_layers}")
-        model = PPO('MultiInputPolicy', env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device, verbose=1)
+        model = PPO('MultiInputPolicy', train_env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device, verbose=1)
 
     print(f"Device: {model.device}")
     if args.print_policy:
@@ -537,6 +561,8 @@ def main():
                 model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
                 print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
                 model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
+                if isinstance(train_env, VecNormalize):
+                    train_env.save(vecnormalize_stats_file(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip"))
 
 
             except PlottingComplete:

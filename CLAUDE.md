@@ -195,6 +195,7 @@ Additional training options:
 - `--seed-sweep`: Isolate outputs under a seed-specific session subdirectory
 - `--device`: Training device ("auto", "cuda", or "cpu")
 - `--net-arch`: Hidden layer sizes for policy/value networks (e.g., "64,64" or "256,128")
+- `--normalize-reward`: Train on rewards scaled by a running return std (SB3 `VecNormalize`, observations untouched); statistics are saved as `<step>_vecnormalize.pkl` next to each checkpoint and reloaded on resume. Evaluation is unaffected
 - `--model`: Load a specific model checkpoint by timestep number
 - `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step
 - `--jobs-exact-replay`: Replay raw jobs in timeline order without aggregation

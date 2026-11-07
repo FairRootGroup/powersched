@@ -23,7 +23,8 @@ class ComputeClusterCallback(BaseCallback):
         pass
 
     def _on_step(self) -> bool:
-        env = self.training_env.envs[0].unwrapped
+        # .unwrapped first, to get past VecNormalize (--normalize-reward) to the DummyVecEnv.
+        env = self.training_env.unwrapped.envs[0].unwrapped
         dones = self.locals.get("dones")
         if dones is None or not bool(dones[0]) or not env.metrics.episode_costs:
             return True
