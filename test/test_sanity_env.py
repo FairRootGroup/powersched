@@ -23,7 +23,7 @@ from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 
 # Import environment variables:
 from src.config import (
-    MAX_JOB_DURATION,
+    MAX_JOB_DURATION, MAX_QUEUE_SIZE,
     CORES_PER_NODE, EPISODE_HOURS
 )
 
@@ -39,18 +39,19 @@ def load_prices(prices_file_path: str | None):
 # -----------------------------
 # Invariants / sanity checks
 # -----------------------------
-def _extract(obs):
+def _extract(env, obs):
     nodes = obs["nodes"]
-    q = obs["job_queue"].reshape(-1, 4)
+    q = env.queue.rows()  # waiting jobs, oldest first (not part of the observation)
     prices = obs["predicted_prices"]
     return nodes, q, prices
 
 def check_invariants(env, obs):
-    nodes, q, prices = _extract(obs)
+    nodes, q, prices = _extract(env, obs)
 
     # ---- Shapes ----
     assert nodes.ndim == 1, nodes.shape
     assert q.ndim == 2 and q.shape[1] == 4, q.shape
+    assert len(q) <= MAX_QUEUE_SIZE, f"queue holds {len(q)} jobs, capacity {MAX_QUEUE_SIZE}"
     assert prices.shape == (24,), prices.shape
 
     # ---- Node bounds ----
@@ -77,27 +78,17 @@ def check_invariants(env, obs):
     nn  = q[:, 2]
     cpn = q[:, 3]
 
-    # slots either "all zeros" or "duration > 0"
-    all_zero = np.all(q == 0, axis=1)
-    assert np.all((dur == 0) == all_zero), "queue has partially-zero slots (corruption / holes)"
+    # every row is a waiting job, and the queue is oldest first
+    assert np.all(dur > 0), "queue holds a row with duration 0"
+    assert np.all(np.diff(age) <= 0), "queue is not oldest first"
 
     # bounds (based on your constants; keep hard-coded here to avoid importing env constants)
     assert np.all((dur >= 0) & (dur <= 170)), f"duration out of bounds min={dur.min()} max={dur.max()}"
     assert np.all((age >= 0) & (age <= 168 * 52 * 10)), f"age out of bounds min={age.min()} max={age.max()}"
 
-    # if a job exists, its nodes/cores should be positive and within limits
-    active = (dur > 0)
-    if np.any(active):
-        assert np.all((nn[active] >= 1) & (nn[active] <= 16)), f"job nnodes out of bounds nn={nn[active]}"
-        assert np.all((cpn[active] >= 1) & (cpn[active] <= 96)), f"cores_per_node out of bounds cpn={cpn[active]}"
-
-    # ---- next_empty_slot sanity (optional) ----
-    if hasattr(env, "next_empty_slot"):
-        ne = env.next_empty_slot
-        if ne < len(q):
-            assert q[ne, 0] == 0, "next_empty_slot does not point at an empty slot"
-        if ne > 0:
-            assert np.all(q[:ne, 0] != 0), "hole exists before next_empty_slot"
+    # nodes/cores should be positive and within limits
+    assert np.all((nn >= 1) & (nn <= 16)), f"job nnodes out of bounds nn={nn}"
+    assert np.all((cpn >= 1) & (cpn <= 96)), f"cores_per_node out of bounds cpn={cpn}"
 
 
 def check_obs_is_copy(env, obs):
@@ -146,13 +137,12 @@ def carry_over_test(make_env, seed, n_steps=1):
     obs, _ = env.reset(seed=seed)
     initial = {
         "nodes": env.state["nodes"].copy(),
-        "job_queue": env.state["job_queue"].copy(),
+        "job_queue": env.queue.rows().copy(),
         "predicted_prices": env.state["predicted_prices"].copy(),
         "cores_available": env.cores_available.copy(),
         "running_jobs": copy.deepcopy(env.running_jobs),
         "price_index": env.prices.price_index,
         "next_job_id": env.next_job_id,
-        "next_empty_slot": env.next_empty_slot,
     }
     env.action_space.seed(seed)
     actions = [env.action_space.sample() for _ in range(n_steps)]
@@ -163,13 +153,12 @@ def carry_over_test(make_env, seed, n_steps=1):
 
     snapshot = {
         "nodes": env.state["nodes"].copy(),
-        "job_queue": env.state["job_queue"].copy(),
+        "job_queue": env.queue.rows().copy(),
         "predicted_prices": env.state["predicted_prices"].copy(),
         "cores_available": env.cores_available.copy(),
         "running_jobs": copy.deepcopy(env.running_jobs),
         "price_index": env.prices.price_index,
         "next_job_id": env.next_job_id,
-        "next_empty_slot": env.next_empty_slot,
         "current_hour": env.metrics.current_hour,
     }
 
@@ -181,20 +170,18 @@ def carry_over_test(make_env, seed, n_steps=1):
         or snapshot["running_jobs"] != initial["running_jobs"]
         or snapshot["price_index"] != initial["price_index"]
         or snapshot["next_job_id"] != initial["next_job_id"]
-        or snapshot["next_empty_slot"] != initial["next_empty_slot"]
     )
     assert changed, "carry-over test needs at least one state change; increase steps or enable workload"
 
     env.reset(seed=seed)
 
     assert np.array_equal(env.state["nodes"], snapshot["nodes"]), "carry-over failed: nodes reset"
-    assert np.array_equal(env.state["job_queue"], snapshot["job_queue"]), "carry-over failed: job_queue reset"
+    assert np.array_equal(env.queue.rows(), snapshot["job_queue"]), "carry-over failed: job queue reset"
     assert np.array_equal(env.state["predicted_prices"], snapshot["predicted_prices"]), "carry-over failed: predicted_prices reset"
     assert np.array_equal(env.cores_available, snapshot["cores_available"]), "carry-over failed: cores_available reset"
     assert env.running_jobs == snapshot["running_jobs"], "carry-over failed: running_jobs reset"
     assert env.prices.price_index == snapshot["price_index"], "carry-over failed: price_index reset"
     assert env.next_job_id == snapshot["next_job_id"], "carry-over failed: next_job_id reset"
-    assert env.next_empty_slot == snapshot["next_empty_slot"], "carry-over failed: next_empty_slot reset"
     assert env.metrics.current_hour == 0, "carry-over failed: current_hour not reset"
     env.close()
 
@@ -274,7 +261,7 @@ def maybe_print_job(env, obs, step_idx, every, kind="queue", job_index=-1):
     if step_idx % every != 0:
         return
 
-    nodes, q, prices = _extract(obs)
+    nodes, q, prices = _extract(env, obs)
 
     def print_queue_job():
         active = np.flatnonzero(q[:, 0] > 0)
@@ -328,7 +315,7 @@ def main():
 # -------------------------------------
 
     seed = 123
-    action = np.array([1, 0, 1], dtype=np.int64)  # "maintain, magnitude 1, refill" effectively
+    action = np.array([1, 0], dtype=np.int64)  # maintain
 
     env = make_env_with_carry(env_cls=DeterministicPriceEnv)
 
@@ -347,7 +334,6 @@ def main():
             print(" first mismatch idx:", idx, "a:", a.flatten()[idx], "b:", b.flatten()[idx])
 
     cmp("nodes", o1s["nodes"], o2s["nodes"])
-    cmp("job_queue", o1s["job_queue"], o2s["job_queue"])
     cmp("predicted_prices", o1s["predicted_prices"], o2s["predicted_prices"])
     print("reward", r1, r2)
     print("info.current_price", i1.get("current_price"), i2.get("current_price"))

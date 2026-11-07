@@ -3,11 +3,10 @@
 WEEK_HOURS: int = 168
 
 MAX_NODES: int = 335  # Maximum number of nodes
-MAX_QUEUE_SIZE: int = 2500  # Maximum number of jobs in the queue
-MAX_BACKLOG_SIZE: int = 50000  # Maximum number of jobs in the backlog (overflow) queue
+MAX_QUEUE_SIZE: int = 52500  # Maximum number of waiting jobs; arrivals beyond it are rejected
 MAX_CHANGE: int = MAX_NODES
 MAX_JOB_DURATION: int = 170  # maximum job runtime in hours
-# Drop jobs that have waited longer than this in queue/backlog.
+# Drop jobs that have waited longer than this in the queue.
 MAX_JOB_AGE = WEEK_HOURS * 2
 MAX_NEW_JOBS_PER_HOUR: int = 1500
 

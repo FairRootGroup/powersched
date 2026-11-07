@@ -590,7 +590,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
     parser.add_argument("--oracle", action="store_true", default=False, help="Enable oracle for evaluation")
     parser.add_argument("--seed", type=int, default=None, help="Forwarded to train.py (sampling mode only).")
-    parser.add_argument("--dispatcher", default="firstfit", choices=DISPATCHERS, help="Forwarded to train.py.")
+    parser.add_argument("--dispatcher", default="easy", choices=DISPATCHERS, help="Forwarded to train.py.")
     parser.add_argument("--reservation-depth", type=int, default=1, help="Forwarded to train.py (easy dispatcher only).")
     return parser
 

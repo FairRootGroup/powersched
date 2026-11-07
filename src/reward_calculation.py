@@ -476,7 +476,7 @@ class RewardCalculator:
         return 0.3 * self._penalty_drop(num_lost)
 
     def calculate(self, num_used_nodes: int, num_idle_nodes: int, current_price: float, average_future_price: float,
-                  num_off_nodes: int, job_queue_2d: np.ndarray,
+                  num_off_nodes: int,
                   num_unprocessed_jobs: int, weights: Weights, num_dropped_this_step: int,
                   env_print: Callable[..., None], num_on_nodes: int,
                   total_used_cores: int, decision_pending_core_demand: float = 0.0,
@@ -490,11 +490,10 @@ class RewardCalculator:
             current_price: Current electricity price
             average_future_price: Average predicted future price
             num_off_nodes: Number of offline nodes
-            job_queue_2d: 2D job queue array
             num_unprocessed_jobs: Number of jobs waiting in queue
             weights: Weights object with weight values
             num_dropped_this_step: Number of jobs lost this step
-                (aged out in queue/backlog or rejected because queue/backlog was full)
+                (aged out in the queue or rejected because the queue was full)
             env_print: Print function for logging
             num_on_nodes: Number of powered-on nodes
             total_used_cores: Total cores in use across all powered nodes
@@ -538,7 +537,7 @@ class RewardCalculator:
         idle_penalty_norm = self._penalty_idle_normalized(num_idle_nodes)
         idle_penalty_weighted = weights.idle_weight * idle_penalty_norm
 
-        # 6. penalty for lost jobs (aged out or rejected because queue/backlog was full)
+        # 6. penalty for lost jobs (aged out or rejected because the queue was full)
         # Streak-triggered flushes reuse the same penalty path via loss_penalty().
         drop_penalty_weighted = self.loss_penalty(num_dropped_this_step)
 

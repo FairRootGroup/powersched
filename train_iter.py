@@ -532,7 +532,7 @@ def main():
     parser.add_argument("--learning-rate", type=float, default=None, help="Forward to train.py: PPO learning rate (default: 3e-4; try 1e-4 for 256x256 networks).")
     parser.add_argument("--clip-range", type=float, default=None, help="Forward to train.py: PPO clip range (default: 0.2; try 0.1 for 256x256 networks).")
     parser.add_argument("--ent-coef", type=float, default=None, help="Forward to train.py: PPO entropy coefficient (default: 0.0; try 0.01 for 256x256 networks).")
-    parser.add_argument("--dispatcher", type=str, default=None, choices=DISPATCHERS, help="Forward to train.py: job dispatcher for agent and baselines (default: firstfit).")
+    parser.add_argument("--dispatcher", type=str, default=None, choices=DISPATCHERS, help="Forward to train.py: job dispatcher for agent and baselines (default: easy).")
     parser.add_argument("--reservation-depth", type=int, default=None, help="Forward to train.py: reservations for --dispatcher easy (default: 1).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(

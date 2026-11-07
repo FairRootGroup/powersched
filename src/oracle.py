@@ -47,7 +47,7 @@ class LiquidOracle:
     def reset(self, carried_jobs: list[CarriedJob] | None = None) -> None:
         """Reset at the start of a new episode.
 
-        carried_jobs: jobs left in the queue/backlog at the end of the previous
+        carried_jobs: jobs left in the queue at the end of the previous
             episode, as (age, duration, nodes, cores_per_node) tuples.  Their
             work is pre-loaded so the oracle accounts for the same workload the
             agent inherits.
@@ -148,7 +148,7 @@ class ContiguousOracle:
     def reset(self, carried_jobs: list[CarriedJob] | None = None) -> None:
         """Reset at the start of a new episode.
 
-        carried_jobs: jobs left in the queue/backlog at the end of the previous
+        carried_jobs: jobs left in the queue at the end of the previous
             episode, as (age, duration, nodes, cores_per_node) tuples.  Encoded
             with arrival = -age so that their deadline (arrival + MAX_JOB_AGE)
             equals the remaining lifetime from episode start.

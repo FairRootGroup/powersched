@@ -17,15 +17,10 @@ from src.workloadgen import WorkloadGenerator
 
 # Import refactored modules
 from src.config import (
-    MAX_NODES, MAX_QUEUE_SIZE, MAX_CHANGE, MAX_JOB_DURATION,
-    CORES_PER_NODE, MAX_CORES_PER_JOB, MAX_JOB_AGE_OBS,
-    MAX_NODES_PER_JOB, EPISODE_HOURS
+    MAX_NODES, MAX_CHANGE, MAX_JOB_DURATION, MAX_JOB_AGE,
+    CORES_PER_NODE, MAX_NODES_PER_JOB, EPISODE_HOURS
 )
-from src.job_management import (
-    process_ongoing_jobs, add_new_jobs,
-    assign_jobs_to_available_nodes, fill_queue_from_backlog, age_backlog_queue,
-    age_job_queue, Backlog, DISPATCHERS,
-)
+from src.job_management import process_ongoing_jobs, dispatch_jobs, JobQueue, DISPATCHERS
 from src.node_management import adjust_nodes
 from src.reward_calculation import RewardCalculator, power_consumption_mwh
 from src.baseline import baseline_step
@@ -80,7 +75,7 @@ class ComputeClusterEnv(gym.Env):
                  jobs_exact_replay_aggregate: bool = False,
                  flush_after_drop_streak: int = 0,
                  enable_oracle: bool = False,
-                 dispatcher: str = "firstfit",
+                 dispatcher: str = "easy",
                  reservation_depth: int = 1) -> None:
         super().__init__()
 
@@ -179,27 +174,18 @@ class ComputeClusterEnv(gym.Env):
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
         #   action_magnitude: 0-MAX_CHANGE (+1ed in the action)
-        #   do_refill:        0: don't refill from backlog, 1: refill from backlog
-        self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE, 2])
+        self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE])
 
         self.observation_space = spaces.Dict({
             # nodes: [-1: off, 0: idle, >0: booked for n hours]
             'nodes': spaces.Box(low=-1, high=MAX_JOB_DURATION, shape=(MAX_NODES,), dtype=np.int32),
-            # job queue: [job duration, job age, job nodes, job cores per node, ...]
-            'job_queue': spaces.Box(
-                low=0,
-                high=max(MAX_JOB_DURATION, MAX_JOB_AGE_OBS, MAX_NODES_PER_JOB, MAX_CORES_PER_JOB),
-                shape=(MAX_QUEUE_SIZE * 4,),
-                dtype=np.int32
-            ),
             # current decision hour plus the next 23 hours
             'predicted_prices': spaces.Box(low=-1000, high=1000, shape=(24,), dtype=np.float32),
-            # Summary statistics for all outstanding jobs (queue + backlog)
+            # Summary statistics for all waiting jobs
             'pending_job_count': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
             'pending_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(1,), dtype=np.float32),
             'pending_avg_duration': spaces.Box(low=0, high=MAX_JOB_DURATION, shape=(1,), dtype=np.float32),
             'pending_max_nodes': spaces.Box(low=0, high=MAX_NODES_PER_JOB, shape=(1,), dtype=np.int32),
-            'backlog_size': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
         })
 
     def _reset_timeline_state(self, start_index: int) -> None:
@@ -209,21 +195,17 @@ class ComputeClusterEnv(gym.Env):
         self.state = {
             # Initialize all nodes to be 'online but free' (0)
             'nodes': np.zeros(MAX_NODES, dtype=np.int32),
-            # Initialize job queue to be empty
-            'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
             # Initialize predicted prices array
             'predicted_prices': self.prices.predicted_prices.copy(),
-            # Summary statistics for all outstanding jobs (queue + backlog)
+            # Summary statistics for all waiting jobs
             'pending_job_count': np.array([0], dtype=np.int32),
             'pending_core_hours': np.array([0.0], dtype=np.float32),
             'pending_avg_duration': np.array([0.0], dtype=np.float32),
             'pending_max_nodes': np.array([0], dtype=np.int32),
-            'backlog_size': np.array([0], dtype=np.int32),
         }
 
         self.baseline_state = {
             'nodes': np.zeros(MAX_NODES, dtype=np.int32),
-            'job_queue': np.zeros((MAX_QUEUE_SIZE * 4), dtype=np.int32),
         }
 
         self.cores_available = np.full(MAX_NODES, CORES_PER_NODE, dtype=np.int32)
@@ -233,69 +215,38 @@ class ComputeClusterEnv(gym.Env):
         self.running_jobs = {}
         self.baseline_running_jobs = {}
 
-        self.backlog_queue = Backlog()
-        self.baseline_backlog_queue = Backlog()
+        # All waiting jobs, oldest first
+        self.queue = JobQueue()
+        self.baseline_queue = JobQueue()
 
         self.next_job_id = 0  # shared between baseline and normal jobs
 
-        # Track next empty slot in job queue for O(1) insertion
-        self.next_empty_slot = 0
-        self.baseline_next_empty_slot = 0
-
-        # Versioned cache invalidation for pending job stats.
-        self._queue_backlog_version = 0
-        self._cached_queue_backlog_version = -1
-
-    def _mark_queue_backlog_mutation(self) -> None:
-        """Invalidate pending-job stats cache after queue/backlog content changes."""
-        self._queue_backlog_version += 1
-
-    def _pending_work_summary(self, job_queue_2d: np.ndarray, backlog_queue: Backlog | None = None) -> dict[str, float | int]:
+    def _pending_work_summary(self) -> dict[str, float | int]:
         """
-        Summarize currently pending work across the visible queue and the overflow backlog.
+        Summarize the agent's waiting jobs.
 
         The reward only needs a few dense signals:
         - instantaneous runnable demand (nodes * cores)
         - longer-horizon remaining work (core-hours)
         - overdue mass after the intentional deferral grace period
         """
-        if backlog_queue is None:
-            backlog_queue = self.backlog_queue
-
-        active_jobs_mask = job_queue_2d[:, 0] > 0
-        queue_rows = job_queue_2d[active_jobs_mask].astype(np.float32, copy=False)
-
-        if backlog_queue:
-            backlog_rows = backlog_queue.rows().astype(np.float32)
-        else:
-            backlog_rows = np.empty((0, 4), dtype=np.float32)
-
-        if queue_rows.size and backlog_rows.size:
-            combined_rows = np.vstack((queue_rows, backlog_rows))
-        elif queue_rows.size:
-            combined_rows = queue_rows
-        elif backlog_rows.size:
-            combined_rows = backlog_rows
-        else:
-            combined_rows = np.empty((0, 4), dtype=np.float32)
-
-        if combined_rows.size == 0:
+        rows = self.queue.rows().astype(np.float32)
+        if len(rows) == 0:
             return {
                 "pending_job_count": 0,
                 "pending_core_demand": 0.0,
                 "pending_core_hours": 0.0,
                 "pending_avg_duration": 0.0,
                 "pending_max_nodes": 0,
-                "backlog_size": len(backlog_queue),
                 "oldest_age": 0.0,
                 "overdue_jobs": 0,
                 "overdue_age_core_hours": 0.0,
             }
 
-        durations = combined_rows[:, 0]
-        ages = combined_rows[:, 1]
-        nodes = combined_rows[:, 2]
-        cores = combined_rows[:, 3]
+        durations = rows[:, 0]
+        ages = rows[:, 1]
+        nodes = rows[:, 2]
+        cores = rows[:, 3]
         core_demand = nodes * cores
 
         grace = float(self.reward_calculator.DEFERRAL_GRACE_HOURS)
@@ -303,89 +254,62 @@ class ComputeClusterEnv(gym.Env):
         overdue_mask = overdue_age > 0.0
 
         return {
-            "pending_job_count": int(combined_rows.shape[0]),
+            "pending_job_count": len(rows),
             "pending_core_demand": float(np.sum(core_demand)),
             "pending_core_hours": float(np.sum(durations * core_demand)),
             "pending_avg_duration": float(np.mean(durations)),
             "pending_max_nodes": int(np.max(nodes)),
-            "backlog_size": len(backlog_queue),
-            "oldest_age": float(np.max(ages)),
+            "oldest_age": float(ages[0]),  # the queue is oldest first
             "overdue_jobs": int(np.count_nonzero(overdue_mask)),
             "overdue_age_core_hours": float(np.sum(overdue_age * core_demand)),
         }
 
-    def _update_pending_job_stats(self, job_queue_2d: np.ndarray) -> None:
-        """Update summary statistics for all outstanding jobs (queue + backlog)."""
-        # Fast path: skip recalculation if queue/backlog version is unchanged.
-        if self._cached_queue_backlog_version == self._queue_backlog_version:
-            return  # Stats unchanged from last step
-
-        summary = self._pending_work_summary(job_queue_2d)
-        # Update state
+    def _update_pending_job_stats(self, summary: dict[str, float | int] | None = None) -> None:
+        """Write the waiting-job summary into the observation."""
+        if summary is None:
+            summary = self._pending_work_summary()
         self.state['pending_job_count'][0] = int(summary["pending_job_count"])
         self.state['pending_core_hours'][0] = float(summary["pending_core_hours"])
         self.state['pending_avg_duration'][0] = float(summary["pending_avg_duration"])
         self.state['pending_max_nodes'][0] = int(summary["pending_max_nodes"])
-        self.state['backlog_size'][0] = int(summary["backlog_size"])
-
-        # Cache the queue/backlog version for next step.
-        self._cached_queue_backlog_version = self._queue_backlog_version
 
     @staticmethod
-    def _count_queued_jobs(job_queue_2d: np.ndarray) -> int:
-        """Count active jobs represented in a dense queue array."""
-        return int(np.count_nonzero(job_queue_2d[:, 0] > 0))
-
     def _flush_workload_side(
-        self,
-        job_queue_2d: np.ndarray,
+        queue: JobQueue,
         nodes: np.ndarray,
         cores_available: np.ndarray,
         running_jobs: dict[int, dict[str, Any]],
-        backlog_queue: Backlog,
     ) -> int:
         """
         Drop all outstanding work for one side of the simulation and reset its cluster.
 
-        This is intentionally stronger than a normal episode rollover: queued jobs,
-        backlog jobs, and still-running jobs are all considered lost so the next
-        episode can start from a clean slate.
+        This is intentionally stronger than a normal episode rollover: waiting jobs and
+        still-running jobs are all considered lost so the next episode can start from a
+        clean slate.
         """
-        flushed_jobs = (
-            self._count_queued_jobs(job_queue_2d)
-            + len(backlog_queue)
-            + len(running_jobs)
-        )
+        flushed_jobs = len(queue) + len(running_jobs)
 
-        job_queue_2d.fill(0)
+        queue.clear()
         nodes.fill(0)
         cores_available.fill(CORES_PER_NODE)
         running_jobs.clear()
-        backlog_queue.clear()
         return int(flushed_jobs)
 
     def _flush_workload_state(self) -> dict[str, int | float | bool]:
         """Flush both agent and baseline states immediately after a trigger step."""
-        agent_job_queue_2d = self.state['job_queue'].reshape(-1, 4)
-        baseline_job_queue_2d = self.baseline_state['job_queue'].reshape(-1, 4)
-
         agent_jobs_flushed = self._flush_workload_side(
-            agent_job_queue_2d,
+            self.queue,
             self.state['nodes'],
             self.cores_available,
             self.running_jobs,
-            self.backlog_queue,
         )
         baseline_jobs_flushed = self._flush_workload_side(
-            baseline_job_queue_2d,
+            self.baseline_queue,
             self.baseline_state['nodes'],
             self.baseline_cores_available,
             self.baseline_running_jobs,
-            self.baseline_backlog_queue,
         )
 
-        self.next_empty_slot = 0
-        self.baseline_next_empty_slot = 0
         self.metrics.current_running_jobs = 0
 
         if agent_jobs_flushed > 0:
@@ -397,13 +321,9 @@ class ComputeClusterEnv(gym.Env):
 
         flush_penalty = self.reward_calculator.loss_penalty(agent_jobs_flushed)
 
-        if agent_jobs_flushed > 0 or baseline_jobs_flushed > 0:
-            self._mark_queue_backlog_mutation()
-            self._update_pending_job_stats(agent_job_queue_2d)
+        if agent_jobs_flushed > 0:
+            self._update_pending_job_stats()
         self.consecutive_drop_steps = 0
-
-        self.state['job_queue'] = agent_job_queue_2d.flatten()
-        self.baseline_state['job_queue'] = baseline_job_queue_2d.flatten()
 
         return {
             "flush_applied": bool(agent_jobs_flushed > 0 or baseline_jobs_flushed > 0),
@@ -449,7 +369,7 @@ class ComputeClusterEnv(gym.Env):
 
         hard_reset = bool(options.get("hard_reset", False))
         if not self._timeline_initialized or hard_reset:
-            # Hard reset: restart prices, queues, nodes, backlog, and running jobs.
+            # Hard reset: restart prices, queues, nodes, and running jobs.
             # This is only for the very first env reset or for explicit ablations/debug runs.
             start_index = self._resolve_reset_start_index(options)
             self._reset_timeline_state(start_index=start_index)
@@ -459,9 +379,7 @@ class ComputeClusterEnv(gym.Env):
             # reporting window. Any price_start_index request is ignored unless a hard reset
             # is explicitly requested, because jumping the price stream mid-timeline would
             # break continuity.
-            job_queue_2d = self.state['job_queue'].reshape(-1, 4)
-            self._mark_queue_backlog_mutation()
-            self._update_pending_job_stats(job_queue_2d)
+            self._update_pending_job_stats()
             self.state['predicted_prices'] = self.prices.predicted_prices.copy()
         
         if "price_start_index" in options:
@@ -474,10 +392,7 @@ class ComputeClusterEnv(gym.Env):
             self.state["predicted_prices"] = self.prices.predicted_prices.copy()
 
         if self.oracle is not None or self.contiguous_oracle is not None:
-            job_queue_2d = self.state['job_queue'].reshape(-1, 4)
-            active_rows = job_queue_2d[job_queue_2d[:, 0] > 0]
-            carried: list = [(int(r[1]), int(r[0]), int(r[2]), int(r[3])) for r in active_rows]
-            carried += [(int(j[1]), int(j[0]), int(j[2]), int(j[3])) for j in self.backlog_queue]
+            carried: list = [(int(r[1]), int(r[0]), int(r[2]), int(r[3])) for r in self.queue.rows()]
         if self.oracle is not None:
             self.oracle.reset(carried_jobs=carried if carried else None)
         if self.contiguous_oracle is not None:
@@ -493,7 +408,7 @@ class ComputeClusterEnv(gym.Env):
         # Job arrivals are not: this hour's new jobs are generated below, *after* that
         # choice was made, so the action cannot react to them directly. It still affects
         # whether they launch this step (node capacity is adjusted before dispatch), and
-        # their downstream consequences (remaining queue/backlog) are reflected in the
+        # their downstream consequences (remaining queue) are reflected in the
         # observation returned at the end of this step, which is what the *next* action
         # will be chosen from.
         self.current_step += 1
@@ -506,10 +421,6 @@ class ComputeClusterEnv(gym.Env):
         current_price = self.prices.get_current_price()
         if self.render_mode == 'human':
             self.env_print("predicted_prices: ", np.array2string(self.state['predicted_prices'], separator=" ", max_line_width=np.inf, formatter={'float_kind': lambda x: "{:05.2f}".format(x)}))
-
-        # reshape the 1d job_queue array into 2d for cleaner code
-        job_queue_2d = self.state['job_queue'].reshape(-1, 4)
-        queue_backlog_mutated = False
 
         # Decrement booked time for nodes and complete running jobs
         self.env_print("[1] Processing ongoing jobs...")
@@ -524,19 +435,7 @@ class ComputeClusterEnv(gym.Env):
             self.env_print(f"{len(completed_jobs)} jobs completed: [{' '.join(['#' + str(job_id) for job_id in completed_jobs]) if len(completed_jobs) > 0 else ''}]")
 
         # Age jobs already waiting before admitting this step's new arrivals.
-        self.next_empty_slot, queue_aged_dropped = age_job_queue(job_queue_2d, self.next_empty_slot)
-        if queue_aged_dropped > 0:
-            queue_backlog_mutated = True
-
-        # Age helper queues (jobs waiting outside the fixed queue)
-        backlog_aged_dropped = age_backlog_queue(self.backlog_queue, self.metrics, _is_baseline=False)
-        if backlog_aged_dropped > 0:
-            queue_backlog_mutated = True
-
-        # Fill real queue from helper before accepting new jobs
-        self.next_empty_slot, moved_from_backlog = fill_queue_from_backlog(job_queue_2d, self.backlog_queue, self.next_empty_slot)
-        if moved_from_backlog > 0:
-            queue_backlog_mutated = True
+        queue_aged_dropped = self.queue.age(MAX_JOB_AGE)
 
         # Generate new jobs
         self.env_print(f"[2] Generating new jobs...")
@@ -555,88 +454,55 @@ class ComputeClusterEnv(gym.Env):
         if self.contiguous_oracle is not None:
             self.contiguous_oracle.record(current_price, new_jobs_durations, new_jobs_nodes, new_jobs_cores)
 
-        # Add new jobs to queue (overflow goes to helper)
+        # Add new jobs to the queue; arrivals beyond its capacity are rejected
         self.env_print(f"[2] Adding {new_jobs_count} new jobs to the queue...")
-        new_jobs, self.next_empty_slot, backlog_dropped = add_new_jobs(
-            job_queue_2d, new_jobs_count, new_jobs_durations,
-            new_jobs_nodes, new_jobs_cores, self.next_empty_slot, self.backlog_queue
-        )
-        if len(new_jobs) > 0:
-            queue_backlog_mutated = True
-        if backlog_dropped > 0:
-            self.metrics.jobs_rejected_queue_full += backlog_dropped
-            self.metrics.episode_jobs_rejected_queue_full += backlog_dropped
+        _added, rejected_queue_full = self.queue.add(new_jobs_durations, new_jobs_nodes, new_jobs_cores)
+        if rejected_queue_full > 0:
+            self.metrics.jobs_rejected_queue_full += rejected_queue_full
+            self.metrics.episode_jobs_rejected_queue_full += rejected_queue_full
         self.metrics.jobs_submitted += new_jobs_count
         self.metrics.episode_jobs_submitted += new_jobs_count
 
         if self.render_mode == 'human':
             self.env_print("nodes: ", np.array2string(self.state['nodes'], separator=' ', max_line_width=np.inf))
             self.env_print(f"cores_available: {np.array2string(self.cores_available, separator=' ', max_line_width=np.inf)} ({np.sum(self.cores_available)})")
-            self.env_print(f">>> adding {len(new_jobs)} new jobs to the queue: {' '.join(['[{}h {} {}x{}]'.format(d, a, n, c) for d, a, n, c in new_jobs])}")
-            self.env_print("job_queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
+            self.env_print(f">>> adding {new_jobs_count} new jobs to the queue: {' '.join(['[{}h {}x{}]'.format(d, n, c) for d, n, c in zip(new_jobs_durations, new_jobs_nodes, new_jobs_cores)])}")
+            self.env_print(f"job_queue ({len(self.queue)} jobs): ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in self.queue.rows()]))
 
         # Snapshot the pending queue before launching jobs, for the reward calculation's
         # decision_pending_core_demand input (not something the agent observed when it chose
         # `action` — that choice was already made from the previous step's observation).
-        decision_pending_summary = self._pending_work_summary(job_queue_2d)
+        decision_pending_summary = self._pending_work_summary()
 
-        action_type, action_magnitude, do_refill = action
+        action_type, action_magnitude = action
         action_magnitude += 1
 
-        self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}, refill={do_refill}...")
+        self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}...")
         num_node_changes = adjust_nodes(action_type, action_magnitude, self.state['nodes'], self.cores_available, self.env_print)
         available_cores_before_launch = int(np.sum(self.cores_available))
 
         # Assign jobs to available nodes
         self.env_print(f"[4] Assigning jobs to available nodes...")
 
-        num_dropped_this_step = queue_aged_dropped + backlog_aged_dropped + backlog_dropped
-        num_launched_jobs, self.next_empty_slot, queue_dropped, self.next_job_id = assign_jobs_to_available_nodes(
-            job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-            self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False,
+        num_dropped_this_step = queue_aged_dropped + rejected_queue_full
+        num_launched_jobs, self.next_job_id = dispatch_jobs(
+            self.queue, self.state['nodes'], self.cores_available, self.running_jobs,
+            self.next_job_id, self.metrics, is_baseline=False,
             dispatcher=self.dispatcher, reservation_depth=self.reservation_depth
         )
-        if num_launched_jobs > 0 or queue_dropped > 0:
-            queue_backlog_mutated = True
-        num_dropped_this_step += queue_dropped
 
         self.env_print(f"   {num_launched_jobs} jobs launched")
 
-        # Refill queue from backlog if agent chose to do so
-        if do_refill == 1 and len(self.backlog_queue) > 0:
-            self.next_empty_slot, moved = fill_queue_from_backlog(job_queue_2d, self.backlog_queue, self.next_empty_slot)
-            if moved > 0:
-                queue_backlog_mutated = True
-                self.env_print(f"   {moved} jobs moved from backlog to queue")
-                # Try to assign the newly queued jobs
-                extra_launched, self.next_empty_slot, extra_dropped, self.next_job_id = assign_jobs_to_available_nodes(
-                    job_queue_2d, self.state['nodes'], self.cores_available, self.running_jobs,
-                    self.next_empty_slot, self.next_job_id, self.metrics, is_baseline=False,
-                    dispatcher=self.dispatcher, reservation_depth=self.reservation_depth
-                )
-                if extra_launched > 0 or extra_dropped > 0:
-                    queue_backlog_mutated = True
-                num_launched_jobs += extra_launched
-                num_dropped_this_step += extra_dropped
-                if extra_launched > 0:
-                    self.env_print(f"   {extra_launched} additional jobs launched from backlog")
-
         launched_cores_this_step = max(0, available_cores_before_launch - int(np.sum(self.cores_available)))
-        remaining_pending_summary = self._pending_work_summary(job_queue_2d)
-
-        # Update summary statistics for all outstanding jobs (queue + backlog)
-        if queue_backlog_mutated:
-            self._mark_queue_backlog_mutation()
-        self._update_pending_job_stats(job_queue_2d)
+        remaining_pending_summary = self._pending_work_summary()
+        self._update_pending_job_stats(remaining_pending_summary)
 
         # Calculate node utilization stats
         num_used_nodes = np.sum(self.state['nodes'] > 0)
         num_on_nodes = np.sum(self.state['nodes'] >= 0)
         num_off_nodes = np.sum(self.state['nodes'] == -1)
         num_idle_nodes = num_on_nodes - num_used_nodes
-        num_unprocessed_jobs = np.sum(job_queue_2d[:, 0] > 0)
-        combined_queue_size = num_unprocessed_jobs + len(self.backlog_queue)
-        num_unprocessed_jobs = combined_queue_size
+        num_unprocessed_jobs = len(self.queue)
         average_future_price = float(np.mean(self.state['predicted_prices']))
         num_used_cores = int(num_on_nodes * CORES_PER_NODE - np.sum(self.cores_available))
         num_running_jobs = len(self.running_jobs)
@@ -663,28 +529,20 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_overdue_jobs_end = int(remaining_pending_summary["overdue_jobs"])
         self.metrics.episode_overdue_age_core_hours_end = float(remaining_pending_summary["overdue_age_core_hours"])
 
-        # Track max queue size (queue only, without backlog)
-        queue_only_size = np.sum(job_queue_2d[:, 0] > 0)
-        if queue_only_size > self.metrics.max_queue_size_reached:
-            self.metrics.max_queue_size_reached = queue_only_size
-        if queue_only_size > self.metrics.episode_max_queue_size_reached:
-            self.metrics.episode_max_queue_size_reached = queue_only_size
-
-        # Track max backlog size
-        backlog_size = len(self.backlog_queue)
-        if backlog_size > self.metrics.max_backlog_size_reached:
-            self.metrics.max_backlog_size_reached = backlog_size
-        if backlog_size > self.metrics.episode_max_backlog_size_reached:
-            self.metrics.episode_max_backlog_size_reached = backlog_size
+        # Track max queue size
+        if num_unprocessed_jobs > self.metrics.max_queue_size_reached:
+            self.metrics.max_queue_size_reached = num_unprocessed_jobs
+        if num_unprocessed_jobs > self.metrics.episode_max_queue_size_reached:
+            self.metrics.episode_max_queue_size_reached = num_unprocessed_jobs
 
         self.env_print(f"[5] Calculating reward...")
 
         # Baseline step
-        baseline_cost, baseline_cost_off, baseline_power_mwh, baseline_power_off_mwh, self.baseline_next_empty_slot, self.next_job_id, baseline_num_used_nodes, baseline_num_used_cores = baseline_step(
+        baseline_cost, baseline_cost_off, baseline_power_mwh, baseline_power_off_mwh, self.next_job_id, baseline_num_used_nodes, baseline_num_used_cores = baseline_step(
             self.baseline_state, self.baseline_cores_available, self.baseline_running_jobs,
-            current_price, new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
-            self.baseline_next_empty_slot, self.next_job_id, self.metrics, self.env_print,
-            self.baseline_backlog_queue, self.dispatcher, self.reservation_depth
+            current_price, new_jobs_durations, new_jobs_nodes, new_jobs_cores,
+            self.next_job_id, self.metrics, self.env_print,
+            self.baseline_queue, self.dispatcher, self.reservation_depth
         )
 
         self.metrics.baseline_cost += baseline_cost
@@ -701,7 +559,7 @@ class ComputeClusterEnv(gym.Env):
 
         step_reward, step_cost, eff_reward_norm, price_reward, idle_penalty_norm, job_age_penalty_norm = self.reward_calculator.calculate(
             num_used_nodes, num_idle_nodes, current_price, average_future_price,
-            num_off_nodes, job_queue_2d, num_unprocessed_jobs, self.weights,
+            num_off_nodes, num_unprocessed_jobs, self.weights,
             num_dropped_this_step, self.env_print, num_on_nodes, num_used_cores,
             decision_pending_core_demand=float(decision_pending_summary["pending_core_demand"]),
             remaining_overdue_age_core_hours=float(remaining_pending_summary["overdue_age_core_hours"]),
@@ -758,7 +616,7 @@ class ComputeClusterEnv(gym.Env):
             if self.metrics.episode_rewards:
                 self.metrics.episode_rewards[-1] = terminal_penalty_applied
 
-            post_flush_pending_summary = self._pending_work_summary(self.state['job_queue'].reshape(-1, 4))
+            post_flush_pending_summary = self._pending_work_summary()
             self.metrics.episode_pending_jobs_end = int(post_flush_pending_summary["pending_job_count"])
             self.metrics.episode_pending_core_demand_end = float(post_flush_pending_summary["pending_core_demand"])
             self.metrics.episode_pending_core_hours_end = float(post_flush_pending_summary["pending_core_hours"])
@@ -777,7 +635,7 @@ class ComputeClusterEnv(gym.Env):
         # print stats
         self.env_print(f"[6] End of step stats...")
         if self.render_mode == 'human':
-            self.env_print("job queue: ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in job_queue_2d if d > 0]))
+            self.env_print(f"job queue ({len(self.queue)} jobs): ", ' '.join(['[{} {} {} {}]'.format(d, a, n, c) for d, a, n, c in self.queue.rows()]))
             self.env_print(f"{len(self.running_jobs)} running jobs: {' '.join(['[#{}: {}h, {}x{}]'.format(job_id, job_data['duration'], len(job_data['allocation']), int(job_data['allocation'][0][1])) for job_id, job_data in self.running_jobs.items()]) if len(self.running_jobs) > 0 else '[]'}")
         self.env_print(f"launched jobs: {num_launched_jobs}, unprocessed jobs: {num_unprocessed_jobs}")
         self.env_print(f"nodes: ON: {num_on_nodes}, OFF: {num_off_nodes}, used: {num_used_nodes}, IDLE: {num_idle_nodes}. node changes: {num_node_changes}")
@@ -817,8 +675,6 @@ class ComputeClusterEnv(gym.Env):
                 self.metrics.episode_oracle_contiguous_spillover = self.contiguous_oracle.spillover_count
             self.metrics.record_episode_completion(self.current_episode)
 
-        # flatten job_queue again
-        self.state['job_queue'] = job_queue_2d.flatten()
         self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
 
         if self.render_mode == 'human':

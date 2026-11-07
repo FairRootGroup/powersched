@@ -542,7 +542,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--oracle", action="store_true", default=False, help="Enable oracle for evaluation")
-    parser.add_argument("--dispatcher", default="firstfit", choices=DISPATCHERS, help="Forwarded to train.py.")
+    parser.add_argument("--dispatcher", default="easy", choices=DISPATCHERS, help="Forwarded to train.py.")
     parser.add_argument("--reservation-depth", type=int, default=1, help="Forwarded to train.py (easy dispatcher only).")
     parser.add_argument("--dashboard-hours", type=int, default=None)
     parser.add_argument(

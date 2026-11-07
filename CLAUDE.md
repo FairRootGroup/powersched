@@ -139,8 +139,8 @@ python -m test.test_sanity_env --dispatcher easy --check-determinism --steps 300
 # Dispatcher tests (EASY backfilling)
 python -m test.test_dispatcher_easy
 
-# Backlog (numpy-backed overflow queue) equivalence tests
-python -m test.test_backlog
+# Job queue and vectorized dispatch (equivalence with the previous per-job dispatcher loops)
+python -m test.test_job_queue
 
 # Workload generator tests
 python -m test.test_sanity_workloadgen
@@ -201,7 +201,7 @@ Additional training options:
 - `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step
 - `--jobs-exact-replay`: Replay raw jobs in timeline order without aggregation
 - `--jobs-exact-replay-aggregate`: Aggregate jobs per time-bin before enqueueing
-- `--dispatcher` (default `firstfit`): Job dispatcher shared by agent and baselines. `firstfit` starts every queued job that fits now, in slot order; `easy` goes oldest job first with EASY backfilling (reservations are planned on online nodes only)
+- `--dispatcher` (default `easy`): Job dispatcher shared by agent and baselines. `easy` goes oldest job first with EASY backfilling (reservations are planned on online nodes only); `firstfit` starts every queued job that fits now, oldest first
 - `--reservation-depth` (default 1): With `--dispatcher easy`, how many of the oldest blocked jobs get a reservation (1 = EASY, larger approaches conservative backfilling)
 - `--plot-dashboard`: Generate combined dashboard plot after evaluation
 - `--dashboard-hours` (default 336): Hours to show in dashboard plot
@@ -273,11 +273,11 @@ Interactive script that runs the generator for a configurable number of hours, p
 
 - Uses stable-baselines3 PPO with custom ComputeClusterEnv
 - Environment simulates 2-week episodes (336 hours) with hourly decisions
-- State space includes node counts, job queue, electricity prices, pending job statistics (count, core-hours, avg duration, max nodes), and backlog size
-- Action space: `[action_type, magnitude, do_refill]` - controls nodes online/offline and whether to refill the job queue from the backlog
+- State space includes node states, electricity prices, and pending job statistics (count, core-hours, avg duration, max nodes); the job queue itself is not observed
+- Action space: `[action_type, magnitude]` - controls nodes online/offline
 - Rewards balance efficiency, cost savings, and resource utilization
 - Cluster configuration: 335 nodes max, 96 cores per node, up to 16 nodes per job
-- Job queue: max 2500 jobs, max 1500 new jobs per hour, max 170h runtime; overflow goes to backlog (max 50000)
+- Job queue: one FIFO queue of all waiting jobs (`JobQueue`, max 52,500 jobs; arrivals beyond it are rejected), max 1500 new jobs per hour, max 170h runtime
 - Power consumption: 150W idle, 450W used per node
 - Baseline comparison: greedy scheduler that keeps all nodes on and processes jobs FIFO
 

@@ -111,7 +111,7 @@ def main():
         default=0,
         help="Immediately flush and terminate the episode after this many consecutive dropped-job steps (0 disables).",
     )
-    parser.add_argument("--dispatcher", type=str, default="firstfit", choices=DISPATCHERS, help="Job dispatcher for agent and baselines: 'firstfit' starts every queued job that fits now, in slot order; 'easy' goes oldest first with EASY backfilling (default: firstfit).")
+    parser.add_argument("--dispatcher", type=str, default="easy", choices=DISPATCHERS, help="Job dispatcher for agent and baselines: 'easy' goes oldest job first with EASY backfilling; 'firstfit' starts every queued job that fits now, oldest first (default: easy).")
     parser.add_argument("--reservation-depth", type=int, default=1, help="With --dispatcher easy: number of oldest blocked jobs that get a reservation (1 = EASY, larger approaches conservative backfilling).")
 
     args = parser.parse_args()

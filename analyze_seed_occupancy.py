@@ -500,7 +500,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--echo-train-output", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--fit", action="store_true", default=False, help="Enable polynomial fitting of datasets")
     parser.add_argument("--seed-path", default="", help="Path if models are saved by seed (forwarded to train.py)")
-    parser.add_argument("--dispatcher", default="firstfit", choices=DISPATCHERS, help="Forwarded to train.py.")
+    parser.add_argument("--dispatcher", default="easy", choices=DISPATCHERS, help="Forwarded to train.py.")
     parser.add_argument("--reservation-depth", type=int, default=1, help="Forwarded to train.py (easy dispatcher only).")
     return parser
 

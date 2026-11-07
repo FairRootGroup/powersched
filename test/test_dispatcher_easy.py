@@ -6,10 +6,18 @@ Run with: python -m test.test_dispatcher_easy
 import numpy as np
 
 from src.config import CORES_PER_NODE, MAX_JOB_DURATION, MAX_NODES
-from src.job_management import (
-    assign_jobs_to_available_nodes, _earliest_start, _free_core_timeline,
-)
+from src.job_management import JobQueue, dispatch_jobs, _earliest_start, _free_core_timeline
 from src.metrics_tracker import MetricsTracker
+
+
+class _RecordingQueue(JobQueue):
+    """JobQueue that remembers which positions the dispatcher removed."""
+
+    removed: list[int] = []
+
+    def remove(self, indices) -> None:
+        self.removed = [int(i) for i in indices]
+        super().remove(indices)
 
 
 def _cluster(online: int):
@@ -34,14 +42,18 @@ def _add_running(running_jobs, nodes, cores_available, node_ids, cores_used, rem
 
 
 def _dispatch(queue, nodes, cores_available, running_jobs, dispatcher="easy", reservation_depth=1):
-    job_queue_2d = np.array(queue, dtype=np.int32)
-    num_launched, _, num_dropped, _ = assign_jobs_to_available_nodes(
-        job_queue_2d, nodes, cores_available, running_jobs,
-        next_empty_slot=len(job_queue_2d), next_job_id=0, metrics=MetricsTracker(),
+    """Dispatch ``queue`` rows and return the indices (into ``queue``) of the jobs that started."""
+    rows = np.array(queue, dtype=np.int32)
+    # The queue is kept oldest first (stable for equal ages), so put the rows in that order.
+    order = np.argsort(-rows[:, 1], kind="stable")
+    job_queue = _RecordingQueue(capacity=len(rows))
+    job_queue.add(rows[order, 0], rows[order, 2], rows[order, 3])
+    job_queue.rows()[:, 1] = rows[order, 1]
+    num_launched, _ = dispatch_jobs(
+        job_queue, nodes, cores_available, running_jobs, next_job_id=0, metrics=MetricsTracker(),
         dispatcher=dispatcher, reservation_depth=reservation_depth,
     )
-    assert num_dropped == 0
-    started = [i for i in range(len(job_queue_2d)) if job_queue_2d[i, 0] == 0]
+    started = sorted(int(order[i]) for i in job_queue.removed)
     return started, num_launched
 
 
@@ -79,15 +91,13 @@ def test_backfill_on_nodes_outside_reservation():
     assert [n for n, _ in running[0]["allocation"]] == [3]
 
 
-def test_oldest_job_goes_first_regardless_of_slot():
+def test_oldest_job_goes_first():
+    # The queue is kept in arrival order, i.e. oldest first, so both dispatchers start the older job.
     queue = [[1, 0, 1, 96], [1, 7, 1, 96]]
-    nodes, cores, running = _cluster(1)
-    started, _ = _dispatch(queue, nodes, cores, running)
-    assert started == [1]
-
-    nodes, cores, running = _cluster(1)
-    started, _ = _dispatch(queue, nodes, cores, running, dispatcher="firstfit")
-    assert started == [0]
+    for dispatcher in ("easy", "firstfit"):
+        nodes, cores, running = _cluster(1)
+        started, _ = _dispatch(queue, nodes, cores, running, dispatcher=dispatcher)
+        assert started == [1], dispatcher
 
 
 def test_head_that_never_fits_online_nodes_gets_no_reservation():

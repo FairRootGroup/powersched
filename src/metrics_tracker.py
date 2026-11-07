@@ -53,7 +53,6 @@ class MetricsTracker:
         self.total_job_wait_time: int = 0
         self.total_job_wait_time_launch: int = 0
         self.max_queue_size_reached: int = 0
-        self.max_backlog_size_reached: int = 0
         self.jobs_dropped: int = 0
         self.jobs_flushed: int = 0
         self.jobs_rejected_queue_full: int = 0
@@ -65,7 +64,6 @@ class MetricsTracker:
         self.baseline_total_job_wait_time: int = 0
         self.baseline_total_job_wait_time_launch: int = 0
         self.baseline_max_queue_size_reached: int = 0
-        self.baseline_max_backlog_size_reached: int = 0
         self.baseline_jobs_dropped: int = 0
         self.baseline_jobs_flushed: int = 0
         self.baseline_jobs_rejected_queue_full: int = 0
@@ -106,7 +104,6 @@ class MetricsTracker:
         self.episode_total_job_wait_time: int = 0
         self.episode_total_job_wait_time_launch: int = 0
         self.episode_max_queue_size_reached: int = 0
-        self.episode_max_backlog_size_reached: int = 0
         self.episode_jobs_dropped: int = 0
         self.episode_jobs_flushed: int = 0
         self.episode_max_drop_streak: int = 0
@@ -119,7 +116,6 @@ class MetricsTracker:
         self.episode_baseline_total_job_wait_time: int = 0
         self.episode_baseline_total_job_wait_time_launch: int = 0
         self.episode_baseline_max_queue_size_reached: int = 0
-        self.episode_baseline_max_backlog_size_reached: int = 0
         self.episode_baseline_jobs_dropped: int = 0
         self.episode_baseline_jobs_flushed: int = 0
         self.episode_baseline_jobs_rejected_queue_full: int = 0
@@ -331,7 +327,6 @@ class MetricsTracker:
             'on_nodes_end': int(self.episode_on_nodes[-1]) if self.episode_on_nodes else 0,
             'used_nodes_end': int(self.episode_used_nodes[-1]) if self.episode_used_nodes else 0,
             'max_queue_size': self.episode_max_queue_size_reached,
-            'max_backlog_size': self.episode_max_backlog_size_reached,
             'max_drop_streak': self.episode_max_drop_streak,
             'pending_jobs_end': self.episode_pending_jobs_end,
             'pending_core_demand_end': self.episode_pending_core_demand_end,
@@ -345,7 +340,6 @@ class MetricsTracker:
             'baseline_avg_wait_time': baseline_avg_wait_time,
             'baseline_completion_rate': baseline_completion_rate,
             'baseline_max_queue_size': self.episode_baseline_max_queue_size_reached,
-            'baseline_max_backlog_size': self.episode_baseline_max_backlog_size_reached,
             # Loss metrics: includes age expirations, queue-full rejections, and streak-triggered flushes.
             "jobs_dropped": self.episode_jobs_dropped,
             "jobs_flushed": self.episode_jobs_flushed,
