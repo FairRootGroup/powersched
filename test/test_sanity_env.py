@@ -315,7 +315,7 @@ def main():
 # -------------------------------------
 
     seed = 123
-    action = np.array([1, 0], dtype=np.int64)  # maintain
+    action = np.array([1, 0], dtype=np.int64)  # keep
 
     env = make_env_with_carry(env_cls=DeterministicPriceEnv)
 

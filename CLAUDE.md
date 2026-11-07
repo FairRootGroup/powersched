@@ -274,7 +274,7 @@ Interactive script that runs the generator for a configurable number of hours, p
 - Uses stable-baselines3 PPO with custom ComputeClusterEnv
 - Environment simulates 2-week episodes (336 hours) with hourly decisions
 - State space includes node states, electricity prices, and pending job statistics (count, core-hours, avg duration, max nodes); the job queue itself is not observed
-- Action space: `[action_type, magnitude]` - controls nodes online/offline
+- Action space: `[action_type, magnitude]` - action_type 0 = switch nodes off, 1 = keep, 2 = switch on; magnitude indexes `NODE_CHANGE_STEPS` (1, 2, 4, ... 256 nodes)
 - Rewards balance efficiency, cost savings, and resource utilization
 - Cluster configuration: 335 nodes max, 96 cores per node, up to 16 nodes per job
 - Job queue: one FIFO queue of all waiting jobs (`JobQueue`, max 52,500 jobs; arrivals beyond it are rejected), max 1500 new jobs per hour, max 170h runtime

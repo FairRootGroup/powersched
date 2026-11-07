@@ -4,7 +4,9 @@ WEEK_HOURS: int = 168
 
 MAX_NODES: int = 335  # Maximum number of nodes
 MAX_QUEUE_SIZE: int = 52500  # Maximum number of waiting jobs; arrivals beyond it are rejected
-MAX_CHANGE: int = MAX_NODES
+# Node counts the agent can switch on or off in one step (action magnitude index -> nodes).
+# Powers of two keep the choice small while any target is reached within a few hours.
+NODE_CHANGE_STEPS: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128, 256)
 MAX_JOB_DURATION: int = 170  # maximum job runtime in hours
 # Drop jobs that have waited longer than this in the queue.
 MAX_JOB_AGE = WEEK_HOURS * 2

@@ -17,7 +17,7 @@ from src.workloadgen import WorkloadGenerator
 
 # Import refactored modules
 from src.config import (
-    MAX_NODES, MAX_CHANGE, MAX_JOB_DURATION, MAX_JOB_AGE,
+    MAX_NODES, NODE_CHANGE_STEPS, MAX_JOB_DURATION, MAX_JOB_AGE,
     CORES_PER_NODE, MAX_NODES_PER_JOB, EPISODE_HOURS
 )
 from src.job_management import process_ongoing_jobs, dispatch_jobs, JobQueue, DISPATCHERS
@@ -173,8 +173,8 @@ class ComputeClusterEnv(gym.Env):
 
         # actions: - change number of available nodes:
         #   action_type:      0: decrease, 1: maintain, 2: increase
-        #   action_magnitude: 0-MAX_CHANGE (+1ed in the action)
-        self.action_space = spaces.MultiDiscrete([3, MAX_CHANGE])
+        #   action_magnitude: index into NODE_CHANGE_STEPS (number of nodes to switch)
+        self.action_space = spaces.MultiDiscrete([3, len(NODE_CHANGE_STEPS)])
 
         self.observation_space = spaces.Dict({
             # nodes: [-1: off, 0: idle, >0: booked for n hours]
@@ -474,8 +474,8 @@ class ComputeClusterEnv(gym.Env):
         # `action` — that choice was already made from the previous step's observation).
         decision_pending_summary = self._pending_work_summary()
 
-        action_type, action_magnitude = action
-        action_magnitude += 1
+        action_type, magnitude_index = action
+        action_magnitude = NODE_CHANGE_STEPS[int(magnitude_index)]
 
         self.env_print(f"[3] Adjusting nodes based on action: type={action_type}, magnitude={action_magnitude}...")
         num_node_changes = adjust_nodes(action_type, action_magnitude, self.state['nodes'], self.cores_available, self.env_print)
