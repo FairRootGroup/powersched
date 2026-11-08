@@ -138,6 +138,7 @@ def build_command(
     n_epochs=None,
     target_kl=None,
     decay_steps=None,
+    extra_args=None,
 ):
     python_executable = sys.executable
     command = [
@@ -197,6 +198,8 @@ def build_command(
         command += ["--decay-steps", str(decay_steps)]
     if workloadgen_args:
         command += workloadgen_args
+    if extra_args:
+        command += extra_args
     if output_dir is not None:
         command += ["--output-dir", output_dir]
     return command
@@ -453,7 +456,7 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None,
                      n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None,
                      dispatcher=None, reservation_depth=None, n_envs=None, normalize_reward=False,
-                     n_epochs=None, target_kl=None, decay_steps=None):
+                     n_epochs=None, target_kl=None, decay_steps=None, extra_args=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -482,6 +485,7 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             n_epochs=n_epochs,
             target_kl=target_kl,
             decay_steps=decay_steps,
+            extra_args=extra_args,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -560,6 +564,15 @@ def main():
     parser.add_argument("--n-epochs", type=int, default=None, help="Forward to train.py: PPO passes over each rollout (default: 10).")
     parser.add_argument("--target-kl", type=float, default=None, help="Forward to train.py: stop an update early once approximate KL exceeds this (default: off).")
     parser.add_argument("--decay-steps", type=int, default=None, help="Forward to train.py: decay learning rate and ent_coef linearly to 0 by this total timestep count (default: constant).")
+    # Validation options go to train.py unchanged (see train.py --help).
+    parser.add_argument("--val-every", type=int, default=None, help="Forward to train.py: validate every this many iterations and after the last one (default: off).")
+    parser.add_argument("--val-hourly-jobs", type=str, default=None, help="Forward to train.py: Slurm log for the validation workload (default: --hourly-jobs).")
+    parser.add_argument("--val-prices", type=str, default=None, help="Forward to train.py: price CSV(s) for validation (default: --prices).")
+    parser.add_argument("--val-arrival-scales", type=str, default=None, help="Forward to train.py: arrival scales to validate at (default: 1.0,1.5).")
+    parser.add_argument("--val-windows", type=int, default=None, help="Forward to train.py: validation windows (default: 4).")
+    parser.add_argument("--val-window-episodes", type=int, default=None, help="Forward to train.py: episodes per validation window (default: 2).")
+    parser.add_argument("--val-seed", type=int, default=None, help="Forward to train.py: seed of the validation arrivals (default: 12345).")
+    parser.add_argument("--val-min-completion", type=float, default=None, help="Forward to train.py: minimum completion vs baseline for a feasible checkpoint (default: 0.995).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -608,6 +621,12 @@ def main():
 
     combinations = generate_weight_combinations(step=args.step, fixed_weights=fixed_weights)
     workloadgen_args = build_workloadgen_cli_args(args)
+    validation_args = []
+    for name in ("val_every", "val_hourly_jobs", "val_prices", "val_arrival_scales", "val_windows",
+                 "val_window_episodes", "val_seed", "val_min_completion"):
+        value = getattr(args, name)
+        if value is not None:
+            validation_args += ["--" + name.replace("_", "-"), str(value)]
 
     if not combinations:
         print("No valid weight combinations found with the given constraints")
@@ -678,6 +697,7 @@ def main():
         n_epochs=args.n_epochs,
         target_kl=args.target_kl,
         decay_steps=args.decay_steps,
+        extra_args=validation_args,
     )
     if failures:
         print(f"{failures} run(s) failed")

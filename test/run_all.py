@@ -19,6 +19,7 @@ TESTS = [
     ["python", "-m", "test.test_dispatcher_easy"],
     ["python", "-m", "test.test_job_queue"],
     ["python", "-m", "test.test_observation"],
+    ["python", "-m", "test.test_validation"],
     ["python", "-m", "test.test_sampler_duration", "--print-stats", "--test-samples", "10"],
     ["python", "-m", "test.test_sampler_hourly", "--file-path", "data/allusers-gpu-30.log", "--test-day"],
     ["python", "-m", "test.test_sampler_hourly_aggregated", "--file-path", "data/allusers-gpu-30.log"],

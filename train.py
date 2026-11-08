@@ -21,6 +21,7 @@ from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
 from src.job_management import DISPATCHERS
 from src.session_log import log_invocation
+from src.validation import ValidationConfig, run_validation, record_result, format_result
 import time
 
 
@@ -117,6 +118,14 @@ def main():
     )
     parser.add_argument("--dispatcher", type=str, default="easy", choices=DISPATCHERS, help="Job dispatcher for agent and baselines: 'easy' goes oldest job first with EASY backfilling; 'firstfit' starts every queued job that fits now, oldest first (default: easy).")
     parser.add_argument("--reservation-depth", type=int, default=1, help="With --dispatcher easy: number of oldest blocked jobs that get a reservation (1 = EASY, larger approaches conservative backfilling).")
+    parser.add_argument("--val-every", type=int, default=0, help="Validate every this many iterations and after the last one (--iter-limit); 0 (default) disables. Results go to validation.jsonl, the best feasible checkpoint to validation_best.json (both next to the models), and to TensorBoard under val/.")
+    parser.add_argument("--val-hourly-jobs", type=str, default="", help="Slurm log for the validation workload (hourly sampler; default: --hourly-jobs). Set it in stages that train on --workload-gen to validate on the target workload.")
+    parser.add_argument("--val-prices", type=str, default="", help="Price CSV(s) for validation (default: --prices). Never the held-out test year.")
+    parser.add_argument("--val-arrival-scales", type=str, default="1.0,1.5", help="Comma-separated arrival scales to validate at (default: 1.0,1.5).")
+    parser.add_argument("--val-windows", type=int, default=4, help="Validation windows, spread evenly over the validation prices (default: 4).")
+    parser.add_argument("--val-window-episodes", type=int, default=2, help="2-week episodes per validation window (default: 2).")
+    parser.add_argument("--val-seed", type=int, default=12345, help="Seed of the validation arrivals; window w uses val_seed + w (default: 12345).")
+    parser.add_argument("--val-min-completion", type=float, default=0.995, help="A checkpoint is feasible if it completes at least this fraction of the jobs the baseline completes, at every scale, and loses no more jobs (default: 0.995).")
 
     args = parser.parse_args()
     if args.n_envs < 1:
@@ -202,7 +211,10 @@ def main():
     )
 
     def make_env(evaluation_mode: bool) -> ComputeClusterEnv:
-        return ComputeClusterEnv(weights=weights,
+        return ComputeClusterEnv(**env_kwargs(), evaluation_mode=evaluation_mode)
+
+    def env_kwargs(**overrides) -> dict:
+        kwargs = dict(weights=weights,
                             session=args.session,
                             render_mode=args.render,
                             external_prices=prices,
@@ -212,7 +224,6 @@ def main():
                             external_hourly_jobs=norm_path(hourly_jobs_file_path),
                             plot_config=plot_config,
                             steps_per_iteration=STEPS_PER_ITERATION,
-                            evaluation_mode=evaluation_mode,
                             workload_gen=workload_gen,
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
@@ -222,6 +233,45 @@ def main():
                             enable_oracle=args.oracle,
                             dispatcher=args.dispatcher,
                             reservation_depth=args.reservation_depth)
+        kwargs.update(overrides)
+        return kwargs
+
+    # Validation envs: the target workload (--val-hourly-jobs, else --hourly-jobs, else the training
+    # workload) and validation prices, built on first use and reused with hard resets.
+    val_config = ValidationConfig(
+        arrival_scales=tuple(float(x) for x in args.val_arrival_scales.split(",") if x.strip()),
+        windows=args.val_windows, episodes_per_window=args.val_window_episodes,
+        seed=args.val_seed, min_completion_ratio=args.val_min_completion)
+    val_envs = {}
+
+    def make_val_env(arrival_scale: float) -> ComputeClusterEnv:
+        # Full-length episodes (no loss barrier), so every checkpoint covers the same hours and arrivals.
+        overrides = dict(render_mode="none", evaluation_mode=True, enable_oracle=False,
+                         job_arrival_scale=arrival_scale, flush_after_drop_streak=0)
+        val_hourly = norm_path(args.val_hourly_jobs) or norm_path(hourly_jobs_file_path)
+        if val_hourly:
+            overrides.update(external_hourly_jobs=val_hourly, workload_gen=None, external_jobs=None, external_durations=None)
+        if norm_path(args.val_prices):
+            val_prices, val_times = load_price_csv(args.val_prices)
+            overrides.update(external_prices=val_prices, external_price_times=val_times)
+        val_env = ComputeClusterEnv(**env_kwargs(**overrides))
+        val_env.training_plots = False
+        return val_env
+
+    def validate(step: int) -> None:
+        t_val = time.time()
+        result = run_validation(model, make_val_env, val_config, val_envs)
+        best = record_result(models_dir, step, result)
+        print(format_result(step, result))
+        best_text = "none feasible" if best is None else f"{best['step']:,} steps, score {best['score']:+.2f}"
+        print(f"  best so far: {best_text} ({time.time() - t_val:.0f}s)")
+        for scale, s in result["scales"].items():
+            model.logger.record(f"val/savings_off_pct_x{scale}", s["savings_off_pct"])
+            model.logger.record(f"val/completion_ratio_x{scale}", s["completion_ratio"])
+            model.logger.record(f"val/jobs_lost_x{scale}", s["jobs_lost"])
+        model.logger.record("val/savings_off_pct", result["savings_off_pct"])
+        model.logger.record("val/feasible", float(result["feasible"]))
+        model.logger.dump(model.num_timesteps)
 
     # The env used for evaluation, and for training with a single env. Creating it also loads the
     # workload data, which parallel envs then share (they are forked from this process).
@@ -595,6 +645,8 @@ def main():
                 model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
                 if isinstance(train_env, VecNormalize):
                     train_env.save(vecnormalize_stats_file(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip"))
+                if args.val_every > 0 and (iters % args.val_every == 0 or iters == args.iter_limit):
+                    validate(STEPS_PER_ITERATION * iters)
 
 
             except PlottingComplete:
@@ -606,6 +658,8 @@ def main():
         print("Exiting training...")
         if train_env is not env:
             train_env.close()
+        for val_env in val_envs.values():
+            val_env.close()
         env.close()
 
 if __name__ == "__main__":

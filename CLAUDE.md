@@ -24,6 +24,7 @@ powersched/
 │   ├── prices.py               # Electricity price modeling
 │   ├── sampler_*.py        # Job samplers (historical log replay)
 │   ├── callbacks.py        # Training callbacks
+│   ├── validation.py       # Checkpoint validation and best-checkpoint selection (--val-every)
 │   ├── weights.py          # Reward weights
 │   ├── plot_config.py      # Plot configuration
 │   ├── plotter.py          # Visualization (plot_dashboard, plot_cumulative_savings, plot_episode_summary)
@@ -145,6 +146,9 @@ python -m test.test_job_queue
 # Observation: queue summaries and time features match the simulation
 python -m test.test_observation
 
+# Checkpoint validation: same arrivals for every policy, feasibility, best-checkpoint record
+python -m test.test_validation
+
 # Workload generator tests
 python -m test.test_sanity_workloadgen
 python -m test.test_determinism_workloadgen
@@ -204,6 +208,7 @@ Additional training options:
 - `--decay-steps` (default 0 = constant): Decay learning rate and `--ent-coef` linearly to 0 by this total timestep count (`LinearDecayCallback`); uses the model's total step count, so the decay runs once across iterations, curriculum stages and resumes
 - `--n-envs` (default 1): Environments per run, each in its own process (`SubprocVecEnv`); `--n-steps` is per environment. Each env is seeded `seed + i`. Speeds up one run, at lower efficiency per core (measured on the main trace: 1 env 65 steps/s, 8 envs 157, 16 envs 231), so prefer `train_iter.py --parallel` across runs when there are more runs than cores
 - `--normalize-reward`: Train on rewards scaled by a running return std (SB3 `VecNormalize`, observations untouched); statistics are saved as `<step>_vecnormalize.pkl` next to each checkpoint and reloaded on resume. Evaluation is unaffected
+- `--val-every K` (default 0 = off): Validate the checkpoint every K iterations and after the last one (`--iter-limit`), see `src/validation.py`. Deterministic (argmax) runs on fixed windows: `--val-windows` (4) windows spread evenly over the validation prices, `--val-window-episodes` (2) episodes each, at every `--val-arrival-scales` (1.0,1.5), arrivals seeded by `--val-seed`, always full-length episodes (no loss barrier), so all checkpoints see the same jobs and prices. Workload `--val-hourly-jobs` (default `--hourly-jobs`; set it in stages that train on `--workload-gen`), prices `--val-prices` (default `--prices`; never the held-out test year). Feasible if, at every scale, completions are at least `--val-min-completion` (0.995) of the baseline's and no more jobs are lost; score = savings vs baseline_off in %, mean over scales. Writes `validation.jsonl` (history) and `validation_best.json` (best feasible checkpoint; evaluate it with `--model <step>`) next to the models, and `val/*` to TensorBoard. About 65 s per validation with the defaults. `train_iter.py` forwards all `--val-*` options
 - `--model`: Load a specific model checkpoint by timestep number
 - `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step
 - `--jobs-exact-replay`: Replay raw jobs in timeline order without aggregation
