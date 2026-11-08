@@ -5,3 +5,4 @@ docs/
 data-internal/
 .claude/
 test/test_output
+*.sif
