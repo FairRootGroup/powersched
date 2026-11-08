@@ -53,6 +53,7 @@ powersched/
 ├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
 ├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
 ├── analyze_obs_probe.py               # Analysis: which observation parts a trained policy uses (masking probe)
+├── analyze_eval_seeds.py              # Analysis: evaluate one model over several evaluation seeds (mean ± std)
 ├── data/                   # Sample data
 │   └── workload_statistics/ # Workload log analysis scripts and aggregate stats
 ├── data-internal/          # Full Slurm logs
@@ -107,8 +108,16 @@ python ./train.py --render human
 
 **Evaluate Trained Model (No Training):**
 ```bash
-python ./train.py --evaluate-savings --eval-months 12 --session my_experiment
+python ./train.py --evaluate-savings --session my_experiment
 ```
+`--eval-months` counts 4-week months of 2 episodes; the default 13 is 364 days, a full price year (12 covers only 336 days). Totals are also written to `eval_summary.json` in the evaluation directory; `--eval-tag TAG` appends TAG to that directory's name so evaluations on other test prices or seeds are kept apart.
+
+**Evaluate over several evaluation seeds** (different job arrivals; mean ± std):
+```bash
+python analyze_eval_seeds.py --seeds 1,2,3,4,5 --parallel 5 --tag prices2024 --out eval_2024.json -- \
+    --session my_experiment --prices data-external/prices_2024.csv --hourly-jobs data-internal/allusers-main-30.log --model 8000000
+```
+Everything after `--` goes to `train.py` unchanged.
 This runs the trained model for the specified number of months and generates:
 - Episode-by-episode cost and job completion statistics
 - Cumulative savings plot comparing agent vs two baselines

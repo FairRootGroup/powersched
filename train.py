@@ -12,6 +12,7 @@ from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_su
 import re
 import glob
 import argparse
+import json
 import sys
 from src.arrival_scale import validate_job_arrival_scale
 from src.analysis_naming import build_model_weight_dir_name
@@ -89,7 +90,8 @@ def main():
     )
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
     parser.add_argument("--oracle", action='store_true', help="Enable both liquid and contiguous oracles alongside simulation to compute theoretical minimum cost lower bounds.")
-    parser.add_argument("--eval-months", type=int, default=12, help="Months to evaluate for savings analysis (default: 12, only used with --evaluate-savings)")
+    parser.add_argument("--eval-months", type=int, default=13, help="4-week months (2 episodes each) to evaluate for savings analysis (default: 13 = 364 days, a full price year; only used with --evaluate-savings)")
+    parser.add_argument("--eval-tag", type=str, default="", help="Appended to the evaluation directory name (e.g. 'prices2024_seed3'), so evaluations on other test prices or seeds do not overwrite each other.")
     add_workloadgen_args(parser)
     parser.add_argument("--plot-dashboard", action="store_true", help="Generate dashboard plot (per-hour panels + cumulative savings).")
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
@@ -324,6 +326,8 @@ def main():
         # Keep evaluations under other dispatchers apart from the default easy ones.
         if args.dispatcher != "easy" or args.reservation_depth != 1:
             seed_suffix += f"_{args.dispatcher}{args.reservation_depth}"
+        if args.eval_tag:
+            seed_suffix += f"_{args.eval_tag}"
 
         evaluation_plots_dir = os.path.join(
             session_root,
@@ -444,16 +448,17 @@ def main():
             results = plot_cumulative_savings(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human')
             plot_episode_summary(env, env.metrics.episode_costs, session_dir, save=True, show=args.render == 'human', suffix=f"eval_{args.eval_months}m")
             if results:
+                annual_factor = 365.0 / (args.eval_months * 2 * EPISODE_HOURS / 24)  # a "month" is 2 episodes = 28 days
                 print(f"\n=== CUMULATIVE SAVINGS ANALYSIS ===")
                 print(f"\nVs Baseline (with idle nodes):")
                 print(f"  Total Savings: €{results['total_savings']:,.0f}")
                 print(f"  Average Monthly Reduction (avg monthly flat-cost %): {results['avg_monthly_savings_pct']:.1f}%")
-                print(f"  Annual Savings Rate: €{results['total_savings'] * 12 / args.eval_months:,.0f}/year")
+                print(f"  Annual Savings Rate: €{results['total_savings'] * annual_factor:,.0f}/year")
 
                 print(f"\nVs Baseline_off (no idle nodes):")
                 print(f"  Total Savings: €{results['total_savings_off']:,.0f}")
                 print(f"  Average Monthly Reduction (avg monthly flat-cost %): {results['avg_monthly_savings_pct_off']:.1f}%")
-                print(f"  Annual Savings Rate: €{results['total_savings_off'] * 12 / args.eval_months:,.0f}/year")
+                print(f"  Annual Savings Rate: €{results['total_savings_off'] * annual_factor:,.0f}/year")
 
                 # Calculate job metrics across all episodes
                 total_jobs_submitted = sum(ep['jobs_submitted'] for ep in env.metrics.episode_costs)
@@ -591,6 +596,37 @@ def main():
                     if total_oracle_liquid_cost != 0.0 and total_oracle_contiguous_cost != 0.0:
                         continuity_cost = total_oracle_contiguous_cost - total_oracle_liquid_cost
                         print(f"\n  Continuity Constraint Cost:        €{continuity_cost:,.0f}  (oracle_jcg - oracle_liq)")
+
+                # Machine-readable totals (analyze_eval_seeds.py averages them over evaluation seeds).
+                summary = {
+                    "model_step": selected_model_id, "prices": args.prices, "eval_months": args.eval_months,
+                    "episodes": len(env.metrics.episode_costs), "seed": args.seed,
+                    "job_arrival_scale": args.job_arrival_scale, "dispatcher": args.dispatcher,
+                    "reservation_depth": args.reservation_depth,
+                    "agent_cost": total_agent_cost, "baseline_cost": total_baseline_cost,
+                    "baseline_off_cost": total_baseline_off_cost,
+                    "savings_pct": safe_ratio(total_savings_vs_baseline * 100.0, total_baseline_cost),
+                    "savings_off_pct": safe_ratio(total_savings_vs_baseline_off * 100.0, total_baseline_off_cost),
+                    "avg_monthly_savings_pct": results["avg_monthly_savings_pct"],
+                    "avg_monthly_savings_pct_off": results["avg_monthly_savings_pct_off"],
+                    "prop_savings_pct": prop_savings_pct_vs_baseline,
+                    "prop_savings_off_pct": prop_savings_pct_vs_baseline_off,
+                    "jobs_submitted": total_jobs_submitted, "jobs_completed": total_jobs_completed,
+                    "baseline_jobs_completed": total_baseline_completed,
+                    "completion_pct": total_agent_completion_rate, "baseline_completion_pct": total_baseline_completion_rate,
+                    "jobs_lost": total_jobs_dropped, "baseline_jobs_lost": total_baseline_jobs_dropped,
+                    "avg_wait_h": avg_wait_time, "baseline_avg_wait_h": avg_baseline_wait_time,
+                    "agent_mean_price": total_agent_prop_mean_price, "baseline_off_mean_price": total_baseline_off_prop_mean_price,
+                }
+                if args.oracle:
+                    summary["oracle_liquid_cost"] = env.metrics.oracle_cost
+                    summary["oracle_contiguous_cost"] = env.metrics.oracle_contiguous_cost
+                    summary["capture_liquid_pct"] = safe_ratio(total_savings_vs_baseline_off * 100.0, total_baseline_off_cost - env.metrics.oracle_cost)
+                    summary["capture_contiguous_pct"] = safe_ratio(total_savings_vs_baseline_off * 100.0, total_baseline_off_cost - env.metrics.oracle_contiguous_cost)
+                summary_path = os.path.join(evaluation_plots_dir, "eval_summary.json")
+                with open(summary_path, "w") as f:
+                    json.dump(summary, f, indent=2)
+                print(f"\nSummary written to {summary_path}")
         except Exception as e:
             print(f"Could not generate cumulative savings plot: {e}")
 

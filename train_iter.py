@@ -543,7 +543,7 @@ def main():
     parser.add_argument("--seeds", type=str, default=None, help="Comma-separated list of seeds to iterate over (e.g. 42,123,456); overrides --seed")
     parser.add_argument("--parallel", type=int, default=1, metavar="N", help="Number of training runs to execute in parallel (default: 1, sequential)")
     parser.add_argument("--evaluate-savings", action="store_true", help="Forward to train.py to evaluate savings compared to baseline.")
-    parser.add_argument("--eval-months", type=int, default=6, help="Number of months to evaluate savings over (forwarded to train.py)")
+    parser.add_argument("--eval-months", type=int, default=13, help="4-week months to evaluate savings over (forwarded to train.py; default 13 = 364 days)")
     parser.add_argument(
         "--flush-after-drop-streak",
         type=int,

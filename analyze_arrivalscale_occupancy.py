@@ -536,7 +536,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--idle-weight", type=float, default=0.1)
     parser.add_argument("--job-age-weight", type=float, default=0.2)
     parser.add_argument("--drop-weight", type=float, default=0.0)
-    parser.add_argument("--eval-months", type=int, default=12)
+    parser.add_argument("--eval-months", type=int, default=13)
     parser.add_argument("--model", type=int, default=1000000)
     parser.add_argument("--seed", type=int, default=None, help="Forwarded to train.py (sampling mode only).")
 

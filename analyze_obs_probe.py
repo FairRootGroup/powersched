@@ -55,7 +55,7 @@ def main():
     p.add_argument("--variant", default="full", choices=VARIANTS)
     p.add_argument("--mode", default="closed-loop", choices=["closed-loop", "agreement"])
     p.add_argument("--seed", type=int, default=301)
-    p.add_argument("--eval-months", type=int, default=12)
+    p.add_argument("--eval-months", type=int, default=13)
     p.add_argument("--prices", default="data-external/prices_2023.csv")
     p.add_argument("--hourly-jobs", default="data-internal/allusers-main-30.log")
     p.add_argument("--job-arrival-scale", type=float, default=1.0)
