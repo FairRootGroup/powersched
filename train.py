@@ -22,7 +22,7 @@ from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
 from src.job_management import DISPATCHERS
 from src.session_log import log_invocation
-from src.validation import ValidationConfig, run_validation, record_result, format_result
+from src.validation import ValidationConfig, run_validation, record_result, format_result, format_best
 import time
 
 
@@ -128,7 +128,7 @@ def main():
     parser.add_argument("--val-windows", type=int, default=4, help="Validation windows, spread evenly over the validation prices (default: 4).")
     parser.add_argument("--val-window-episodes", type=int, default=2, help="2-week episodes per validation window (default: 2).")
     parser.add_argument("--val-seed", type=int, default=12345, help="Seed of the validation arrivals; window w uses val_seed + w (default: 12345).")
-    parser.add_argument("--val-min-completion", type=float, default=0.995, help="A checkpoint is feasible if it completes at least this fraction of the jobs the baseline completes, at every scale, and loses no more jobs (default: 0.995).")
+    parser.add_argument("--val-min-completion", type=float, default=0.0, help="Also require completing at least this fraction of the jobs the baseline completes, at every scale (default: 0 = off; jobs still queued at a window's end count as not completed, so this acts as a hidden wait limit). A checkpoint is always required to lose no more jobs than the baseline.")
 
     args = parser.parse_args()
     if args.n_envs < 1:
@@ -274,10 +274,9 @@ def main():
     def validate(step: int) -> None:
         t_val = time.time()
         result = run_validation(model, make_val_env, val_config, val_envs)
-        best = record_result(models_dir, step, result)
+        best = record_result(models_dir, step, result, min_completion_ratio=args.val_min_completion)
         print(format_result(step, result))
-        best_text = "none feasible" if best is None else f"{best['step']:,} steps, score {best['score']:+.2f}"
-        print(f"  best so far: {best_text} ({time.time() - t_val:.0f}s)")
+        print(f"  best so far by average wait: {format_best(best)} ({time.time() - t_val:.0f}s)")
         for scale, s in result["scales"].items():
             model.logger.record(f"val/savings_off_pct_x{scale}", s["savings_off_pct"])
             model.logger.record(f"val/completion_ratio_x{scale}", s["completion_ratio"])

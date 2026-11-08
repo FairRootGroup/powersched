@@ -102,12 +102,17 @@ case "$CURRICULUM" in
         ;;
 esac
 
-# Final evaluation on the held-out year: the best validated checkpoint and the last one,
-# at arrival scales 1.5 (the training load) and 1.0, over three evaluation seeds.
-BEST_STEP="$("$PY" -c "import json; print(json.load(open('$MODELS_DIR/validation_best.json'))['step'])" 2>/dev/null || true)"
+# Final evaluation on the held-out year: for each wait budget (6 h, 12 h, 24 h, none) the best
+# validated checkpoint, recomputed from the validation history, plus the last checkpoint; at arrival
+# scales 1.5 (the training load) and 1.0, over three evaluation seeds.
+BEST_STEPS="$("$PY" -c "
+from src.validation import load_history, best_per_budget
+best = best_per_budget(load_history('$MODELS_DIR'))
+print(' '.join(f'{label}:{e[\"step\"]}' for label, e in best.items() if e))" 2>/dev/null || true)"
 LAST_STEP=$((ENDS[4] * 100000))
 mkdir -p "$SESSION_DIR/eval"
-for step in $(printf '%s\n' "$BEST_STEP" "$LAST_STEP" | grep -v '^$' | sort -u); do
+echo "[$(date '+%F %T')] best validated steps by wait budget: ${BEST_STEPS:-none feasible}; last: $LAST_STEP" >> "$SESSION_DIR/curriculum.log"
+for step in $( (printf '%s\n' $BEST_STEPS | cut -d: -f2; echo "$LAST_STEP") | grep -v '^$' | sort -nu); do
     for scale in 1.5 1.0; do
         out="$SESSION_DIR/eval/m${step}_x${scale}_test${TEST_YEAR}.json"
         [[ -f "$out" ]] && continue
@@ -119,4 +124,4 @@ for step in $(printf '%s\n' "$BEST_STEP" "$LAST_STEP" | grep -v '^$' | sort -u);
             --eval-months "$EVAL_MONTHS" --oracle >> "$SESSION_DIR/eval.log" 2>&1
     done
 done
-echo "[$(date '+%F %T')] done (best validated step: ${BEST_STEP:-none feasible})" >> "$SESSION_DIR/curriculum.log"
+echo "[$(date '+%F %T')] done" >> "$SESSION_DIR/curriculum.log"

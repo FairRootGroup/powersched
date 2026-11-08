@@ -13,7 +13,7 @@ import numpy as np
 
 from src.environment import ComputeClusterEnv, Weights
 from src.plot_config import PlotConfig
-from src.validation import ValidationConfig, run_validation, record_result, load_history, window_starts, BEST_FILE
+from src.validation import ValidationConfig, run_validation, record_result, load_history, window_starts, best_per_budget, BEST_FILE
 from src.workloadgen import WorkloadGenConfig, WorkloadGenerator
 
 CONFIG = ValidationConfig(arrival_scales=(1.0,), windows=2, episodes_per_window=1, seed=5)
@@ -61,21 +61,31 @@ def test_same_arrivals_for_every_policy_and_feasibility():
     assert not all_off["feasible"] and all_off["score"] is None
 
 
-def test_record_result_keeps_best_feasible():
-    def result(score):
-        return {"scales": {}, "feasible": score is not None, "savings_off_pct": score if score is not None else 9.0, "score": score}
+def _result(savings, wait, lost=0):
+    """A validation result with one scale; lost > 0 loses more jobs than the baseline."""
+    scale = dict(savings_off_pct=savings, avg_wait_h=wait, jobs_lost=lost, baseline_jobs_lost=0, completion_ratio=0.97)
+    return {"scales": {"1": scale}, "feasible": lost == 0, "savings_off_pct": savings, "score": savings if lost == 0 else None}
+
+
+def test_record_result_keeps_best_per_wait_budget():
     with tempfile.TemporaryDirectory() as d:
-        assert record_result(d, 500000, result(None)) is None
+        best = record_result(d, 500000, _result(30.0, 2.0, lost=5))   # loses jobs: never best
+        assert all(e is None for e in best.values())
         assert not os.path.exists(os.path.join(d, BEST_FILE))
-        assert record_result(d, 1000000, result(2.0))["step"] == 1000000
-        assert record_result(d, 1500000, result(1.0))["step"] == 1000000
-        # A re-validated step replaces its entry: 1M now scores 0.5, so 1.5M is best.
-        assert record_result(d, 1000000, result(0.5))["step"] == 1500000
-        assert [h["step"] for h in load_history(d)] == [500000, 1000000, 1500000]
+        record_result(d, 1000000, _result(5.0, 4.0))
+        record_result(d, 1500000, _result(15.0, 10.0))
+        best = record_result(d, 2000000, _result(25.0, 20.0))
+        assert {k: (e["step"] if e else None) for k, e in best.items()} == \
+            {"6h": 1000000, "12h": 1500000, "24h": 2000000, "any": 2000000}
+        # A re-validated step replaces its entry: 2M now waits 30 h, so 1.5M is best within 24 h.
+        best = record_result(d, 2000000, _result(25.0, 30.0))
+        assert best["24h"]["step"] == 1500000 and best["any"]["step"] == 2000000
+        assert [h["step"] for h in load_history(d)] == [500000, 1000000, 1500000, 2000000]
         with open(os.path.join(d, BEST_FILE)) as f:
-            assert json.load(f)["step"] == 1500000
-        best = record_result(d, 2000000, result(3.0))
-        assert best["step"] == 2000000 and best["score"] == 3.0
+            saved = json.load(f)
+        assert saved["step"] == 2000000 and saved["by_wait_budget"]["6h"]["step"] == 1000000
+        # The completion ratio is ignored unless asked for (all entries above have 0.97).
+        assert best_per_budget(load_history(d), min_completion_ratio=0.99)["any"] is None
 
 
 def test_window_starts_spread_evenly():
