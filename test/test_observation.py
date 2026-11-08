@@ -93,6 +93,29 @@ def test_time_features_follow_price_timestamps():
         obs, *_ = env.step(np.array([1, 0]))
 
 
+def test_multi_year_prices_cross_the_seam():
+    """Two concatenated years (2023 then 2025): prices and clock jump with the file at the seam."""
+    p23, t23 = load_price_csv("data-external/prices_2023.csv")
+    p25, t25 = load_price_csv("data-external/prices_2025.csv")
+    prices, times = load_price_csv("data-external/prices_2023.csv, data-external/prices_2025.csv")
+    assert np.array_equal(prices, np.concatenate([p23, p25]))
+    assert np.array_equal(times, np.concatenate([t23, t25]))
+    assert np.array_equal(load_price_csv(["data-external/prices_2023.csv",
+                                          "data-external/prices_2025.csv"])[0], prices)
+
+    env = _make_env(prices, times)
+    start = len(p23) - 30  # current hour 30 h before the seam
+    obs, _ = env.reset(seed=1, options={"price_start_index": start})
+    for step in range(60):
+        index = start + step
+        assert env._clock() == tuple(int(v) for v in times[index]), step
+        expected = prices[np.arange(index, index + 24) % len(prices)]
+        assert np.allclose(env.state["predicted_prices"], expected), step
+        obs, *_ = env.step(np.array([1, 0]))
+    # 2023-12-31 is a Sunday, 2025-01-01 a Wednesday
+    assert tuple(t23[-1]) == (23, 6) and tuple(t25[0]) == (0, 2)
+
+
 def test_time_features_without_timestamps():
     env = _make_env()
     obs, _ = env.reset(seed=1)

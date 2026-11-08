@@ -524,7 +524,7 @@ def parse_fixed_weights(fix_weights_str, fix_values_str):
 def main():
     parser = argparse.ArgumentParser(description="Run parameter sweep for weights")
     parser.add_argument("--step", type=float, default=0.1, help="Step size for weight combinations")
-    parser.add_argument('--prices', type=str, nargs='?', const="", default="", help='Path to the CSV file containing electricity prices (Date,Price)')
+    parser.add_argument('--prices', type=str, nargs='?', const="", default="", help='CSV file(s) of hourly electricity prices (Date,Price); several comma-separated files are concatenated in order')
     parser.add_argument('--job-durations', type=str, nargs='?', const="", default="", help='Path to a file containing job duration samples (for use with duration_sampler)')
     parser.add_argument('--jobs', type=str, nargs='?', const="", default="", help='Path to a file containing jobs samples (for use with jobs_sampler)')
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')

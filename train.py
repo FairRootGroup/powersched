@@ -55,7 +55,7 @@ def main():
     parser.add_argument('--render', type=str, default='none', choices=['human', 'none'], help='Render mode for the environment (default: none).')
     parser.add_argument('--quick-plot', action='store_true', help='In "human" render mode, skip quickly to the plot (default: False).')
     parser.add_argument('--plot-once', action='store_true', help='In "human" render mode, exit after the first plot.')
-    parser.add_argument('--prices', type=str, nargs='?', const="", default="", help='Path to the CSV file containing electricity prices (Date,Price)')
+    parser.add_argument('--prices', type=str, nargs='?', const="", default="", help='CSV file(s) of hourly electricity prices (Date,Price); several comma-separated files are concatenated in order, e.g. prices_2023.csv,prices_2025.csv')
     parser.add_argument('--job-durations', type=str, nargs='?', const="", default="", help='Path to a file containing job duration samples (for use with durations_sampler)')
     parser.add_argument('--jobs', type=str, nargs='?', const="", default="", help='Path to a file containing job samples (for use with jobs_sampler)')
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')

@@ -21,7 +21,8 @@ Findings from the paper revision (details in `data-internal/paper/revision_findi
 | `befe1de` | Observation adds queue summaries (counts and core-hours per age bin, counts per node-request bin, oldest age, overdue count) and time features (sin/cos hour of day, weekday). Arrivals and time features follow the price clock (`prices.load_price_csv`: local timestamps incl. DST). |
 | `b55eda5` | Observation scaled by fixed transforms to roughly [-1, 1] and returned as a copy of `env.state` (no running statistics to save). |
 | `4de22d5` | `--n-envs` parallel environments (`SubprocVecEnv`, forked after loading the trace once); TensorBoard metrics from every env via `info["episode_metrics"]`, averaged per log; `train_iter.py` forwards `--n-envs` and `--normalize-reward`. |
-| (pending) | `--n-epochs`, `--target-kl`, `--decay-steps` (linear decay of learning rate and `ent_coef` over the whole run); `train_iter.py` forwards them. |
+| `2d5944a` | `--n-epochs`, `--target-kl`, `--decay-steps` (linear decay of learning rate and `ent_coef` over the whole run); `train_iter.py` forwards them. |
+| (pending) | `--prices` takes several comma-separated CSVs, concatenated in order with their own timestamps (`load_price_csv`); passes unchanged through `train_iter.py` and the analyze scripts. |
 
 Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--ent-coef` kept on resume, `analyze_obs_probe.py`.
 
@@ -34,7 +35,7 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
    - `n_epochs` 5, `target_kl` 0.02;
    - 2,048 steps per update, batch size 256, `--normalize-reward`;
    - network 64-64 (input is now ~390 values).
-3. **Multi-year prices.** `--prices` accepts several CSVs (2023, 2024, 2025), concatenated with their timestamps. Leave-one-year-out: three runs per configuration, each trained on two years and tested on the third.
+3. ~~Multi-year prices~~ — done: `--prices data-external/prices_2023.csv,data-external/prices_2025.csv`. Leave-one-year-out: three runs per configuration, each trained on two years and evaluated (`--evaluate-savings --prices <third year>`) on the third. Episode starts are drawn over the whole concatenation; at the seam, prices and clock jump to the next file, like the existing wrap from December back to January. The price term of the reward is scaled by the 1st/99th percentiles of the loaded prices, so training pools them over both years and evaluation uses the test year's; costs and savings are unaffected.
 4. **Validation callback / automatic pruning.** Every 500K steps (or at stage ends), evaluate deterministically (argmax) on validation data: about 2 months at arrival scales 1.0 and 1.5. Score = savings vs idle-free, subject to completion ≥ 99.5% and no lost jobs. Keep each run's best checkpoint; drop a configuration if all its seeds score below a threshold. Report all seeds of kept configurations.
 5. **Evaluation fixes.** `--eval-months 13` (26 episodes, 364 days; 12 gives only 336 days). Report means over several evaluation seeds. Align `analyzer.py` (the colleague's heuristic evaluator; it and `best*.py` were moved out of the repo by the user) to the same episode count and dispatcher before comparing with RL. Note: the heuristics were written for the v1 action (magnitude 1–335, refill) and need adapting to the v2 action.
 6. **Cluster setup.** Slurm cluster running Apptainer containers; AMD nodes with 256 cores; GPU partition (AMD) currently down, so CPU only. Apptainer image (`powersched.def` exists; CPU-only PyTorch), Slurm array job script, one run per array task (or one node running several runs via `train_iter.py --parallel` × `--n-envs`).

@@ -4,13 +4,27 @@ import pandas as pd
 from collections import deque
 
 
-def load_price_csv(path: str) -> tuple[np.ndarray, np.ndarray]:
+def load_price_csv(path: str | list[str]) -> tuple[np.ndarray, np.ndarray]:
     """
-    Read a Date,Price CSV of hourly prices.
+    Read one or more Date,Price CSVs of hourly prices.
 
     Returns the prices and, per hour, its [hour of day, weekday (0 = Monday)] in the local
     time of the Date column (e.g. "2024-01-01T13:00+01:00" -> hour 13, weekday 0).
+
+    Several files (a list, or one comma-separated string) are concatenated in the given order,
+    e.g. "prices_2023.csv,prices_2025.csv" for training on two years. Each hour keeps its own
+    timestamp, so the time features stay correct across the seam between files.
     """
+    paths = [p.strip() for p in path.split(",")] if isinstance(path, str) else list(path)
+    paths = [p for p in paths if p]
+    if not paths:
+        raise ValueError("no price file given")
+    parts = [_load_one_price_csv(p) for p in paths]
+    return (np.concatenate([p for p, _ in parts]),
+            np.concatenate([t for _, t in parts]))
+
+
+def _load_one_price_csv(path: str) -> tuple[np.ndarray, np.ndarray]:
     df = pd.read_csv(path, encoding="utf-8-sig")
     dates = df["Date"].astype(str)
     hours = dates.str.slice(11, 13).astype(int).to_numpy()
