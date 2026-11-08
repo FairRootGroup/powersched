@@ -1,0 +1,33 @@
+# CPU-only runtime for PowerSched training on the cluster (no GPU needed for the 64-64 policy).
+# The image holds only Python and the dependencies; the repository is bind-mounted at run time,
+# so code changes need no rebuild. Versions match the development venv.
+#
+# Build:  apptainer build powersched-cpu.sif cluster/powersched-cpu.def
+# Use:    see cluster/v2_grid.slurm
+Bootstrap: docker
+From: python:3.12-slim
+
+%post
+    pip install --no-cache-dir torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+    pip install --no-cache-dir \
+        stable-baselines3==2.7.1 \
+        gymnasium==1.2.3 \
+        tensorboard==2.20.0 \
+        matplotlib==3.10.8 \
+        colorama==0.4.6 \
+        numpy==2.4.2 \
+        pandas==3.0.1 \
+        torchinfo==1.8.0 \
+        "setuptools==81.0.0"
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    # Apptainer mounts $HOME: ignore packages in ~/.local, which would shadow the image's own.
+    export PYTHONNOUSERSITE=1
+    export MPLBACKEND=Agg
+    export OMP_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+
+%runscript
+    exec python "$@"

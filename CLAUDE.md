@@ -49,6 +49,7 @@ powersched/
 │   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
+├── cluster/                # Apptainer image (powersched-cpu.def), v2 run script (run_v2.sh), Slurm array (v2_grid.slurm)
 ├── analyze_arrivalscale_occupancy.py  # Analysis: arrival scale effects on occupancy
 ├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
 ├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
@@ -178,6 +179,15 @@ python -m test.test_sampler_jobs --file-path data/allusers-gpu-30.log
 python -m test.test_sampler_jobs_aggregated --file-path data/allusers-gpu-30.log
 ```
 
+**v2 training grid (cluster):**
+```bash
+apptainer build powersched-cpu.sif cluster/powersched-cpu.def   # CPU-only deps; the repo is bind-mounted
+mkdir -p sessions/v2/slurm
+sbatch --partition=<partition> cluster/v2_grid.slurm           # 27 runs: curricula paper/de/e x seeds 1-3 x held-out year
+cluster/run_v2.sh paper 1 2024                                 # one run locally (venv); SMOKE=1 for a short version
+```
+`cluster/run_v2.sh` trains the curriculum (stages are cumulative `--iter-limit`s, 8M steps), validates every 500K steps on the two training years, then evaluates the best validated and the last checkpoint on the held-out year (`analyze_eval_seeds.py`, seeds 100/200/301, x1.5 and x1.0) into `<session>/eval/`. Rerunning resumes.
+
 **GitHub Actions:**
 Tests run automatically on push/PR to master/main via `.github/workflows/tests.yml`.
 
@@ -220,6 +230,7 @@ Additional training options:
 - `--val-every K` (default 0 = off): Validate the checkpoint every K iterations and after the last one (`--iter-limit`), see `src/validation.py`. Deterministic (argmax) runs on fixed windows: `--val-windows` (4) windows spread evenly over the validation prices, `--val-window-episodes` (2) episodes each, at every `--val-arrival-scales` (1.0,1.5), arrivals seeded by `--val-seed`, always full-length episodes (no loss barrier), so all checkpoints see the same jobs and prices. Workload `--val-hourly-jobs` (default `--hourly-jobs`; set it in stages that train on `--workload-gen`), prices `--val-prices` (default `--prices`; never the held-out test year). Feasible if, at every scale, completions are at least `--val-min-completion` (0.995) of the baseline's and no more jobs are lost; score = savings vs baseline_off in %, mean over scales. Writes `validation.jsonl` (history) and `validation_best.json` (best feasible checkpoint; evaluate it with `--model <step>`) next to the models, and `val/*` to TensorBoard. About 65 s per validation with the defaults. `train_iter.py` forwards all `--val-*` options
 - `--model`: Load a specific model checkpoint by timestep number
 - `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step
+- `--job-arrival-scale-range LOW,HIGH`: Training only: each episode draws its arrival scale uniformly from the range (e.g. `0.5,2.0`) instead of `--job-arrival-scale`; evaluation and validation keep fixed scales. Not with `--workload-gen`
 - `--jobs-exact-replay`: Replay raw jobs in timeline order without aggregation
 - `--jobs-exact-replay-aggregate`: Aggregate jobs per time-bin before enqueueing
 - `--dispatcher` (default `easy`): Job dispatcher shared by agent and baselines. `easy` goes oldest job first with EASY backfilling (reservations are planned on online nodes only); `firstfit` starts every queued job that fits now, oldest first
