@@ -31,6 +31,12 @@ from src.oracle import LiquidOracle, ContiguousOracle
 
 init()  # Initialize colorama
 
+# Observation scaling (see ComputeClusterEnv._observation)
+PRICE_SCALE = 100.0  # EUR/MWh per observation unit
+PRICE_OBS_LIMIT = 10.0  # prices beyond +-1000 EUR/MWh are clipped in the observation
+_LOG_MAX_COUNT = float(np.log1p(MAX_QUEUE_SIZE))
+_LOG_MAX_CORE_HOURS = float(np.log1p(MAX_QUEUE_SIZE * MAX_JOB_DURATION * MAX_NODES_PER_JOB * CORES_PER_NODE))
+
 
 class PlottingComplete(Exception):
     """Raised when plotting is complete and the application should terminate."""
@@ -182,23 +188,28 @@ class ComputeClusterEnv(gym.Env):
         #   action_magnitude: index into NODE_CHANGE_STEPS (number of nodes to switch)
         self.action_space = spaces.MultiDiscrete([3, len(NODE_CHANGE_STEPS)])
 
+        # Observations are the raw simulation state scaled to roughly [-1, 1] by fixed transforms
+        # (see _observation), so they mean the same thing in every curriculum stage and price year.
+        n_age_bins = len(QUEUE_AGE_BIN_EDGES) + 1
+        n_size_bins = len(QUEUE_SIZE_BIN_EDGES) + 1
         self.observation_space = spaces.Dict({
-            # nodes: [-1: off, 0: idle, >0: booked for n hours]
-            'nodes': spaces.Box(low=-1, high=MAX_JOB_DURATION, shape=(MAX_NODES,), dtype=np.int32),
-            # current decision hour plus the next 23 hours
-            'predicted_prices': spaces.Box(low=-1000, high=1000, shape=(24,), dtype=np.float32),
-            # Summary statistics for all waiting jobs
-            'pending_job_count': spaces.Box(low=0, high=np.iinfo(np.int32).max, shape=(1,), dtype=np.int32),
-            'pending_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(1,), dtype=np.float32),
-            'pending_avg_duration': spaces.Box(low=0, high=MAX_JOB_DURATION, shape=(1,), dtype=np.float32),
-            'pending_max_nodes': spaces.Box(low=0, high=MAX_NODES_PER_JOB, shape=(1,), dtype=np.int32),
-            # Waiting jobs by age (QUEUE_AGE_BIN_EDGES): job counts and core-hours per bin
-            'queue_ages': spaces.Box(low=0, high=MAX_QUEUE_SIZE, shape=(len(QUEUE_AGE_BIN_EDGES) + 1,), dtype=np.float32),
-            'queue_age_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(len(QUEUE_AGE_BIN_EDGES) + 1,), dtype=np.float32),
-            # Waiting jobs by node request (QUEUE_SIZE_BIN_EDGES): job counts per bin
-            'queue_sizes': spaces.Box(low=0, high=MAX_QUEUE_SIZE, shape=(len(QUEUE_SIZE_BIN_EDGES) + 1,), dtype=np.float32),
-            # [age of the oldest waiting job, number of jobs past the reward's deferral grace period]
-            'queue_oldest': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(2,), dtype=np.float32),
+            # per node: -1 off, 0 idle, (0, 1] remaining booked hours / MAX_JOB_DURATION
+            'nodes': spaces.Box(low=-1, high=1, shape=(MAX_NODES,), dtype=np.float32),
+            # current decision hour plus the next 23 hours, in units of PRICE_SCALE EUR/MWh
+            'predicted_prices': spaces.Box(low=-PRICE_OBS_LIMIT, high=PRICE_OBS_LIMIT, shape=(24,), dtype=np.float32),
+            # Summary statistics for all waiting jobs: log-scaled count and core-hours,
+            # mean duration / MAX_JOB_DURATION, largest node request / MAX_NODES_PER_JOB
+            'pending_job_count': spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
+            'pending_core_hours': spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
+            'pending_avg_duration': spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
+            'pending_max_nodes': spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32),
+            # Waiting jobs by age (QUEUE_AGE_BIN_EDGES): log-scaled job counts and core-hours per bin
+            'queue_ages': spaces.Box(low=0, high=1, shape=(n_age_bins,), dtype=np.float32),
+            'queue_age_core_hours': spaces.Box(low=0, high=1, shape=(n_age_bins,), dtype=np.float32),
+            # Waiting jobs by node request (QUEUE_SIZE_BIN_EDGES): log-scaled job counts per bin
+            'queue_sizes': spaces.Box(low=0, high=1, shape=(n_size_bins,), dtype=np.float32),
+            # [oldest waiting job's age / MAX_JOB_AGE, log-scaled count of jobs past the deferral grace period]
+            'queue_oldest': spaces.Box(low=0, high=1, shape=(2,), dtype=np.float32),
             # [sin, cos] of hour of day and of weekday of the current decision hour
             'time_features': spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32),
         })
@@ -301,6 +312,28 @@ class ComputeClusterEnv(gym.Env):
         self.state['queue_age_core_hours'][:] = np.bincount(age_bins, weights=core_hours, minlength=len(QUEUE_AGE_BIN_EDGES) + 1)
         size_bins = np.searchsorted(QUEUE_SIZE_BIN_EDGES, rows[:, 2], side="right")
         self.state['queue_sizes'][:] = np.bincount(size_bins, minlength=len(QUEUE_SIZE_BIN_EDGES) + 1)
+
+    def _observation(self) -> dict[str, np.ndarray]:
+        """The observation: a scaled copy of the raw state (self.state stays in simulation units)."""
+        st = self.state
+        log_count = lambda x: np.log1p(np.asarray(x, dtype=np.float64)) / _LOG_MAX_COUNT
+        log_core_hours = lambda x: np.log1p(np.asarray(x, dtype=np.float64)) / _LOG_MAX_CORE_HOURS
+        nodes = st['nodes']
+        obs = {
+            'nodes': np.where(nodes < 0, -1.0, nodes / MAX_JOB_DURATION),
+            'predicted_prices': np.clip(st['predicted_prices'] / PRICE_SCALE, -PRICE_OBS_LIMIT, PRICE_OBS_LIMIT),
+            'pending_job_count': log_count(st['pending_job_count']),
+            'pending_core_hours': log_core_hours(st['pending_core_hours']),
+            'pending_avg_duration': st['pending_avg_duration'] / MAX_JOB_DURATION,
+            'pending_max_nodes': st['pending_max_nodes'] / MAX_NODES_PER_JOB,
+            'queue_ages': log_count(st['queue_ages']),
+            'queue_age_core_hours': log_core_hours(st['queue_age_core_hours']),
+            'queue_sizes': log_count(st['queue_sizes']),
+            'queue_oldest': np.array([st['queue_oldest'][0] / MAX_JOB_AGE, log_count(st['queue_oldest'][1])]),
+            'time_features': st['time_features'],
+        }
+        return {k: np.clip(v, self.observation_space[k].low, self.observation_space[k].high).astype(np.float32)
+                for k, v in obs.items()}
 
     def _clock(self) -> tuple[int, int]:
         """
@@ -446,7 +479,7 @@ class ComputeClusterEnv(gym.Env):
             self.contiguous_oracle.reset(carried_jobs=carried if carried else None)
 
         self._update_time_features()
-        return self.state, {}
+        return self._observation(), {}
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         # Timing convention: `action` was chosen by the policy from the observation
@@ -750,4 +783,4 @@ class ComputeClusterEnv(gym.Env):
             "step_baseline_jobs_flushed": baseline_jobs_flushed,
         }
 
-        return self.state, step_reward, terminated, truncated, info
+        return self._observation(), step_reward, terminated, truncated, info

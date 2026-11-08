@@ -5,8 +5,8 @@ Run with: python -m test.test_observation
 
 import numpy as np
 
-from src.config import QUEUE_AGE_BIN_EDGES, QUEUE_SIZE_BIN_EDGES
-from src.environment import ComputeClusterEnv, Weights
+from src.config import MAX_JOB_AGE, MAX_JOB_DURATION, QUEUE_AGE_BIN_EDGES, QUEUE_SIZE_BIN_EDGES
+from src.environment import ComputeClusterEnv, Weights, PRICE_SCALE
 from src.plot_config import PlotConfig
 from src.prices import load_price_csv
 from src.workloadgen import WorkloadGenConfig, WorkloadGenerator
@@ -36,7 +36,8 @@ def test_queue_summaries_match_queue():
     rng = np.random.default_rng(3)
     for _ in range(200):
         # Mostly switch nodes off so the queue builds up and ages.
-        obs, *_ = env.step(np.array([0 if rng.random() < 0.7 else 2, rng.integers(0, 9)]))
+        env.step(np.array([0 if rng.random() < 0.7 else 2, rng.integers(0, 9)]))
+        obs = env.state  # raw values; the observation is a scaled copy
         rows = env.queue.rows()
         assert obs["queue_ages"].sum() == len(rows) == obs["pending_job_count"][0]
         assert obs["queue_sizes"].sum() == len(rows)
@@ -53,6 +54,32 @@ def test_queue_summaries_match_queue():
                                          minlength=len(QUEUE_SIZE_BIN_EDGES) + 1)
             assert np.array_equal(obs["queue_sizes"], expected_sizes)
     assert env.queue, "the test should leave jobs waiting"
+
+
+def test_observation_is_scaled_copy_of_state():
+    prices, times = load_price_csv("data-external/prices_2024.csv")
+    env = _make_env(prices, times)
+    obs, _ = env.reset(seed=5)
+    assert all(np.all(v == 0) for k, v in obs.items() if k.startswith(("pending", "queue"))), "empty queue -> zeros"
+    rng = np.random.default_rng(5)
+    previous_count = None
+    for _ in range(150):
+        obs, *_ = env.step(np.array([0 if rng.random() < 0.7 else 2, rng.integers(0, 9)]))
+        assert env.observation_space.contains(obs)
+        nodes = env.state['nodes']
+        assert np.all(obs['nodes'][nodes < 0] == -1) and np.all(obs['nodes'][nodes == 0] == 0)
+        assert np.allclose(obs['nodes'][nodes > 0], nodes[nodes > 0] / MAX_JOB_DURATION)
+        assert np.allclose(obs['predicted_prices'], np.clip(env.state['predicted_prices'] / PRICE_SCALE, -10, 10))
+        assert np.isclose(obs['queue_oldest'][0], env.state['queue_oldest'][0] / MAX_JOB_AGE)
+        assert np.array_equal(obs['time_features'], env.state['time_features'])
+        # log scaling keeps the order of counts
+        count = (env.state['pending_job_count'][0], obs['pending_job_count'][0])
+        if previous_count is not None and count[0] != previous_count[0]:
+            assert (count[0] > previous_count[0]) == (count[1] > previous_count[1])
+        previous_count = count
+        # the observation is a copy: changing it must not change the simulation
+        obs['nodes'][:] = 0.5
+        assert not np.any(env.state['nodes'] == 0.5)
 
 
 def test_time_features_follow_price_timestamps():
