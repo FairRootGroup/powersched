@@ -83,7 +83,8 @@ class ComputeClusterEnv(gym.Env):
                  enable_oracle: bool = False,
                  external_price_times: np.ndarray | None = None,
                  dispatcher: str = "easy",
-                 reservation_depth: int = 1) -> None:
+                 reservation_depth: int = 1,
+                 job_arrival_scale_range: tuple[float, float] | None = None) -> None:
         super().__init__()
 
         if dispatcher not in DISPATCHERS:
@@ -105,6 +106,13 @@ class ComputeClusterEnv(gym.Env):
         self.steps_per_iteration = steps_per_iteration
         self.evaluation_mode = evaluation_mode
         self.job_arrival_scale = float(job_arrival_scale)
+        # With a range, every episode draws its arrival scale uniformly from it (replacing job_arrival_scale).
+        self.job_arrival_scale_range = None
+        if job_arrival_scale_range is not None:
+            low, high = (float(v) for v in job_arrival_scale_range)
+            if not 0.0 <= low <= high:
+                raise ValueError(f"job_arrival_scale_range must satisfy 0 <= low <= high, got {job_arrival_scale_range!r}")
+            self.job_arrival_scale_range = (low, high)
         self.jobs_exact_replay = bool(jobs_exact_replay)
         self.jobs_exact_replay_aggregate = bool(jobs_exact_replay_aggregate)
         self.flush_after_drop_streak = max(0, int(flush_after_drop_streak))
@@ -167,7 +175,10 @@ class ComputeClusterEnv(gym.Env):
                 hourly_sampler.precalculate_hourly_templates(CORES_PER_NODE, MAX_NODES_PER_JOB)
                 hourly_sampler.loaded_file = self.external_hourly_jobs
             print(f"Hourly sampler initialized with 24-hour distributions")
-        print(f"Job arrival scale: {self.job_arrival_scale:.3f}x")
+        if self.job_arrival_scale_range is not None:
+            print(f"Job arrival scale: drawn per episode from {self.job_arrival_scale_range[0]:.2f}-{self.job_arrival_scale_range[1]:.2f}x")
+        else:
+            print(f"Job arrival scale: {self.job_arrival_scale:.3f}x")
 
         self.current_step = 0
         self.current_episode = 0
@@ -452,6 +463,8 @@ class ComputeClusterEnv(gym.Env):
             self.episode_idx += 1
 
         self.metrics.reset_episode_metrics()
+        if self.job_arrival_scale_range is not None:
+            self.job_arrival_scale = float(self.np_random.uniform(*self.job_arrival_scale_range))
 
         hard_reset = bool(options.get("hard_reset", False))
         if not self._timeline_initialized or hard_reset:

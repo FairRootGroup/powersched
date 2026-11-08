@@ -116,6 +116,21 @@ def test_multi_year_prices_cross_the_seam():
     assert tuple(t23[-1]) == (23, 6) and tuple(t25[0]) == (0, 2)
 
 
+def test_arrival_scale_drawn_per_episode():
+    env = _make_env()
+    env.job_arrival_scale_range = (0.5, 2.0)
+    env.reset(seed=4)
+    scales = []
+    for _ in range(5):
+        scales.append(env.job_arrival_scale)
+        env.reset()
+    assert all(0.5 <= s <= 2.0 for s in scales) and len(set(scales)) == 5, scales
+    again = _make_env()
+    again.job_arrival_scale_range = (0.5, 2.0)
+    again.reset(seed=4)
+    assert again.job_arrival_scale == scales[0]
+
+
 def test_time_features_without_timestamps():
     env = _make_env()
     obs, _ = env.reset(seed=1)

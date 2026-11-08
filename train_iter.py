@@ -564,7 +564,8 @@ def main():
     parser.add_argument("--n-epochs", type=int, default=None, help="Forward to train.py: PPO passes over each rollout (default: 10).")
     parser.add_argument("--target-kl", type=float, default=None, help="Forward to train.py: stop an update early once approximate KL exceeds this (default: off).")
     parser.add_argument("--decay-steps", type=int, default=None, help="Forward to train.py: decay learning rate and ent_coef linearly to 0 by this total timestep count (default: constant).")
-    # Validation options go to train.py unchanged (see train.py --help).
+    # Options forwarded to train.py unchanged (see train.py --help).
+    parser.add_argument("--job-arrival-scale-range", type=str, default=None, help="Forward to train.py: draw each training episode's arrival scale from LOW,HIGH.")
     parser.add_argument("--val-every", type=int, default=None, help="Forward to train.py: validate every this many iterations and after the last one (default: off).")
     parser.add_argument("--val-hourly-jobs", type=str, default=None, help="Forward to train.py: Slurm log for the validation workload (default: --hourly-jobs).")
     parser.add_argument("--val-prices", type=str, default=None, help="Forward to train.py: price CSV(s) for validation (default: --prices).")
@@ -621,8 +622,8 @@ def main():
 
     combinations = generate_weight_combinations(step=args.step, fixed_weights=fixed_weights)
     workloadgen_args = build_workloadgen_cli_args(args)
-    validation_args = []
-    for name in ("val_every", "val_hourly_jobs", "val_prices", "val_arrival_scales", "val_windows",
+    validation_args = []  # options forwarded to train.py as given
+    for name in ("job_arrival_scale_range", "val_every", "val_hourly_jobs", "val_prices", "val_arrival_scales", "val_windows",
                  "val_window_episodes", "val_seed", "val_min_completion"):
         value = getattr(args, name)
         if value is not None:

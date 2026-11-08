@@ -7,6 +7,8 @@ arrivals and prices are identical for all checkpoints and only the agent's decis
 A checkpoint is feasible if, at every arrival scale, it completes at least `min_completion_ratio`
 of the jobs the baseline completes and loses no more jobs than the baseline. Its score is the
 savings vs baseline_off (the baseline without idle nodes), in percent, averaged over the scales.
+The history also keeps average wait and the queue left at window ends, so checkpoints can be
+re-ranked afterwards under another feasibility rule without rerunning.
 """
 
 from __future__ import annotations
@@ -55,7 +57,9 @@ def run_validation(model, make_env: Callable[[float], object], config: Validatio
             env = envs[scale] = make_env(scale)
         n_prices = None if env.prices.external_prices is None else len(env.prices.external_prices)
         totals = dict(agent_cost=0.0, baseline_cost_off=0.0, jobs_submitted=0, jobs_completed=0,
-                      baseline_jobs_completed=0, jobs_lost=0, baseline_jobs_lost=0, episodes=0)
+                      baseline_jobs_completed=0, jobs_launched=0, jobs_lost=0, baseline_jobs_lost=0,
+                      pending_jobs_end=0, overdue_jobs_end=0, episodes=0)
+        wait_hours = 0.0  # summed over launched jobs
         for w, start in enumerate(window_starts(n_prices, config.windows)):
             obs, _ = env.reset(seed=config.seed + w, options={"hard_reset": True, "price_start_index": start})
             for episode in range(config.episodes_per_window):
@@ -72,9 +76,16 @@ def run_validation(model, make_env: Callable[[float], object], config: Validatio
                 totals["jobs_submitted"] += int(ep["jobs_submitted"])
                 totals["jobs_completed"] += int(ep["jobs_completed"])
                 totals["baseline_jobs_completed"] += int(ep["baseline_jobs_completed"])
+                launched = int(ep.get("jobs_launched", ep["jobs_completed"]))
+                totals["jobs_launched"] += launched
+                wait_hours += float(ep["avg_wait_time"]) * launched
                 totals["jobs_lost"] += int(ep.get("jobs_lost_total", ep.get("jobs_dropped", 0)))
                 totals["baseline_jobs_lost"] += int(ep.get("baseline_jobs_lost_total", ep.get("baseline_jobs_dropped", 0)))
                 totals["episodes"] += 1
+            # Queue left at the end of each window (the last episode's end).
+            totals["pending_jobs_end"] += int(ep.get("pending_jobs_end", 0))
+            totals["overdue_jobs_end"] += int(ep.get("overdue_jobs_end", 0))
+        totals["avg_wait_h"] = wait_hours / totals["jobs_launched"] if totals["jobs_launched"] > 0 else 0.0
         base_off = totals["baseline_cost_off"]
         totals["savings_off_pct"] = 100.0 * (base_off - totals["agent_cost"]) / base_off if base_off > 0 else 0.0
         done_base = totals["baseline_jobs_completed"]
@@ -123,6 +134,7 @@ def format_result(step: int, result: dict) -> str:
     parts = [f"Validation at {step:,} steps:"]
     for scale, s in result["scales"].items():
         parts.append(f"x{scale}: savings_off {s['savings_off_pct']:+.2f}%, completion {100 * s['completion_ratio']:.2f}% of baseline, "
-                     f"lost {s['jobs_lost']} (baseline {s['baseline_jobs_lost']}){'' if s['feasible'] else ' INFEASIBLE'}")
+                     f"lost {s['jobs_lost']} (baseline {s['baseline_jobs_lost']}), wait {s['avg_wait_h']:.1f}h, "
+                     f"queued at window ends {s['pending_jobs_end']} (overdue {s['overdue_jobs_end']}){'' if s['feasible'] else ' INFEASIBLE'}")
     parts.append(f"score {result['score']:+.2f}" if result["score"] is not None else "score n/a (infeasible)")
     return "\n  ".join(parts)

@@ -62,6 +62,7 @@ def main():
     parser.add_argument('--jobs', type=str, nargs='?', const="", default="", help='Path to a file containing job samples (for use with jobs_sampler)')
     parser.add_argument('--hourly-jobs', type=str, nargs='?', const="", default="", help='Path to Slurm log file for hourly statistical sampling (for use with hourly_sampler)')
     parser.add_argument('--job-arrival-scale', type=float, default=1.0, help='Scale sampled arrivals per step (1.0 = unchanged).')
+    parser.add_argument('--job-arrival-scale-range', type=str, default="", help="Training only: draw each episode's arrival scale uniformly from LOW,HIGH (e.g. 0.5,2.0) instead of --job-arrival-scale. Evaluation and validation use fixed scales.")
     parser.add_argument('--jobs-exact-replay', action='store_true', help='For --jobs mode, replay raw jobs in timeline order (no template aggregation).')
     parser.add_argument('--jobs-exact-replay-aggregate', action='store_true', help='With --jobs-exact-replay, aggregate each sampled raw time-bin before enqueueing.')
     parser.add_argument('--plot-rewards', action='store_true', help='Per step, plot rewards for all possible num_idle_nodes & num_used_nodes (default: False).')
@@ -142,6 +143,15 @@ def main():
         parser.error(str(exc))
     if args.jobs_exact_replay and not norm_path(args.jobs):
         parser.error("--jobs-exact-replay requires --jobs")
+    arrival_scale_range = None
+    if args.job_arrival_scale_range:
+        try:
+            arrival_scale_range = tuple(float(x) for x in args.job_arrival_scale_range.split(","))
+            assert len(arrival_scale_range) == 2 and 0.0 <= arrival_scale_range[0] <= arrival_scale_range[1]
+        except (ValueError, AssertionError):
+            parser.error("--job-arrival-scale-range must be LOW,HIGH with 0 <= LOW <= HIGH")
+        if args.workload_gen:
+            parser.error("--job-arrival-scale-range is not supported with --workload-gen")
     if args.jobs_exact_replay_aggregate and not args.jobs_exact_replay:
         parser.error("--jobs-exact-replay-aggregate requires --jobs-exact-replay")
     if args.workload_gen and args.job_arrival_scale != 1.0:
@@ -213,7 +223,8 @@ def main():
     )
 
     def make_env(evaluation_mode: bool) -> ComputeClusterEnv:
-        return ComputeClusterEnv(**env_kwargs(), evaluation_mode=evaluation_mode)
+        scale_range = None if evaluation_mode else arrival_scale_range
+        return ComputeClusterEnv(**env_kwargs(), evaluation_mode=evaluation_mode, job_arrival_scale_range=scale_range)
 
     def env_kwargs(**overrides) -> dict:
         kwargs = dict(weights=weights,
@@ -271,6 +282,7 @@ def main():
             model.logger.record(f"val/savings_off_pct_x{scale}", s["savings_off_pct"])
             model.logger.record(f"val/completion_ratio_x{scale}", s["completion_ratio"])
             model.logger.record(f"val/jobs_lost_x{scale}", s["jobs_lost"])
+            model.logger.record(f"val/avg_wait_h_x{scale}", s["avg_wait_h"])
         model.logger.record("val/savings_off_pct", result["savings_off_pct"])
         model.logger.record("val/feasible", float(result["feasible"]))
         model.logger.dump(model.num_timesteps)
