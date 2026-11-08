@@ -36,8 +36,8 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
    - network 64-64 (input is now ~390 values).
 3. **Multi-year prices.** `--prices` accepts several CSVs (2023, 2024, 2025), concatenated with their timestamps. Leave-one-year-out: three runs per configuration, each trained on two years and tested on the third.
 4. **Validation callback / automatic pruning.** Every 500K steps (or at stage ends), evaluate deterministically (argmax) on validation data: about 2 months at arrival scales 1.0 and 1.5. Score = savings vs idle-free, subject to completion ≥ 99.5% and no lost jobs. Keep each run's best checkpoint; drop a configuration if all its seeds score below a threshold. Report all seeds of kept configurations.
-5. **Evaluation fixes.** `--eval-months 13` (26 episodes, 364 days; 12 gives only 336 days). Report means over several evaluation seeds. Align `analyzer.py` (heuristic) to the same episode count and dispatcher before comparing with RL.
-6. **Cluster setup.** Apptainer image (`powersched.def` exists; CPU-only PyTorch), Slurm array job script, one run per array task.
+5. **Evaluation fixes.** `--eval-months 13` (26 episodes, 364 days; 12 gives only 336 days). Report means over several evaluation seeds. Align `analyzer.py` (the colleague's heuristic evaluator; it and `best*.py` were moved out of the repo by the user) to the same episode count and dispatcher before comparing with RL. Note: the heuristics were written for the v1 action (magnitude 1–335, refill) and need adapting to the v2 action.
+6. **Cluster setup.** Slurm cluster running Apptainer containers; AMD nodes with 256 cores; GPU partition (AMD) currently down, so CPU only. Apptainer image (`powersched.def` exists; CPU-only PyTorch), Slurm array job script, one run per array task (or one node running several runs via `train_iter.py --parallel` × `--n-envs`).
 7. **Smoke run** of a few hours before the grid.
 
 ## Training grid (first round)
@@ -59,10 +59,18 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
 
 ## Open decisions
 
+- Priority (user): a good result matters more than the paper deadline; asking for a deadline extension is an option.
+
 - Whether to attempt the v2 results within the paper revision, or report seed sensitivity as a limitation (deadline extension possible).
 - Whether to replace the 335-value node vector by a summary (deferred; not in v2).
 - Drop penalty vs loss barrier (deferred; barrier kept).
 - Structured queue encoder (DeepSets): no longer needed for the flat queue, which is gone; reconsider only if summaries prove too coarse.
+
+## Notes from the work so far
+
+- Parallel-env scaling: tried starting all training envs at midnight so their peak-arrival hours coincide; ~13% faster, not adopted (it would fix the logic-price phase). User preference: no micro-optimisation for now.
+- Throughput on the dev workstation (i7-12700K, 8 P-cores + 4 E-cores): 8 independent single-env processes each run ~80 steps/s, so the machine scales fine across processes.
+- The PPO step (`--n-epochs`, `--target-kl`, `--decay-steps`) is the last step prepared; check `git log` to see whether it was committed.
 
 ## Workflow
 
