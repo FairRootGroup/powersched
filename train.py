@@ -5,6 +5,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from torchinfo import summary
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
+from src.prices import load_price_csv
 from src.plot_config import PlotConfig
 from src.callbacks import ComputeClusterCallback
 from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_summary
@@ -12,7 +13,6 @@ import re
 import glob
 import argparse
 import sys
-import pandas as pd
 from src.arrival_scale import validate_job_arrival_scale
 from src.analysis_naming import build_model_weight_dir_name
 from src.evaluation_summary import build_episode_summary_line, mean_occupancy_pct
@@ -144,12 +144,12 @@ def main():
         print(f"Random seed set to: {args.seed}")
 
     if norm_path(prices_file_path):
-        df = pd.read_csv(prices_file_path, parse_dates=['Date'])
-        prices = df['Price'].values.tolist()
+        prices, price_times = load_price_csv(prices_file_path)
         print(f"Loaded {len(prices)} prices from CSV: {prices_file_path}")
         # print("First few prices:", prices[:30])
     else:
         prices = None
+        price_times = None
         print("No CSV file provided. Using default price generation.")
 
     weights = Weights(
@@ -197,6 +197,7 @@ def main():
                             session=args.session,
                             render_mode=args.render,
                             external_prices=prices,
+                            external_price_times=price_times,
                             external_durations=norm_path(job_durations_file_path),
                             external_jobs=norm_path(jobs_file_path),
                             external_hourly_jobs=norm_path(hourly_jobs_file_path),

@@ -60,7 +60,7 @@ def _make_sampler(log_path: str, template: bool) -> DurationSampler:
 def _call_generate(sampler, hour, exact_replay):
     rng = np.random.default_rng(0)
     return generate_jobs(
-        current_hour=hour,
+        hour_of_day=hour,
         external_jobs="synthetic",  # non-empty triggers --jobs path
         external_hourly_jobs=None,
         external_durations=None,

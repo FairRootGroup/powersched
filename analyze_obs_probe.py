@@ -7,8 +7,9 @@ with one part of the observation altered before the policy sees it.
   --mode agreement   : the unaltered policy drives the env; at every step, also ask the
                        policy what it would do under each alteration and count agreement
 
-Variants: full, queue_zero, queue_shuffle, aggregates_zero, prices_const (forecast
-flattened to its mean), prices_roll12 (forecast shifted by 12 hours).
+Variants: full, aggregates_zero (the pending_* statistics), queue_summary_zero (the queue_*
+age/size summaries), time_const (time features fixed at midnight on a Monday), prices_const
+(forecast flattened to its mean), prices_roll12 (forecast shifted by 12 hours).
 
 Example:
   python analyze_obs_probe.py --model sessions/x/models/e0.4_p0.4_i0.0_a0.2_d0.0/7500000.zip \
@@ -18,26 +19,27 @@ Example:
 import argparse, json, os, time
 
 import numpy as np
-import pandas as pd
 from stable_baselines3 import PPO
 from stable_baselines3.common.utils import set_random_seed
 
 from src.environment import ComputeClusterEnv, Weights
+from src.prices import load_price_csv
 
-AGGREGATES = ["pending_job_count", "pending_core_hours", "pending_avg_duration", "pending_max_nodes", "backlog_size"]
-VARIANTS = ["full", "queue_zero", "queue_shuffle", "aggregates_zero", "prices_const", "prices_roll12"]
+AGGREGATES = ["pending_job_count", "pending_core_hours", "pending_avg_duration", "pending_max_nodes"]
+QUEUE_SUMMARIES = ["queue_ages", "queue_age_core_hours", "queue_sizes", "queue_oldest"]
+VARIANTS = ["full", "aggregates_zero", "queue_summary_zero", "time_const", "prices_const", "prices_roll12"]
 
 
-def alter(obs, variant, rng):
+def alter(obs, variant):
     o = {k: v.copy() for k, v in obs.items()}
-    if variant == "queue_zero":
-        o["job_queue"][:] = 0
-    elif variant == "queue_shuffle":
-        q = o["job_queue"].reshape(-1, 4)
-        o["job_queue"] = q[rng.permutation(len(q))].reshape(-1)
-    elif variant == "aggregates_zero":
+    if variant == "aggregates_zero":
         for k in AGGREGATES:
             o[k][:] = 0
+    elif variant == "queue_summary_zero":
+        for k in QUEUE_SUMMARIES:
+            o[k][:] = 0
+    elif variant == "time_const":
+        o["time_features"][:] = (0.0, 1.0, 0.0, 1.0)
     elif variant == "prices_const":
         o["predicted_prices"][:] = o["predicted_prices"].mean()
     elif variant == "prices_roll12":
@@ -63,10 +65,11 @@ def main():
 
     set_random_seed(a.seed)
     e, pr, i, ag, d = (float(x) for x in a.weights.split(","))
-    prices = pd.read_csv(a.prices, parse_dates=["Date"])["Price"].values.tolist()
+    prices, price_times = load_price_csv(a.prices)
     scratch = os.path.dirname(os.path.abspath(a.out))
     env = ComputeClusterEnv(weights=Weights(e, pr, i, ag, d), session="probe", render_mode="none",
-                            external_prices=prices, external_durations=None, external_jobs=None,
+                            external_prices=prices, external_price_times=price_times,
+                            external_durations=None, external_jobs=None,
                             external_hourly_jobs=a.hourly_jobs, plot_config=None,
                             steps_per_iteration=100000, evaluation_mode=True, workload_gen=None,
                             job_arrival_scale=a.job_arrival_scale, jobs_exact_replay=False, output_dir=scratch)
@@ -75,8 +78,7 @@ def main():
     model = PPO.load(a.model, device="cpu")
     env.set_progress(int(os.path.basename(a.model).split(".")[0]) // 100000)
 
-    rng = np.random.default_rng(a.seed)
-    agree = {v: {"all": 0, "type": 0, "mag": 0, "refill": 0} for v in VARIANTS[1:]}
+    agree = {v: {"all": 0, "type": 0, "mag": 0} for v in VARIANTS[1:]}
     steps = 0
     t0 = time.time()
     for _ in range(a.eval_months * 2):
@@ -86,13 +88,12 @@ def main():
             if a.mode == "agreement":
                 action, _ = model.predict(obs, deterministic=True)
                 for v in VARIANTS[1:]:
-                    alt, _ = model.predict(alter(obs, v, rng), deterministic=True)
+                    alt, _ = model.predict(alter(obs, v), deterministic=True)
                     agree[v]["all"] += int(np.array_equal(alt, action))
                     agree[v]["type"] += int(alt[0] == action[0])
                     agree[v]["mag"] += int(alt[1] == action[1])
-                    agree[v]["refill"] += int(alt[2] == action[2])
             else:
-                action, _ = model.predict(alter(obs, a.variant, rng), deterministic=not a.stochastic)
+                action, _ = model.predict(alter(obs, a.variant), deterministic=not a.stochastic)
             obs, _, term, trunc, _ = env.step(action)
             steps += 1
             done = term or trunc

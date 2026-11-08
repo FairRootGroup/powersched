@@ -1,6 +1,22 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 from collections import deque
+
+
+def load_price_csv(path: str) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Read a Date,Price CSV of hourly prices.
+
+    Returns the prices and, per hour, its [hour of day, weekday (0 = Monday)] in the local
+    time of the Date column (e.g. "2024-01-01T13:00+01:00" -> hour 13, weekday 0).
+    """
+    df = pd.read_csv(path, encoding="utf-8-sig")
+    dates = df["Date"].astype(str)
+    hours = dates.str.slice(11, 13).astype(int).to_numpy()
+    weekdays = pd.to_datetime(dates.str.slice(0, 10)).dt.weekday.to_numpy()
+    return df["Price"].to_numpy(dtype=float), np.column_stack([hours, weekdays]).astype(np.int32)
+
 
 class Prices:
     ELECTRICITY_PRICE_BASE: int = 20

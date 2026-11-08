@@ -12,6 +12,11 @@ MAX_JOB_DURATION: int = 170  # maximum job runtime in hours
 MAX_JOB_AGE = WEEK_HOURS * 2
 MAX_NEW_JOBS_PER_HOUR: int = 1500
 
+# Observation summaries of the waiting jobs. Bins are [0, 6), [6, 12), ... [96, inf) hours of age,
+# and 1, 2-4, 5-8, 9+ nodes requested.
+QUEUE_AGE_BIN_EDGES: tuple[int, ...] = (6, 12, 24, 48, 96)
+QUEUE_SIZE_BIN_EDGES: tuple[int, ...] = (2, 5, 9)
+
 COST_IDLE: int = 150  # Watts
 COST_USED: int = 450  # Watts
 

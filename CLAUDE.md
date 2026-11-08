@@ -142,6 +142,9 @@ python -m test.test_dispatcher_easy
 # Job queue and vectorized dispatch (equivalence with the previous per-job dispatcher loops)
 python -m test.test_job_queue
 
+# Observation: queue summaries and time features match the simulation
+python -m test.test_observation
+
 # Workload generator tests
 python -m test.test_sanity_workloadgen
 python -m test.test_determinism_workloadgen
@@ -273,7 +276,8 @@ Interactive script that runs the generator for a configurable number of hours, p
 
 - Uses stable-baselines3 PPO with custom ComputeClusterEnv
 - Environment simulates 2-week episodes (336 hours) with hourly decisions
-- State space includes node states, electricity prices, and pending job statistics (count, core-hours, avg duration, max nodes); the job queue itself is not observed
+- State space includes node states, the 24h price forecast, pending job statistics (count, core-hours, avg duration, max nodes), waiting-job summaries (counts and core-hours per age bin, counts per node-request bin, oldest age and overdue count; bins in `QUEUE_AGE_BIN_EDGES` / `QUEUE_SIZE_BIN_EDGES`), and time features (sin/cos of hour of day and weekday); the job queue itself is not observed
+- One simulation clock: job arrivals (hourly sampler) and the time features follow the hour of day of the current price hour. With `--prices`, that is the CSV's local timestamp (`prices.load_price_csv`), including DST and the real weekday
 - Action space: `[action_type, magnitude]` - action_type 0 = switch nodes off, 1 = keep, 2 = switch on; magnitude indexes `NODE_CHANGE_STEPS` (1, 2, 4, ... 256 nodes)
 - Rewards balance efficiency, cost savings, and resource utilization
 - Cluster configuration: 335 nodes max, 96 cores per node, up to 16 nodes per job

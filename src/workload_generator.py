@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def generate_jobs(
-    current_hour: int,
+    hour_of_day: int,
     external_jobs: str | None,
     external_hourly_jobs: str | None,
     external_durations: str | None,
@@ -35,7 +35,7 @@ def generate_jobs(
     Generate new jobs for the current hour using configured workload source.
 
     Args:
-        current_hour: Current simulation hour (0-indexed)
+        hour_of_day: Hour of day (0-23) of the hour being generated, on the simulation clock
         external_jobs: Path to external jobs file (or None)
         external_hourly_jobs: Path to external hourly jobs file (or None)
         external_durations: Path to external durations file (or None)
@@ -86,8 +86,6 @@ def generate_jobs(
 
     elif external_hourly_jobs:
         # Use hourly sampler for statistical sampling with aggregated jobs
-        hour_of_day = (current_hour - 1) % 24
-
         jobs = hourly_sampler.sample_aggregated(
             hour_of_day,
             rng=np_random,
@@ -105,7 +103,7 @@ def generate_jobs(
     else:
         # Use Workload Generator for Randomizer
         if workload_gen is not None:
-            jobs = workload_gen.sample(current_hour - 1, np_random)
+            jobs = workload_gen.sample(hour_of_day, np_random)
             new_jobs_count = len(jobs)
             if new_jobs_count > 0:
                 for j in jobs:

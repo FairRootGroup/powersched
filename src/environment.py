@@ -17,8 +17,8 @@ from src.workloadgen import WorkloadGenerator
 
 # Import refactored modules
 from src.config import (
-    MAX_NODES, NODE_CHANGE_STEPS, MAX_JOB_DURATION, MAX_JOB_AGE,
-    CORES_PER_NODE, MAX_NODES_PER_JOB, EPISODE_HOURS
+    MAX_NODES, NODE_CHANGE_STEPS, MAX_JOB_DURATION, MAX_JOB_AGE, MAX_QUEUE_SIZE,
+    CORES_PER_NODE, MAX_NODES_PER_JOB, EPISODE_HOURS, QUEUE_AGE_BIN_EDGES, QUEUE_SIZE_BIN_EDGES
 )
 from src.job_management import process_ongoing_jobs, dispatch_jobs, JobQueue, DISPATCHERS
 from src.node_management import adjust_nodes
@@ -75,6 +75,7 @@ class ComputeClusterEnv(gym.Env):
                  jobs_exact_replay_aggregate: bool = False,
                  flush_after_drop_streak: int = 0,
                  enable_oracle: bool = False,
+                 external_price_times: np.ndarray | None = None,
                  dispatcher: str = "easy",
                  reservation_depth: int = 1) -> None:
         super().__init__()
@@ -115,6 +116,11 @@ class ComputeClusterEnv(gym.Env):
         self.plots_dir = f"{output_dir}/{session}/plots/"
 
         self.prices = Prices(self.external_prices)
+        # [hour of day, weekday] per external price hour (see prices.load_price_csv). Without it,
+        # the price index is taken as hours since a Monday midnight.
+        self.price_times = None if external_price_times is None else np.asarray(external_price_times, dtype=np.int32)
+        if self.price_times is not None and self.external_prices is not None and len(self.price_times) != len(self.external_prices):
+            raise ValueError("external_price_times must have one row per external price")
 
         # Initialize deterministic RNG, instead of global RNG
         self.np_random = None
@@ -186,6 +192,15 @@ class ComputeClusterEnv(gym.Env):
             'pending_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(1,), dtype=np.float32),
             'pending_avg_duration': spaces.Box(low=0, high=MAX_JOB_DURATION, shape=(1,), dtype=np.float32),
             'pending_max_nodes': spaces.Box(low=0, high=MAX_NODES_PER_JOB, shape=(1,), dtype=np.int32),
+            # Waiting jobs by age (QUEUE_AGE_BIN_EDGES): job counts and core-hours per bin
+            'queue_ages': spaces.Box(low=0, high=MAX_QUEUE_SIZE, shape=(len(QUEUE_AGE_BIN_EDGES) + 1,), dtype=np.float32),
+            'queue_age_core_hours': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(len(QUEUE_AGE_BIN_EDGES) + 1,), dtype=np.float32),
+            # Waiting jobs by node request (QUEUE_SIZE_BIN_EDGES): job counts per bin
+            'queue_sizes': spaces.Box(low=0, high=MAX_QUEUE_SIZE, shape=(len(QUEUE_SIZE_BIN_EDGES) + 1,), dtype=np.float32),
+            # [age of the oldest waiting job, number of jobs past the reward's deferral grace period]
+            'queue_oldest': spaces.Box(low=0, high=np.finfo(np.float32).max, shape=(2,), dtype=np.float32),
+            # [sin, cos] of hour of day and of weekday of the current decision hour
+            'time_features': spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32),
         })
 
     def _reset_timeline_state(self, start_index: int) -> None:
@@ -202,6 +217,11 @@ class ComputeClusterEnv(gym.Env):
             'pending_core_hours': np.array([0.0], dtype=np.float32),
             'pending_avg_duration': np.array([0.0], dtype=np.float32),
             'pending_max_nodes': np.array([0], dtype=np.int32),
+            'queue_ages': np.zeros(len(QUEUE_AGE_BIN_EDGES) + 1, dtype=np.float32),
+            'queue_age_core_hours': np.zeros(len(QUEUE_AGE_BIN_EDGES) + 1, dtype=np.float32),
+            'queue_sizes': np.zeros(len(QUEUE_SIZE_BIN_EDGES) + 1, dtype=np.float32),
+            'queue_oldest': np.zeros(2, dtype=np.float32),
+            'time_features': np.zeros(4, dtype=np.float32),
         }
 
         self.baseline_state = {
@@ -272,6 +292,33 @@ class ComputeClusterEnv(gym.Env):
         self.state['pending_core_hours'][0] = float(summary["pending_core_hours"])
         self.state['pending_avg_duration'][0] = float(summary["pending_avg_duration"])
         self.state['pending_max_nodes'][0] = int(summary["pending_max_nodes"])
+        self.state['queue_oldest'][:] = (summary["oldest_age"], summary["overdue_jobs"])
+
+        rows = self.queue.rows()
+        age_bins = np.searchsorted(QUEUE_AGE_BIN_EDGES, rows[:, 1], side="right")
+        core_hours = rows[:, 0].astype(np.float64) * rows[:, 2] * rows[:, 3]
+        self.state['queue_ages'][:] = np.bincount(age_bins, minlength=len(QUEUE_AGE_BIN_EDGES) + 1)
+        self.state['queue_age_core_hours'][:] = np.bincount(age_bins, weights=core_hours, minlength=len(QUEUE_AGE_BIN_EDGES) + 1)
+        size_bins = np.searchsorted(QUEUE_SIZE_BIN_EDGES, rows[:, 2], side="right")
+        self.state['queue_sizes'][:] = np.bincount(size_bins, minlength=len(QUEUE_SIZE_BIN_EDGES) + 1)
+
+    def _clock(self) -> tuple[int, int]:
+        """
+        Hour of day and weekday (0 = Monday) of the current decision hour, i.e. of
+        predicted_prices[0]. Prices and job arrivals both follow this clock.
+        """
+        index = self.prices.price_index - self.prices.PREDICTION_WINDOW
+        if self.price_times is not None:
+            hour, weekday = self.price_times[index % len(self.price_times)]
+            return int(hour), int(weekday)
+        return index % 24, (index // 24) % 7
+
+    def _update_time_features(self) -> None:
+        hour, weekday = self._clock()
+        self.state['time_features'][:] = (
+            np.sin(2 * np.pi * hour / 24), np.cos(2 * np.pi * hour / 24),
+            np.sin(2 * np.pi * weekday / 7), np.cos(2 * np.pi * weekday / 7),
+        )
 
     @staticmethod
     def _flush_workload_side(
@@ -398,6 +445,7 @@ class ComputeClusterEnv(gym.Env):
         if self.contiguous_oracle is not None:
             self.contiguous_oracle.reset(carried_jobs=carried if carried else None)
 
+        self._update_time_features()
         return self.state, {}
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
@@ -440,7 +488,7 @@ class ComputeClusterEnv(gym.Env):
         # Generate new jobs
         self.env_print(f"[2] Generating new jobs...")
         new_jobs_count, new_jobs_durations, new_jobs_nodes, new_jobs_cores = generate_jobs(
-            self.metrics.current_hour,
+            self._clock()[0],
             self.external_jobs, self.external_hourly_jobs, self.external_durations,
             self.workload_gen, self.jobs_sampler if hasattr(self, 'jobs_sampler') else None,
             hourly_sampler, durations_sampler, self.np_random,
@@ -676,6 +724,7 @@ class ComputeClusterEnv(gym.Env):
             self.metrics.record_episode_completion(self.current_episode)
 
         self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
+        self._update_time_features()
 
         if self.render_mode == 'human':
             # go slow to be able to read stuff in human mode
