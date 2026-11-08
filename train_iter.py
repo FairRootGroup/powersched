@@ -135,6 +135,9 @@ def build_command(
     reservation_depth=None,
     n_envs=None,
     normalize_reward=False,
+    n_epochs=None,
+    target_kl=None,
+    decay_steps=None,
 ):
     python_executable = sys.executable
     command = [
@@ -186,6 +189,12 @@ def build_command(
         command += ["--n-envs", str(n_envs)]
     if normalize_reward:
         command += ["--normalize-reward"]
+    if n_epochs is not None:
+        command += ["--n-epochs", str(n_epochs)]
+    if target_kl is not None:
+        command += ["--target-kl", str(target_kl)]
+    if decay_steps is not None:
+        command += ["--decay-steps", str(decay_steps)]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -443,7 +452,8 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
                      multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None,
                      n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None,
-                     dispatcher=None, reservation_depth=None, n_envs=None, normalize_reward=False):
+                     dispatcher=None, reservation_depth=None, n_envs=None, normalize_reward=False,
+                     n_epochs=None, target_kl=None, decay_steps=None):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -469,6 +479,9 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             reservation_depth=reservation_depth,
             n_envs=n_envs,
             normalize_reward=normalize_reward,
+            n_epochs=n_epochs,
+            target_kl=target_kl,
+            decay_steps=decay_steps,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -544,6 +557,9 @@ def main():
     parser.add_argument("--reservation-depth", type=int, default=None, help="Forward to train.py: reservations for --dispatcher easy (default: 1).")
     parser.add_argument("--n-envs", type=int, default=None, help="Forward to train.py: environments per run, each in its own process (default: 1). A job uses about --parallel x --n-envs cores.")
     parser.add_argument("--normalize-reward", action="store_true", help="Forward to train.py: train on rewards scaled by a running return std.")
+    parser.add_argument("--n-epochs", type=int, default=None, help="Forward to train.py: PPO passes over each rollout (default: 10).")
+    parser.add_argument("--target-kl", type=float, default=None, help="Forward to train.py: stop an update early once approximate KL exceeds this (default: off).")
+    parser.add_argument("--decay-steps", type=int, default=None, help="Forward to train.py: decay learning rate and ent_coef linearly to 0 by this total timestep count (default: constant).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -659,6 +675,9 @@ def main():
         reservation_depth=args.reservation_depth,
         n_envs=args.n_envs,
         normalize_reward=args.normalize_reward,
+        n_epochs=args.n_epochs,
+        target_kl=args.target_kl,
+        decay_steps=args.decay_steps,
     )
     if failures:
         print(f"{failures} run(s) failed")

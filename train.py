@@ -7,7 +7,7 @@ import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
 from src.prices import load_price_csv
 from src.plot_config import PlotConfig
-from src.callbacks import ComputeClusterCallback
+from src.callbacks import ComputeClusterCallback, LinearDecayCallback
 from src.plotter import plot_dashboard, plot_cumulative_savings, plot_episode_summary
 import re
 import glob
@@ -99,6 +99,9 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size for PPO gradient updates (default: 64). Should be <= --n-steps. Increase for larger networks (e.g. 256 for 256x256).")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="PPO learning rate (default: 3e-4). Reduce for larger networks (e.g. 1e-4 for 256x256).")
     parser.add_argument("--clip-range", type=float, default=0.2, help="PPO clip range for policy updates (default: 0.2). Tighten for larger networks (e.g. 0.1 for 256x256).")
+    parser.add_argument("--n-epochs", type=int, default=10, help="PPO passes over each rollout per update (default: 10, the SB3 default).")
+    parser.add_argument("--target-kl", type=float, default=None, help="Stop an update's remaining passes once the approximate KL to the previous policy exceeds this (e.g. 0.02; default: off).")
+    parser.add_argument("--decay-steps", type=int, default=0, help="Decay the learning rate and entropy coefficient linearly to 0 by this total timestep count (e.g. 8000000), across iterations, curriculum stages and resumes. 0 (default) keeps them constant.")
     parser.add_argument("--n-envs", type=int, default=1, help="Number of environments to train on in parallel, each in its own process (default: 1, in-process). --n-steps is per environment, so one update uses n_steps * n_envs steps. Each env is seeded seed + i and starts at its own random point in the price data.")
     parser.add_argument("--normalize-reward", action="store_true", help="Train on rewards scaled by a running estimate of the return's std (VecNormalize, observations untouched). Its statistics are saved next to each checkpoint. Evaluation is unaffected.")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
@@ -118,6 +121,8 @@ def main():
     args = parser.parse_args()
     if args.n_envs < 1:
         parser.error("--n-envs must be at least 1")
+    if args.decay_steps < 0:
+        parser.error("--decay-steps must not be negative")
     if args.reservation_depth < 1:
         parser.error("--reservation-depth must be at least 1")
     try:
@@ -289,7 +294,7 @@ def main():
             else:
                 train_env = VecNormalize(train_env, norm_obs=False, norm_reward=True)
                 print(f"No reward normalization statistics next to the model ({stats_file}); starting fresh ones.")
-        model = PPO.load(latest_model_file, env=train_env, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device)
+        model = PPO.load(latest_model_file, env=train_env, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, n_epochs=args.n_epochs, target_kl=args.target_kl, device=args.device)
     else:
         if args.normalize_reward:
             train_env = VecNormalize(train_env, norm_obs=False, norm_reward=True)
@@ -301,7 +306,7 @@ def main():
             net_arch=dict(pi=net_arch_layers, vf=net_arch_layers)
         )
         print(f"Network architecture: {net_arch_layers}")
-        model = PPO('MultiInputPolicy', train_env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device, verbose=1)
+        model = PPO('MultiInputPolicy', train_env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, n_epochs=args.n_epochs, target_kl=args.target_kl, device=args.device, verbose=1)
 
     print(f"Device: {model.device}")
     if args.print_policy:
@@ -582,7 +587,10 @@ def main():
                     except Exception as e:
                         print(f"Dashboard plot failed (non-fatal): {e}")
                         
-                model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=ComputeClusterCallback())
+                callbacks = [ComputeClusterCallback()]
+                if args.decay_steps > 0:
+                    callbacks.append(LinearDecayCallback(args.learning_rate, args.ent_coef, args.decay_steps))
+                model.learn(total_timesteps=STEPS_PER_ITERATION, reset_num_timesteps=False, tb_log_name=f"PPO", callback=callbacks)
                 print(f"Iteration {iters} finished in {time.time()-t0:.2f}s")
                 model.save(f"{models_dir}/{STEPS_PER_ITERATION * iters}.zip")
                 if isinstance(train_env, VecNormalize):

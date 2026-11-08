@@ -1,5 +1,6 @@
 from src.config import COST_IDLE_MW, COST_USED_MW, CORES_PER_NODE, MAX_NODES
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.utils import ConstantSchedule
 
 
 class ComputeClusterCallback(BaseCallback):
@@ -95,3 +96,35 @@ class ComputeClusterCallback(BaseCallback):
         This event is triggered before exiting the `learn()` method.
         """
         pass
+
+
+class LinearDecayCallback(BaseCallback):
+    """
+    Decay the learning rate and entropy coefficient linearly to 0 over ``decay_steps`` total timesteps.
+
+    SB3's own schedules only see progress within one learn() call, while train.py calls learn()
+    once per iteration (and once per process for each curriculum stage). This uses the model's
+    total timestep count instead, so the decay runs once over the whole training, across
+    iterations, stages and resumes. Applied before every PPO update.
+    """
+
+    def __init__(self, learning_rate: float, ent_coef: float, decay_steps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.learning_rate = learning_rate
+        self.ent_coef = ent_coef
+        self.decay_steps = decay_steps
+
+    def _apply(self) -> None:
+        remaining = max(0.0, 1.0 - self.model.num_timesteps / self.decay_steps)
+        self.model.lr_schedule = ConstantSchedule(self.learning_rate * remaining)
+        self.model.ent_coef = self.ent_coef * remaining
+        self.logger.record("train/ent_coef", self.model.ent_coef)
+
+    def _on_training_start(self) -> None:
+        self._apply()
+
+    def _on_rollout_end(self) -> None:
+        self._apply()
+
+    def _on_step(self) -> bool:
+        return True
