@@ -133,6 +133,8 @@ def build_command(
     ent_coef=None,
     dispatcher=None,
     reservation_depth=None,
+    n_envs=None,
+    normalize_reward=False,
 ):
     python_executable = sys.executable
     command = [
@@ -180,6 +182,10 @@ def build_command(
         command += ["--dispatcher", dispatcher]
     if reservation_depth is not None:
         command += ["--reservation-depth", str(reservation_depth)]
+    if n_envs is not None:
+        command += ["--n-envs", str(n_envs)]
+    if normalize_reward:
+        command += ["--normalize-reward"]
     if workloadgen_args:
         command += workloadgen_args
     if output_dir is not None:
@@ -437,7 +443,7 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
                      seeds, seed_sweep, evaluate_savings, eval_months, flush_after_drop_streak, workloadgen_args,
                      multi_seed=False, no_tui=False, output_dir="sessions", oracle=False, net_arch=None,
                      n_steps=None, batch_size=None, learning_rate=None, clip_range=None, ent_coef=None,
-                     dispatcher=None, reservation_depth=None):
+                     dispatcher=None, reservation_depth=None, n_envs=None, normalize_reward=False):
     multi_seed = len(seeds) > 1
     current_env = os.environ.copy()
     log_dir = make_log_dir(session, output_dir)
@@ -461,6 +467,8 @@ def run_all_parallel(tasks, max_parallel, iter_limit_per_step, session, prices,
             ent_coef=ent_coef,
             dispatcher=dispatcher,
             reservation_depth=reservation_depth,
+            n_envs=n_envs,
+            normalize_reward=normalize_reward,
         )
         log_path = os.path.join(log_dir, label_to_filename(label))
         log_fh = open(log_path, "w")
@@ -534,6 +542,8 @@ def main():
     parser.add_argument("--ent-coef", type=float, default=None, help="Forward to train.py: PPO entropy coefficient (default: 0.0; try 0.01 for 256x256 networks).")
     parser.add_argument("--dispatcher", type=str, default=None, choices=DISPATCHERS, help="Forward to train.py: job dispatcher for agent and baselines (default: easy).")
     parser.add_argument("--reservation-depth", type=int, default=None, help="Forward to train.py: reservations for --dispatcher easy (default: 1).")
+    parser.add_argument("--n-envs", type=int, default=None, help="Forward to train.py: environments per run, each in its own process (default: 1). A job uses about --parallel x --n-envs cores.")
+    parser.add_argument("--normalize-reward", action="store_true", help="Forward to train.py: train on rewards scaled by a running return std.")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
         "--continue-existing-only",
@@ -647,6 +657,8 @@ def main():
         ent_coef=args.ent_coef,
         dispatcher=args.dispatcher,
         reservation_depth=args.reservation_depth,
+        n_envs=args.n_envs,
+        normalize_reward=args.normalize_reward,
     )
     if failures:
         print(f"{failures} run(s) failed")

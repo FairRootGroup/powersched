@@ -199,6 +199,7 @@ Additional training options:
 - `--seed-sweep`: Isolate outputs under a seed-specific session subdirectory
 - `--device`: Training device ("auto", "cuda", or "cpu")
 - `--net-arch`: Hidden layer sizes for policy/value networks (e.g., "64,64" or "256,128")
+- `--n-envs` (default 1): Environments per run, each in its own process (`SubprocVecEnv`); `--n-steps` is per environment. Each env is seeded `seed + i`. Speeds up one run, at lower efficiency per core (measured on the main trace: 1 env 65 steps/s, 8 envs 157, 16 envs 231), so prefer `train_iter.py --parallel` across runs when there are more runs than cores
 - `--normalize-reward`: Train on rewards scaled by a running return std (SB3 `VecNormalize`, observations untouched); statistics are saved as `<step>_vecnormalize.pkl` next to each checkpoint and reloaded on resume. Evaluation is unaffected
 - `--model`: Load a specific model checkpoint by timestep number
 - `--job-arrival-scale` (default 1.0): Scale factor for sampled arrivals per step

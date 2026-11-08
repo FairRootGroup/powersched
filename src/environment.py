@@ -113,6 +113,8 @@ class ComputeClusterEnv(gym.Env):
         self.contiguous_oracle = ContiguousOracle() if enable_oracle else None
 
         self.next_plot_save = self.steps_per_iteration
+        # Periodic episode plots during training; parallel training turns them off in all envs but one.
+        self.training_plots = True
 
         # Initialize metrics tracker
         self.metrics = MetricsTracker()
@@ -158,8 +160,12 @@ class ComputeClusterEnv(gym.Env):
 
         if self.external_hourly_jobs:
             print(f"Loading hourly jobs from {self.external_hourly_jobs}")
-            hourly_sampler.parse_jobs(self.external_hourly_jobs)
-            hourly_sampler.precalculate_hourly_templates(CORES_PER_NODE, MAX_NODES_PER_JOB)
+            # The sampler is module-global: envs forked from a process that already loaded this
+            # file (parallel training) reuse it instead of parsing the log again.
+            if getattr(hourly_sampler, "loaded_file", None) != self.external_hourly_jobs:
+                hourly_sampler.parse_jobs(self.external_hourly_jobs)
+                hourly_sampler.precalculate_hourly_templates(CORES_PER_NODE, MAX_NODES_PER_JOB)
+                hourly_sampler.loaded_file = self.external_hourly_jobs
             print(f"Hourly sampler initialized with 24-hour distributions")
         print(f"Job arrival scale: {self.job_arrival_scale:.3f}x")
 
@@ -739,7 +745,7 @@ class ComputeClusterEnv(gym.Env):
                     raise PlottingComplete
             else:
                 # Only do training plots in training mode
-                if not self.evaluation_mode and self.current_step > self.next_plot_save:
+                if not self.evaluation_mode and self.training_plots and self.current_step > self.next_plot_save:
                     plot_episode(self, EPISODE_HOURS, MAX_NODES, True, False, self.current_step)
                     self.next_plot_save += self.steps_per_iteration
                     print(self.next_plot_save)
@@ -755,6 +761,9 @@ class ComputeClusterEnv(gym.Env):
                 self.metrics.episode_oracle_contiguous_unscheduled = self.contiguous_oracle.unscheduled_count
                 self.metrics.episode_oracle_contiguous_spillover = self.contiguous_oracle.spillover_count
             self.metrics.record_episode_completion(self.current_episode)
+            episode_metrics = dict(self.metrics.episode_costs[-1])
+        else:
+            episode_metrics = None
 
         self.state['predicted_prices'] = self.prices.advance_and_get_predicted_prices()
         self._update_time_features()
@@ -782,5 +791,8 @@ class ComputeClusterEnv(gym.Env):
             "step_jobs_flushed": agent_jobs_flushed,
             "step_baseline_jobs_flushed": baseline_jobs_flushed,
         }
+        if episode_metrics is not None:
+            # The finished episode's summary, for the training callback (works across subprocess envs).
+            info["episode_metrics"] = episode_metrics
 
         return self._observation(), step_reward, terminated, truncated, info

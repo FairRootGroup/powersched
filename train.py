@@ -1,7 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from torchinfo import summary
 import os
 from src.environment import ComputeClusterEnv, Weights, PlottingComplete
@@ -99,6 +99,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size for PPO gradient updates (default: 64). Should be <= --n-steps. Increase for larger networks (e.g. 256 for 256x256).")
     parser.add_argument("--learning-rate", type=float, default=3e-4, help="PPO learning rate (default: 3e-4). Reduce for larger networks (e.g. 1e-4 for 256x256).")
     parser.add_argument("--clip-range", type=float, default=0.2, help="PPO clip range for policy updates (default: 0.2). Tighten for larger networks (e.g. 0.1 for 256x256).")
+    parser.add_argument("--n-envs", type=int, default=1, help="Number of environments to train on in parallel, each in its own process (default: 1, in-process). --n-steps is per environment, so one update uses n_steps * n_envs steps. Each env is seeded seed + i and starts at its own random point in the price data.")
     parser.add_argument("--normalize-reward", action="store_true", help="Train on rewards scaled by a running estimate of the return's std (VecNormalize, observations untouched). Its statistics are saved next to each checkpoint. Evaluation is unaffected.")
     parser.add_argument("--device", type=str, default="auto", help="Device for training: 'auto' (default, uses CUDA if available), 'cuda', 'cpu'")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility (seeds environment, numpy, torch, and PPO)")
@@ -115,6 +116,8 @@ def main():
     parser.add_argument("--reservation-depth", type=int, default=1, help="With --dispatcher easy: number of oldest blocked jobs that get a reservation (1 = EASY, larger approaches conservative backfilling).")
 
     args = parser.parse_args()
+    if args.n_envs < 1:
+        parser.error("--n-envs must be at least 1")
     if args.reservation_depth < 1:
         parser.error("--reservation-depth must be at least 1")
     try:
@@ -193,7 +196,8 @@ def main():
         plot_job_queue=args.plot_job_queue,
     )
 
-    env = ComputeClusterEnv(weights=weights,
+    def make_env(evaluation_mode: bool) -> ComputeClusterEnv:
+        return ComputeClusterEnv(weights=weights,
                             session=args.session,
                             render_mode=args.render,
                             external_prices=prices,
@@ -203,7 +207,7 @@ def main():
                             external_hourly_jobs=norm_path(hourly_jobs_file_path),
                             plot_config=plot_config,
                             steps_per_iteration=STEPS_PER_ITERATION,
-                            evaluation_mode=args.evaluate_savings,
+                            evaluation_mode=evaluation_mode,
                             workload_gen=workload_gen,
                             job_arrival_scale=args.job_arrival_scale,
                             jobs_exact_replay=args.jobs_exact_replay,
@@ -213,15 +217,32 @@ def main():
                             enable_oracle=args.oracle,
                             dispatcher=args.dispatcher,
                             reservation_depth=args.reservation_depth)
+
+    # The env used for evaluation, and for training with a single env. Creating it also loads the
+    # workload data, which parallel envs then share (they are forked from this process).
+    env = make_env(args.evaluate_savings)
     env.session_dir = session_root
     env.plots_dir = plots_dir
     env.reset(seed=args.seed)
 
-    # Train on a VecNormalize wrapper when asked. env itself stays unwrapped: evaluation,
-    # set_progress and the metrics all use it directly, and see raw rewards.
     train_env = env
-    if args.normalize_reward and not args.evaluate_savings:
-        train_env = DummyVecEnv([lambda: Monitor(env)])
+    if not args.evaluate_savings:
+        if args.n_envs == 1:
+            train_env = DummyVecEnv([lambda: Monitor(env)])
+        else:
+            def subprocess_env(rank: int):
+                def _init():
+                    sub_env = make_env(False)
+                    sub_env.session_dir = session_root
+                    sub_env.plots_dir = plots_dir
+                    sub_env.training_plots = rank == 0  # one env is enough for the periodic episode plots
+                    return Monitor(sub_env)
+                return _init
+            train_env = SubprocVecEnv([subprocess_env(i) for i in range(args.n_envs)], start_method="fork")
+            print(f"Training on {args.n_envs} parallel environments")
+        if args.seed is not None:
+            train_env.seed(args.seed)  # env i gets seed + i
+        # With --normalize-reward, VecNormalize wraps train_env below (fresh or loaded with the model).
 
     # Check if there are any saved models in models_dir
     model_files = glob.glob(models_dir + "*.zip")
@@ -245,8 +266,8 @@ def main():
         seed_suffix = ""
         if args.seed_path != "":
             seed_suffix = "_train" + args.seed_path + "_evalseed_" + str(args.seed)
-        # Keep evaluations under other dispatchers apart from the default firstfit ones.
-        if args.dispatcher != "firstfit":
+        # Keep evaluations under other dispatchers apart from the default easy ones.
+        if args.dispatcher != "easy" or args.reservation_depth != 1:
             seed_suffix += f"_{args.dispatcher}{args.reservation_depth}"
 
         evaluation_plots_dir = os.path.join(
@@ -260,7 +281,7 @@ def main():
                 job_age_weight=weights.job_age_weight,
             ) + seed_suffix,
         )
-        if train_env is not env:
+        if args.normalize_reward and not args.evaluate_savings:
             stats_file = vecnormalize_stats_file(latest_model_file)
             if os.path.exists(stats_file):
                 train_env = VecNormalize.load(stats_file, train_env)
@@ -270,7 +291,7 @@ def main():
                 print(f"No reward normalization statistics next to the model ({stats_file}); starting fresh ones.")
         model = PPO.load(latest_model_file, env=train_env, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, device=args.device)
     else:
-        if train_env is not env:
+        if args.normalize_reward:
             train_env = VecNormalize(train_env, norm_obs=False, norm_reward=True)
         print(f"Starting a new model training...")
         # Parse network architecture from comma-separated string (e.g., "256,128" -> [256, 128])
@@ -299,6 +320,8 @@ def main():
             iters = 0
 
     env.set_progress(iters)
+    if args.n_envs > 1 and not args.evaluate_savings:
+        train_env.env_method("set_progress", iters)
 
     if args.evaluate_savings:
         if not latest_model_file:
@@ -573,6 +596,8 @@ def main():
         print("Training interrupted by user.")
     finally:
         print("Exiting training...")
+        if train_env is not env:
+            train_env.close()
         env.close()
 
 if __name__ == "__main__":
