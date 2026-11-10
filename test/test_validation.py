@@ -49,7 +49,7 @@ def _run(policy, envs):
 def test_same_arrivals_for_every_policy_and_feasibility():
     envs = {}
     keep_on = _run(FixedPolicy([2, 8]), envs)     # switch on up to 256 nodes per hour: all on
-    all_off = _run(FixedPolicy([0, 8]), envs)     # switch everything off
+    all_off = _run(FixedPolicy([0, 8]), envs)     # switch everything off: the queue fills, jobs are lost
     keep_on_again = _run(FixedPolicy([2, 8]), envs)
     a, b = keep_on["scales"]["1"], all_off["scales"]["1"]
     assert a["jobs_submitted"] == b["jobs_submitted"] > 0
@@ -61,9 +61,10 @@ def test_same_arrivals_for_every_policy_and_feasibility():
     assert not all_off["feasible"] and all_off["score"] is None
 
 
-def _result(savings, wait, lost=0):
+def _result(savings, wait, lost=0, overdue=0, submitted=100000):
     """A validation result with one scale; lost > 0 loses more jobs than the baseline."""
-    scale = dict(savings_off_pct=savings, avg_wait_h=wait, jobs_lost=lost, baseline_jobs_lost=0, completion_ratio=0.97)
+    scale = dict(savings_off_pct=savings, avg_wait_h=wait, jobs_lost=lost, baseline_jobs_lost=0, completion_ratio=0.97,
+                 overdue_jobs_end=overdue, jobs_submitted=submitted)
     return {"scales": {"1": scale}, "feasible": lost == 0, "savings_off_pct": savings, "score": savings if lost == 0 else None}
 
 
@@ -86,6 +87,16 @@ def test_record_result_keeps_best_per_wait_budget():
         assert saved["step"] == 2000000 and saved["by_wait_budget"]["6h"]["step"] == 1000000
         # The completion ratio is ignored unless asked for (all entries above have 0.97).
         assert best_per_budget(load_history(d), min_completion_ratio=0.99)["any"] is None
+
+
+def test_negative_savings_are_never_picked():
+    history = [
+        {"step": 1, **_result(-20.0, 1.0)},                # costs more than the baseline
+        {"step": 2, **_result(10.0, 9.0, overdue=2000)},   # overdue jobs at window ends do not make it infeasible
+    ]
+    best = best_per_budget(history)
+    assert best["6h"] is None                            # only the negative-savings checkpoint waits < 6 h
+    assert best["12h"]["step"] == 2 and best["any"]["step"] == 2
 
 
 def test_window_starts_spread_evenly():

@@ -10,9 +10,15 @@ because jobs still queued at a window's end count as not completed, which turns 
 ratio into a hidden wait limit). Its score is the savings vs baseline_off (the baseline without idle
 nodes), in percent, averaged over the scales.
 
+Known gap: every window starts from a hard reset with all nodes on and an empty queue, and jobs are
+only lost after 2 weeks of waiting or with a full queue (52,500). A policy whose backlog grows can
+therefore lose no jobs within a 4-week window and still lose many over a continuous year. The
+window-end queue and overdue counts are kept in the history to spot this (see v2_plan.md).
+
 How long jobs may wait depends on the jobs, so there is no single best checkpoint: for each wait
-budget (average wait in hours at the worst scale; WAIT_BUDGETS) the best feasible checkpoint within
-it is recorded. Feasibility and budgets are recomputed from the raw figures in the history, so a
+budget (average wait in hours at the worst scale; WAIT_BUDGETS) the feasible checkpoint with the
+highest savings within it is recorded, if those savings are positive (a checkpoint that costs more
+than the baseline is never worth picking). Feasibility and budgets are recomputed from the raw figures in the history, so a
 history written under another rule is re-ranked as it is.
 """
 
@@ -67,10 +73,10 @@ def entry_wait(entry: dict) -> float:
 
 
 def best_per_budget(history: list[dict], budgets=WAIT_BUDGETS, min_completion_ratio: float = 0.0) -> dict:
-    """{budget label: the feasible entry with the highest savings and wait within the budget, or None}."""
+    """{budget label: the feasible entry with the highest positive savings and wait within the budget, or None}."""
     best = {}
     for budget in budgets:
-        ok = [h for h in history if entry_feasible(h, min_completion_ratio)
+        ok = [h for h in history if entry_feasible(h, min_completion_ratio) and h["savings_off_pct"] > 0
               and (budget is None or entry_wait(h) <= budget)]
         best[budget_label(budget)] = max(ok, key=lambda h: h["savings_off_pct"]) if ok else None
     return best

@@ -62,7 +62,36 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
     - **Timing:** main-trace runs at 74–133 steps/s on the cluster (local: 184–193); the slowest may exceed the 24 h limit. Follow-up array 21216729 (`--dependency=afterany` on 21211317 and 21211368) reruns all 27 indices: finished ones exit quickly, timed-out ones resume, and missing per-budget evaluations are added.
     - **Commands:** on the submitter node, `apptainer exec --no-home --bind "$PWD" --pwd "$PWD" --env MPLCONFIGDIR=/tmp/mpl-$USER powersched-cpu.sif python analyze_validation.py --sessions sessions/v2`; or rsync events/validation/curriculum.log/`eval/***` via sadpc017 into `sessions/v2_cluster/` (ssh -t for the key passphrase) and run it locally.
 
-## Training grid (first round)
+11. ~~First grid~~ — done 2026-11-10; results in **Results: first grid** below (`analyze_grid.py`, `analyze_validation.py`).
+12. **Validation from a favourable start (known gap; partly handled).** A hard reset turns all 335 nodes on, and each validation window starts with one. A policy that mostly keeps the current state (early `paper` checkpoints, entropy near 0) then looks fine for 4 weeks (e.g. `paper_s2_test2024` @ 1.5M: wait 3–8 h, 0 lost), but its backlog grows: over the continuous held-out year it lost 1.3M of 4.7M jobs (wait 115 h, "+43% savings" from work never done). Jobs are only lost after 2 weeks of waiting or with a full queue (52,500), which a 4-week window from a reset rarely reaches.
+    - **Done (2026-11-10):** a wait-budget pick needs positive savings (`best_per_budget`). On round 1 this removes the early keep-only picks; held-out losses drop from 2.3M to 221K jobs (`paper_s2_test2025` @ 4.0M: 213K; `paper_s3_test2024` @ 6.0M: 8K). `de` and `e` picks unchanged; `de` and `e` never lost a job.
+    - **Idea, not adopted — overdue limit:** also require at most 1% of the submitted jobs overdue (> 24 h) at the window ends. The lossy picks had 1.5–2%, healthy `de`/`e` checkpoints ≤ 0.6%; on round 1 it would leave 8K lost jobs. Not adopted for now, so that heavily loaded or overloaded scenarios are not ruled out early: as an absolute limit it would reject every checkpoint whenever the baseline itself falls behind. If revisited, make it relative to the baseline (agent overdue ≤ baseline overdue + 1% of submitted), which needs the baseline's overdue jobs recorded at the window ends (read from the baseline queue; not tracked yet; 0 on the main trace at ×1.0/×1.5).
+    - **Idea, not adopted — warm-up:** an unscored 1–2 episodes per window before scoring (validation +50–100%). Not needed for `de`, the configuration we continue with, which recovers from any node state.
+    - Until then: check held-out lost jobs (`analyze_grid.py` lists them) before trusting a pick.
+13. **Weights round** — planned, see **Training grid (second round: weights)**. Needs `run_v2.sh` / `v2_grid.slurm` to take the weights as a parameter (session names `de_<weights>_s<seed>_test<year>`; `analyze_grid.py` and `analyze_validation.py` already group by everything before `_s<seed>`).
+
+## Results: first grid (2026-11-10)
+
+27 runs (curricula `paper`, `de`, `e` × seeds 1–3 × held-out year 2023/2024/2025), weights e4p4s2, 8M steps each, all finished (the slowest `paper` runs needed the follow-up job). Evaluation: the held-out price year, one year (`--eval-months 13` = 26 two-week episodes = 364 days, continuous), evaluation seeds 100/200/301, argmax actions, no loss barrier. Savings vs baseline_off from total cost; mean ± std over the 9 runs of a curriculum. Checkpoint = validation's best feasible pick (positive savings, no extra lost jobs; item 12) without a wait limit unless noted. `python analyze_grid.py --sessions sessions/v2_cluster`.
+
+| curriculum | ×1.5: savings | wait | ×1.0: savings | wait | completion | lost jobs |
+|---|---|---|---|---|---|---|
+| **de** | **+23.1 ± 1.5%** (+21.0 … +25.9) | 12.3 h | **+24.4 ± 2.1%** | 8.5 h | 99.7–99.8% | 0 |
+| e | +21.3 ± 2.3% | 22.1 h | +24.1 ± 2.7% | 15.5 h | 99.5–99.7% | 0 |
+| paper | +19.6 ± 3.4% | 19.7 h | +21.6 ± 3.3% | 13.2 h | 99.1–99.7% | 221K at ×1.5 |
+
+(Baseline completion 99.97–99.99%; the agents' gap is the queue left at the end of the year.)
+
+- **`de` is the configuration to build on.** All 9 runs within +21 … +26% at ×1.5; per held-out year 2023 / 2024 / 2025: +22.2 / +24.7 / +22.3%; never a lost job; shortest waits; the last checkpoint (+23.1 ± 2.0%) is as good as the validated pick, so training stays stable to the end.
+- **Generalisation holds:** held-out savings match validation on the training years (~20–25%). v1's published e4p4s2 gave 6.4% on held-out 2024 (9.3% in-sample 2023). Not strictly like for like: v2 also changed the dispatcher (EASY), the clock (arrivals and prices aligned), the evaluation length (364 vs 336 days) and the action space, all relative to the baseline in the same environment.
+- **Seed stability:** spread over training seeds ±1.5–2 points for `de`; over evaluation seeds ±0.1–1.9.
+- **`e`** saves about as much but waits about twice as long; its last checkpoints vary (down to −5%), so checkpoint selection matters there.
+- **`paper`** catches up in stage E but stays 3–5 points behind `de` and varies more; two of its picks still lose jobs on the held-out year (221K in total, item 12). The curriculum A–C brings no benefit here; hypotheses on why in item 10.
+- **Wait budgets:** within 12 h, `de` +23.1 ± 1.5% (×1.5, 9/9 runs), `e` only 3/9 runs (+14.7%). Nothing useful within 6 h: the 6-h picks are early checkpoints (`de` +12.4 ± 8.2%, 3/9). Short waits need a higher job-age weight → weights round.
+- **Oracle capture** (contiguous): 20–31%. The oracle knows all future arrivals and stacks work into the cheapest hours (in 2024 its cost is close to zero), so capture is for comparing runs, not an absolute grade.
+- **Throughput:** 74–133 steps/s per run on Virgo with 8 envs, varying up to 50% even on the same node (shared nodes, core placement; queue size only weakly, r = −0.27). 1,800 TensorBoard event files (one per `learn()` call, i.e. per 100K steps): raise `ulimit -n` before starting TensorBoard.
+
+## Training grid (first round, done)
 
 - Weights: e4p4s2 (eff 0.4, price 0.4, idle 0, age 0.2, drop 0) only; expand to other weight combinations if v2 works.
 - Curriculum, as a grid dimension:
@@ -72,6 +101,16 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
 - Seeds: 3 per cell. Prices: leave-one-year-out.
 - Loss barrier (`--flush-after-drop-streak 3`) on; drop penalty off (unchanged from the paper).
 
+
+## Training grid (second round: weights)
+
+- Curriculum: `de` only (D: 1M steps, main trace ×1.5, logic prices; E: 7M steps, main trace ×1.5, the two training years). All PPO, validation and evaluation settings as in round 1.
+- Weights (efficiency, price, idle, job age, drop), as in the paper's notation e<eff>p<price>s<age>:
+  - the paper's three: **e4p4s2** (0.4/0.4/0/0.2/0: reuse round 1's `de` runs, same configuration), **e3p5s2** (0.3/0.5/0/0.2/0), **e2p2s6** (0.2/0.2/0/0.6/0);
+  - two extras (agreed 2026-11-10) to map the savings-vs-wait trade-off: **e3p3s4** (0.3/0.3/0/0.4/0, between e4p4s2 and e2p2s6 along the job-age axis) and **e2p6s2** (0.2/0.6/0/0.2/0, price-heavy, a contrast to e3p5s2).
+- 3 seeds × 3 held-out years per combination: 4 new combinations = 36 runs × 9 cores = 324 cores; about a day on `long`.
+- Questions: does a higher job-age weight give positive savings within 6 h (the paper's e2p2s6 waited 0.5–1 h)? Is the paper's ordering (e4p4s2 most savings, e2p2s6 shortest waits, e3p5s2 inconsistent) reproduced with stable training? Does seed stability hold for all weights?
+- Before launching: parametrise `run_v2.sh` / `v2_grid.slurm` by weights (item 13). Selection as in item 12: positive savings and no extra lost jobs; check held-out losses.
 ## Evaluation protocol
 
 - Argmax actions (`deterministic=True`), as in the paper; also report sampled actions if they differ much.
