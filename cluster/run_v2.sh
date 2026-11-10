@@ -2,12 +2,15 @@
 # One v2 training run: a curriculum for one seed and one held-out price year, then the final
 # evaluation on the held-out year. Runs in the venv or inside the Apptainer image (cluster/v2_grid.slurm).
 #
-# Usage: cluster/run_v2.sh <paper|de|e> <seed> <test-year: 2023|2024|2025>
+# Usage: cluster/run_v2.sh <paper|de|e> <seed> <test-year: 2023|2024|2025> [weights]
 #   paper  A-E as in the paper: A flat 150 jobs/h, B flat 1,000, C flat 600 + 5% small bursts,
 #          D main trace x1.5 (logic prices), E main trace x1.5 on the two training years
 #   de     D then E, same total steps
 #   e      E only, arrival scale drawn per episode from 0.5-2.0
 # Stage ends are cumulative iterations (1 iteration = 100K steps); 8M steps in total.
+# weights: e<eff>p<price>s<job age> in tenths, as in the paper (idle and drop weights 0), e.g. e2p2s6
+#   = efficiency 0.2, price 0.2, job age 0.6. Default e4p4s2. Sessions are named
+#   <curriculum>_s<seed>_test<year> for e4p4s2 (round 1) and <curriculum>_<weights>_s<seed>_test<year> otherwise.
 #
 # Environment:
 #   OUTPUT_DIR  base for sessions (default: sessions/v2)
@@ -21,6 +24,7 @@ set -euo pipefail
 CURRICULUM="$1"
 SEED="$2"
 TEST_YEAR="$3"
+WEIGHTS_TAG="${4:-e4p4s2}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
 
@@ -43,13 +47,24 @@ done
 TEST_PRICES="data-external/prices_$TEST_YEAR.csv"
 TRACE_FILE=data-internal/allusers-main-30.log
 
-SESSION="${CURRICULUM}_s${SEED}_test${TEST_YEAR}"
+if [[ ! "$WEIGHTS_TAG" =~ ^e([0-9])p([0-9])s([0-9])$ ]] \
+        || (( BASH_REMATCH[1] + BASH_REMATCH[2] + BASH_REMATCH[3] != 10 )); then
+    echo "weights must be e<eff>p<price>s<age> in tenths summing to 10, e.g. e2p2s6 (got $WEIGHTS_TAG)" >&2
+    exit 1
+fi
+W_EFF="0.${BASH_REMATCH[1]}"; W_PRICE="0.${BASH_REMATCH[2]}"; W_AGE="0.${BASH_REMATCH[3]}"
+
+if [[ "$WEIGHTS_TAG" == "e4p4s2" ]]; then
+    SESSION="${CURRICULUM}_s${SEED}_test${TEST_YEAR}"
+else
+    SESSION="${CURRICULUM}_${WEIGHTS_TAG}_s${SEED}_test${TEST_YEAR}"
+fi
 [[ "$SMOKE" == "1" ]] && SESSION+="_smoke"
 SESSION_DIR="$OUTPUT_DIR/$SESSION"
 mkdir -p "$SESSION_DIR"
 
-WEIGHTS=(--efficiency-weight 0.4 --price-weight 0.4 --idle-weight 0.0 --job-age-weight 0.2 --drop-weight 0.0)
-MODELS_DIR="$SESSION_DIR/models/e0.4_p0.4_i0.0_a0.2_d0.0"
+WEIGHTS=(--efficiency-weight "$W_EFF" --price-weight "$W_PRICE" --idle-weight 0.0 --job-age-weight "$W_AGE" --drop-weight 0.0)
+MODELS_DIR="$SESSION_DIR/models/e${W_EFF}_p${W_PRICE}_i0.0_a${W_AGE}_d0.0"  # as train.py names it
 
 if [[ "$SMOKE" == "1" ]]; then
     ENDS=(1 2 3 4 6); VAL_EVERY=1; EVAL_MONTHS=1; TOTAL_STEPS=600000
@@ -68,7 +83,7 @@ LOGIC=(--prices "")              # synthetic logic prices
 REAL=(--prices "$TRAIN_PRICES")  # the two training years
 
 {
-    echo "[$(date '+%F %T')] start curriculum=$CURRICULUM seed=$SEED test=$TEST_YEAR smoke=$SMOKE n_envs=$N_ENVS host=$(hostname)"
+    echo "[$(date '+%F %T')] start curriculum=$CURRICULUM weights=$WEIGHTS_TAG seed=$SEED test=$TEST_YEAR smoke=$SMOKE n_envs=$N_ENVS host=$(hostname)"
     if command -v git > /dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
         echo "  git=$(git rev-parse --short HEAD) uncommitted-diff=$(git diff HEAD -- src train.py | sha256sum | cut -c1-12)"
         git diff HEAD -- src train.py > "$SESSION_DIR/uncommitted.diff"

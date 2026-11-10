@@ -49,7 +49,7 @@ powersched/
 │   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
-├── cluster/                # Apptainer image (powersched-cpu.def), v2 run script (run_v2.sh), Slurm array (v2_grid.slurm)
+├── cluster/                # Apptainer image (powersched-cpu.def), v2 run script (run_v2.sh), Slurm arrays (v2_grid.slurm, v2_weights.slurm)
 ├── analyze_arrivalscale_occupancy.py  # Analysis: arrival scale effects on occupancy
 ├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
 ├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
@@ -187,6 +187,8 @@ apptainer build powersched-cpu.sif cluster/powersched-cpu.def   # CPU-only deps;
 mkdir -p sessions/v2/slurm
 sbatch --partition=<partition> cluster/v2_grid.slurm           # 27 runs: curricula paper/de/e x seeds 1-3 x held-out year
 cluster/run_v2.sh paper 1 2024                                 # one run locally (venv); SMOKE=1 for a short version
+sbatch --partition=<partition> cluster/v2_weights.slurm        # weights round: de x 4 weight combinations x seeds 1-3 x held-out year (36 runs)
+cluster/run_v2.sh de 1 2024 e2p2s6                             # one run with other weights (e<eff>p<price>s<age> in tenths; default e4p4s2)
 ```
 `cluster/run_v2.sh` trains the curriculum (stages are cumulative `--iter-limit`s, 8M steps), validates every 500K steps on the two training years, then evaluates the best validated checkpoint per wait budget (6/12/24 h/any) and the last one on the held-out year (`analyze_eval_seeds.py`, seeds 100/200/301, x1.5 and x1.0) into `<session>/eval/`. Rerunning resumes. Summarise a finished grid with `python analyze_grid.py --sessions sessions/v2` (held-out savings, wait, completion and lost jobs per config, wait budget and arrival scale; `grid_eval.csv`).
 

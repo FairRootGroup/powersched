@@ -68,7 +68,7 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
     - **Idea, not adopted — overdue limit:** also require at most 1% of the submitted jobs overdue (> 24 h) at the window ends. The lossy picks had 1.5–2%, healthy `de`/`e` checkpoints ≤ 0.6%; on round 1 it would leave 8K lost jobs. Not adopted for now, so that heavily loaded or overloaded scenarios are not ruled out early: as an absolute limit it would reject every checkpoint whenever the baseline itself falls behind. If revisited, make it relative to the baseline (agent overdue ≤ baseline overdue + 1% of submitted), which needs the baseline's overdue jobs recorded at the window ends (read from the baseline queue; not tracked yet; 0 on the main trace at ×1.0/×1.5).
     - **Idea, not adopted — warm-up:** an unscored 1–2 episodes per window before scoring (validation +50–100%). Not needed for `de`, the configuration we continue with, which recovers from any node state.
     - Until then: check held-out lost jobs (`analyze_grid.py` lists them) before trusting a pick.
-13. **Weights round** — planned, see **Training grid (second round: weights)**. Needs `run_v2.sh` / `v2_grid.slurm` to take the weights as a parameter (session names `de_<weights>_s<seed>_test<year>`; `analyze_grid.py` and `analyze_validation.py` already group by everything before `_s<seed>`).
+13. **Weights round** — prepared: `cluster/run_v2.sh <curriculum> <seed> <year> [weights]` takes the weights as e<eff>p<price>s<age> (default e4p4s2; sessions `de_<weights>_s<seed>_test<year>`, e4p4s2 keeps round 1's names), `cluster/v2_weights.slurm` runs the 36 runs (indices 0–8 e3p5s2, 9–17 e2p2s6, 18–26 e3p3s4, 27–35 e2p6s2). Launch: update the cluster checkout, then `sbatch --partition=long cluster/v2_weights.slurm` and a follow-up array with `--dependency=afterany:<jobid>`. See **Training grid (second round: weights)**.
 
 ## Results: first grid (2026-11-10)
 
@@ -110,7 +110,7 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
   - two extras (agreed 2026-11-10) to map the savings-vs-wait trade-off: **e3p3s4** (0.3/0.3/0/0.4/0, between e4p4s2 and e2p2s6 along the job-age axis) and **e2p6s2** (0.2/0.6/0/0.2/0, price-heavy, a contrast to e3p5s2).
 - 3 seeds × 3 held-out years per combination: 4 new combinations = 36 runs × 9 cores = 324 cores; about a day on `long`.
 - Questions: does a higher job-age weight give positive savings within 6 h (the paper's e2p2s6 waited 0.5–1 h)? Is the paper's ordering (e4p4s2 most savings, e2p2s6 shortest waits, e3p5s2 inconsistent) reproduced with stable training? Does seed stability hold for all weights?
-- Before launching: parametrise `run_v2.sh` / `v2_grid.slurm` by weights (item 13). Selection as in item 12: positive savings and no extra lost jobs; check held-out losses.
+- Scripts: item 13. Selection as in item 12: positive savings and no extra lost jobs; check held-out losses.
 ## Evaluation protocol
 
 - Argmax actions (`deterministic=True`), as in the paper; also report sampled actions if they differ much.
