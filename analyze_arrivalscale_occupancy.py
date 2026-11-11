@@ -30,6 +30,7 @@ FAST DEBUG MODE:
 python analyze_arrivalscale_occupancy.py \
   --jobs ./data/workload_statistics/jobs_2023.log \
   --hourly-jobs ./data/workload_statistics/jobs_2023.log \
+  --session my_experiment --model 8000000 \
   --eval-months 1 --scales 0.8,1.0,1.2 --no-plot-dashboard
 """
 
@@ -537,7 +538,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--job-age-weight", type=float, default=0.2)
     parser.add_argument("--drop-weight", type=float, default=0.0)
     parser.add_argument("--eval-months", type=int, default=13)
-    parser.add_argument("--model", type=int, default=1000000)
+    parser.add_argument("--model", type=int, required=True,
+                        help="Checkpoint step to evaluate (e.g. the validated pick or the last checkpoint, 8000000).")
     parser.add_argument("--seed", type=int, default=None, help="Forwarded to train.py (sampling mode only).")
 
     parser.add_argument("--plot-dashboard", action=argparse.BooleanOptionalAction, default=True)
