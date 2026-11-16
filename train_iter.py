@@ -573,6 +573,7 @@ def main():
     parser.add_argument("--val-windows", type=int, default=None, help="Forward to train.py: validation windows (default: 4).")
     parser.add_argument("--val-window-episodes", type=int, default=None, help="Forward to train.py: episodes per validation window (default: 2).")
     parser.add_argument("--val-seed", type=int, default=None, help="Forward to train.py: seed of the validation arrivals (default: 12345).")
+    parser.add_argument("--val-after-step", type=int, default=None, help="Forward to train.py: only checkpoints after this step are candidates for the best checkpoint (default: 0 = all).")
     parser.add_argument("--val-min-completion", type=float, default=None, help="Forward to train.py: minimum completion vs baseline for a feasible checkpoint (default: 0.995).")
     parser.add_argument("--no-tui", action="store_true", help="Disable interactive TUI; print plain progress lines instead (auto-disabled when not a TTY)")
     parser.add_argument(
@@ -624,7 +625,7 @@ def main():
     workloadgen_args = build_workloadgen_cli_args(args)
     validation_args = []  # options forwarded to train.py as given
     for name in ("job_arrival_scale_range", "val_every", "val_hourly_jobs", "val_prices", "val_arrival_scales", "val_windows",
-                 "val_window_episodes", "val_seed", "val_min_completion"):
+                 "val_window_episodes", "val_seed", "val_min_completion", "val_after_step"):
         value = getattr(args, name)
         if value is not None:
             validation_args += ["--" + name.replace("_", "-"), str(value)]

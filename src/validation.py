@@ -18,7 +18,10 @@ window-end queue and overdue counts are kept in the history to spot this (see v2
 How long jobs may wait depends on the jobs, so there is no single best checkpoint: for each wait
 budget (average wait in hours at the worst scale; WAIT_BUDGETS) the feasible checkpoint with the
 highest savings within it is recorded, if those savings are positive (a checkpoint that costs more
-than the baseline is never worth picking). Feasibility and budgets are recomputed from the raw figures in the history, so a
+than the baseline is never worth picking). In a curriculum, only checkpoints of the last stage are
+candidates (`after_step`): earlier ones never trained on the target setting, and a stage-D checkpoint
+(logic prices) once passed validation with a growing backlog and then lost jobs over the held-out year.
+Training itself is never affected. Feasibility and budgets are recomputed from the raw figures in the history, so a
 history written under another rule is re-ranked as it is.
 """
 
@@ -27,6 +30,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -72,14 +76,44 @@ def entry_wait(entry: dict) -> float:
     return max(s.get("avg_wait_h", math.inf) for s in entry["scales"].values())
 
 
-def best_per_budget(history: list[dict], budgets=WAIT_BUDGETS, min_completion_ratio: float = 0.0) -> dict:
-    """{budget label: the feasible entry with the highest positive savings and wait within the budget, or None}."""
+def best_per_budget(history: list[dict], budgets=WAIT_BUDGETS, min_completion_ratio: float = 0.0,
+                    after_step: int = 0) -> dict:
+    """
+    {budget label: the feasible entry with the highest positive savings and wait within the budget, or None}.
+    Only checkpoints after `after_step` are candidates (the start of the last curriculum stage: earlier
+    checkpoints never trained on the target setting).
+    """
     best = {}
     for budget in budgets:
-        ok = [h for h in history if entry_feasible(h, min_completion_ratio) and h["savings_off_pct"] > 0
-              and (budget is None or entry_wait(h) <= budget)]
+        ok = [h for h in history if h["step"] > after_step and entry_feasible(h, min_completion_ratio)
+              and h["savings_off_pct"] > 0 and (budget is None or entry_wait(h) <= budget)]
         best[budget_label(budget)] = max(ok, key=lambda h: h["savings_off_pct"]) if ok else None
     return best
+
+
+STAGE_LINE = re.compile(r"\] stage (\S+) \(to iteration (\d+)\)")
+
+
+def last_stage_start(session_dir: str, steps_per_iteration: int = 100_000) -> int:
+    """
+    Step at which the last curriculum stage of a cluster/run_v2.sh session starts, read from its
+    curriculum.log (`stage <name> (to iteration <end>)` lines): the end of the stage before it, or 0
+    for a single stage or a session without that log. For best_per_budget(after_step=...).
+    """
+    path = os.path.join(session_dir, "curriculum.log")
+    if not os.path.exists(path):
+        return 0
+    ends = set()
+    with open(path) as f:
+        for line in f:
+            m = STAGE_LINE.search(line)
+            if m:
+                ends.add(int(m.group(2)))
+    if not ends:
+        return 0
+    final = max(ends)
+    earlier = [e for e in ends if e < final]
+    return max(earlier) * steps_per_iteration if earlier else 0
 
 
 def run_validation(model, make_env: Callable[[float], object], config: ValidationConfig,
@@ -147,7 +181,8 @@ def load_history(models_dir: str) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def record_result(models_dir: str, step: int, result: dict, min_completion_ratio: float = 0.0) -> dict:
+def record_result(models_dir: str, step: int, result: dict, min_completion_ratio: float = 0.0,
+                  after_step: int = 0) -> dict:
     """
     Append the result for checkpoint `step` to the history and rewrite the best-checkpoint file.
     A step validated again (e.g. after a resume) replaces its earlier entry.
@@ -162,7 +197,7 @@ def record_result(models_dir: str, step: int, result: dict, min_completion_ratio
     with open(os.path.join(models_dir, HISTORY_FILE), "w") as f:
         for h in history:
             f.write(json.dumps(h) + "\n")
-    best = best_per_budget(history, min_completion_ratio=min_completion_ratio)
+    best = best_per_budget(history, min_completion_ratio=min_completion_ratio, after_step=after_step)
     best_path = os.path.join(models_dir, BEST_FILE)
     if best["any"] is not None:
         with open(best_path, "w") as f:

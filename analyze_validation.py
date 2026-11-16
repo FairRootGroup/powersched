@@ -25,7 +25,7 @@ import re
 
 import numpy as np
 
-from src.validation import best_per_budget, entry_feasible, entry_wait, load_history
+from src.validation import best_per_budget, entry_feasible, entry_wait, last_stage_start, load_history
 
 RUN_NAME = re.compile(r"^(?P<curriculum>.+)_s(?P<seed>\d+)_test(?P<year>\d{4})$")
 COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"]  # categorical slots 1-5, fixed order
@@ -49,7 +49,9 @@ def main() -> None:
             continue
         history = load_history(os.path.dirname(path))
         if history:
-            runs.append(dict(name=name, **m.groupdict(), history=history, best=best_per_budget(history, budgets)))
+            after = last_stage_start(os.path.join(args.sessions, name))
+            runs.append(dict(name=name, **m.groupdict(), history=history,
+                             best=best_per_budget(history, budgets, after_step=after)))
     if not runs:
         raise SystemExit(f"no validation.jsonl under {args.sessions}/*/models/*/")
     labels = list(runs[0]["best"].keys())

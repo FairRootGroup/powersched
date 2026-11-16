@@ -128,6 +128,7 @@ def main():
     parser.add_argument("--val-windows", type=int, default=4, help="Validation windows, spread evenly over the validation prices (default: 4).")
     parser.add_argument("--val-window-episodes", type=int, default=2, help="2-week episodes per validation window (default: 2).")
     parser.add_argument("--val-seed", type=int, default=12345, help="Seed of the validation arrivals; window w uses val_seed + w (default: 12345).")
+    parser.add_argument("--val-after-step", type=int, default=0, help="Only checkpoints after this step are candidates for validation_best.json (all are still validated and recorded); set it to the start of the last curriculum stage, so checkpoints that never trained on the target setting are not picked (default: 0 = all).")
     parser.add_argument("--val-min-completion", type=float, default=0.0, help="Also require completing at least this fraction of the jobs the baseline completes, at every scale (default: 0 = off; jobs still queued at a window's end count as not completed, so this acts as a hidden wait limit). A checkpoint is always required to lose no more jobs than the baseline.")
 
     args = parser.parse_args()
@@ -274,7 +275,8 @@ def main():
     def validate(step: int) -> None:
         t_val = time.time()
         result = run_validation(model, make_val_env, val_config, val_envs)
-        best = record_result(models_dir, step, result, min_completion_ratio=args.val_min_completion)
+        best = record_result(models_dir, step, result, min_completion_ratio=args.val_min_completion,
+                             after_step=args.val_after_step)
         print(format_result(step, result))
         print(f"  best so far by average wait: {format_best(best)} ({time.time() - t_val:.0f}s)")
         for scale, s in result["scales"].items():

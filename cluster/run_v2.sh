@@ -72,12 +72,20 @@ else
     ENDS=(10 20 30 40 80); VAL_EVERY=5; EVAL_MONTHS=13; TOTAL_STEPS=8000000
 fi
 
+# Checkpoints before the last stage (they never trained on the target setting) are validated and
+# recorded, but are not candidates for the best checkpoint (--val-after-step).
+case "$CURRICULUM" in
+    paper) AFTER_STEP=$((ENDS[3] * 100000)) ;;
+    de)    AFTER_STEP=$((ENDS[0] * 100000)) ;;
+    *)     AFTER_STEP=0 ;;
+esac
+
 COMMON=(--session "$SESSION" --output-dir "$OUTPUT_DIR" --seed "$SEED" "${WEIGHTS[@]}"
         --net-arch 64,64 --device cpu --n-envs "$N_ENVS"
         --n-steps $((2048 / N_ENVS)) --batch-size 256 --n-epochs 5 --target-kl 0.02
         --learning-rate 3e-4 --ent-coef 0.002 --decay-steps "$TOTAL_STEPS" --normalize-reward
         --flush-after-drop-streak 3
-        --val-every "$VAL_EVERY" --val-hourly-jobs "$TRACE_FILE" --val-prices "$TRAIN_PRICES")
+        --val-every "$VAL_EVERY" --val-hourly-jobs "$TRACE_FILE" --val-prices "$TRAIN_PRICES" --val-after-step "$AFTER_STEP")
 TRACE=(--hourly-jobs "$TRACE_FILE" --job-arrival-scale 1.5)
 LOGIC=(--prices "")              # synthetic logic prices
 REAL=(--prices "$TRAIN_PRICES")  # the two training years
@@ -118,11 +126,11 @@ case "$CURRICULUM" in
 esac
 
 # Final evaluation on the held-out year: for each wait budget (6 h, 12 h, 24 h, none) the best
-# validated checkpoint, recomputed from the validation history, plus the last checkpoint; at arrival
+# validated checkpoint of the last stage, recomputed from the validation history, plus the last checkpoint; at arrival
 # scales 1.5 (the training load) and 1.0, over three evaluation seeds.
 BEST_STEPS="$("$PY" -c "
 from src.validation import load_history, best_per_budget
-best = best_per_budget(load_history('$MODELS_DIR'))
+best = best_per_budget(load_history('$MODELS_DIR'), after_step=$AFTER_STEP)
 print(' '.join(f'{label}:{e[\"step\"]}' for label, e in best.items() if e))" 2>/dev/null || true)"
 LAST_STEP=$((ENDS[4] * 100000))
 mkdir -p "$SESSION_DIR/eval"

@@ -28,7 +28,7 @@ import re
 
 import numpy as np
 
-from src.validation import WAIT_BUDGETS, best_per_budget, budget_label, load_history
+from src.validation import WAIT_BUDGETS, best_per_budget, budget_label, last_stage_start, load_history
 
 RUN_NAME = re.compile(r"^(?P<config>.+)_s(?P<seed>\d+)_test(?P<year>\d{4})$")
 EVAL_NAME = re.compile(r"^m(?P<step>\d+)_x(?P<scale>[\d.]+)_test\d{4}\.json$")
@@ -49,7 +49,7 @@ def load_runs(sessions: str, last_step: int) -> list[dict]:
                 with open(path) as f:
                     stats = json.load(f)["stats"]
                 evals[(int(em["step"]), em["scale"])] = {k: v["mean"] for k, v in stats.items()}
-        best = best_per_budget(load_history(models[0]))
+        best = best_per_budget(load_history(models[0]), after_step=last_stage_start(session))
         picks = {label: (e["step"] if e else None) for label, e in best.items()}
         picks["last"] = last_step
         runs.append(dict(name=name, **m.groupdict(), picks=picks, evals=evals))

@@ -13,7 +13,7 @@ import numpy as np
 
 from src.environment import ComputeClusterEnv, Weights
 from src.plot_config import PlotConfig
-from src.validation import ValidationConfig, run_validation, record_result, load_history, window_starts, best_per_budget, BEST_FILE
+from src.validation import ValidationConfig, run_validation, record_result, load_history, window_starts, best_per_budget, last_stage_start, BEST_FILE
 from src.workloadgen import WorkloadGenConfig, WorkloadGenerator
 
 CONFIG = ValidationConfig(arrival_scales=(1.0,), windows=2, episodes_per_window=1, seed=5)
@@ -97,6 +97,29 @@ def test_negative_savings_are_never_picked():
     best = best_per_budget(history)
     assert best["6h"] is None                            # only the negative-savings checkpoint waits < 6 h
     assert best["12h"]["step"] == 2 and best["any"]["step"] == 2
+
+
+def test_only_last_stage_checkpoints_are_picked():
+    history = [
+        {"step": 1_000_000, **_result(26.0, 19.8, overdue=26675)},  # end of stage D: best score, never saw real prices
+        {"step": 4_000_000, **_result(25.0, 8.0)},
+        {"step": 8_000_000, **_result(22.9, 7.1)},
+    ]
+    assert best_per_budget(history)["any"]["step"] == 1_000_000
+    best = best_per_budget(history, after_step=1_000_000)
+    assert best["any"]["step"] == 4_000_000 and best["24h"]["step"] == 4_000_000
+    with tempfile.TemporaryDirectory() as d:
+        assert last_stage_start(d) == 0  # no curriculum.log
+        with open(os.path.join(d, "curriculum.log"), "w") as f:
+            f.write("[2026-11-10 12:52:00] start curriculum=de\n"
+                    "[2026-11-10 12:52:01] stage stageD (to iteration 10): --prices \n"
+                    "[2026-11-10 14:00:00] stage stageE (to iteration 80): --prices a.csv\n"
+                    "[2026-11-11 12:52:00] stage stageD (to iteration 10): --prices \n"  # resumed run
+                    "[2026-11-11 12:52:10] stage stageE (to iteration 80): --prices a.csv\n")
+        assert last_stage_start(d) == 1_000_000
+        with open(os.path.join(d, "curriculum.log"), "w") as f:
+            f.write("[2026-11-10 12:52:01] stage stageE (to iteration 80): --prices a.csv\n")
+        assert last_stage_start(d) == 0  # single stage: every checkpoint is a candidate
 
 
 def test_window_starts_spread_evenly():

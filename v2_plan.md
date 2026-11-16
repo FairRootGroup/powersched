@@ -31,7 +31,7 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
 
 **PPO settings** (in `cluster/run_v2.sh`): 2,048 steps per update (256 × 8 envs), batch 256, 5 epochs, target KL 0.02, `ent_coef` 0.002 and learning rate 3e-4 both decaying linearly to 0 over 8M steps, `--normalize-reward`, network 64-64 (385 inputs), loss barrier `--flush-after-drop-streak 3`, drop penalty off.
 
-**Validation and selection** (`src/validation.py`): every 500K steps, argmax actions on 4 windows × 2 episodes of the two training years, at ×1.0 and ×1.5, fixed arrivals, no loss barrier. Feasible = no more lost jobs than the baseline at both scales. Per wait budget (average wait at the worse scale ≤ 6 / 12 / 24 h / none) the feasible checkpoint with the highest positive savings is the pick. Validation never affects training: every run trains 8M steps and keeps all checkpoints.
+**Validation and selection** (`src/validation.py`): every 500K steps, argmax actions on 4 windows × 2 episodes of the two training years, at ×1.0 and ×1.5, fixed arrivals, no loss barrier. Feasible = no more lost jobs than the baseline at both scales. Candidates are the checkpoints of the last curriculum stage only (`de`: after 1.0M; `--val-after-step`, set by `run_v2.sh`; for existing sessions the analyses read the stage ends from `curriculum.log`). Per wait budget (average wait at the worse scale ≤ 6 / 12 / 24 h / none) the feasible checkpoint with the highest positive savings is the pick. Validation never affects training: every run trains 8M steps and keeps all checkpoints.
 
 **Evaluation:** held-out price year, 364 days continuous, evaluation seeds 100 / 200 / 301, argmax, ×1.5 and ×1.0; savings vs the idle-free baseline from total cost, plus completion, wait, lost jobs, oracle capture.
 
@@ -39,13 +39,13 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
 
 ## Results: round 1, curricula (2026-11-10)
 
-27 runs: curricula `paper` (A–E as in the paper), `de` (D 1M steps on logic prices, E 7M on the two training years), `e` (E only, arrival scale drawn per episode from 0.5–2.0) × seeds 1–3 × held-out year 2023/2024/2025; weights e4p4s2; main trace ×1.5 in D and E. Pick without a wait budget; mean ± std over 9 runs.
+27 runs: curricula `paper` (A–E as in the paper), `de` (D 1M steps on logic prices, E 7M on the two training years), `e` (E only, arrival scale drawn per episode from 0.5–2.0) × seeds 1–3 × held-out year 2023/2024/2025; weights e4p4s2; main trace ×1.5 in D and E. Pick: best validated checkpoint of the last stage, no wait budget; mean ± std over 9 runs.
 
 | curriculum | ×1.5: savings | wait | ×1.0: savings | wait | lost jobs |
 |---|---|---|---|---|---|
 | **de** | **+23.1 ± 1.5%** (+21.0 … +25.9) | 12.3 h | **+24.4 ± 2.1%** | 8.5 h | 0 |
 | e | +21.3 ± 2.3% | 22.1 h | +24.1 ± 2.7% | 15.5 h | 0 |
-| paper | +19.6 ± 3.4% | 19.7 h | +21.6 ± 3.3% | 13.2 h | 221K at ×1.5 |
+| paper | +18.7 ± 2.7% | 17.2 h | +21.5 ± 3.5% | 11.7 h | 8K at ×1.5 (1 run) |
 
 - **`de` is the configuration to build on:** all 9 runs within +21 … +26% at ×1.5, never a lost job, shortest waits; its last checkpoint is as good as the validated pick.
 - **`e`** saves about as much but waits twice as long; its last checkpoints vary (down to −5%).
@@ -55,42 +55,41 @@ Already on master before v2: numpy backlog speed-up, `--normalize-reward`, `--en
 
 ## Results: round 2, reward weights (2026-11-12)
 
-Curriculum `de`; the paper's e4p4s2 (round 1), e3p5s2, e2p2s6 and two new combinations, e3p3s4 (between e4p4s2 and e2p2s6 on job age) and e2p6s2 (price-heavy) × 3 seeds × 3 held-out years. Pick without a wait budget (decided: no time rule; lost jobs are reported). Ordered by wait:
+Curriculum `de`; the paper's e4p4s2 (round 1), e3p5s2, e2p2s6 and two new combinations, e3p3s4 (between e4p4s2 and e2p2s6 on job age) and e2p6s2 (price-heavy) × 3 seeds × 3 held-out years. Pick: best validated checkpoint of the last stage (stage E), no wait budget (decided 2026-11-13; lost jobs are reported). Ordered by wait:
 
 | weights | ×1.5: savings | wait | ×1.0: savings | wait | last checkpoint ×1.5 | lost jobs (×1.5 / ×1.0) |
 |---|---|---|---|---|---|---|
 | e2p2s6 | +19.0 ± 1.3% | 3.0 h | +17.8 ± 1.6% | 2.7 h | +18.5 ± 1.8% | 0 |
 | e3p3s4 | +23.8 ± 1.6% | 5.7 h | +23.6 ± 1.6% | 4.8 h | +21.9 ± 1.4% | 0 |
-| e2p6s2 | +26.9 ± 3.1% | 9.1 h | +25.9 ± 3.0% | 8.0 h | +24.6 ± 2.4% | 324K / 166K (1 run) |
+| e2p6s2 | +25.8 ± 2.0% | 7.5 h | +25.1 ± 2.1% | 6.1 h | +24.6 ± 2.4% | 0 |
 | e3p5s2 | +25.2 ± 1.7% | 11.4 h | +26.0 ± 2.1% | 8.2 h | +24.6 ± 1.4% | 0 |
 | e4p4s2 | +23.1 ± 1.5% | 12.3 h | +24.4 ± 2.1% | 8.5 h | +23.1 ± 2.0% | 0 |
 
-- **A savings-vs-wait frontier:** e2p2s6 (3 h) → e3p3s4 (5–6 h) → e3p5s2 / e2p6s2 (8–11 h). e4p4s2, the paper's headline weights, saves less than both price-heavy combinations.
-- **The lossy pick:** e2p6s2 includes `de_e2p6s2_s2_test2025` @ 1.0M, the end of stage D (logic prices only). It built a backlog in validation (26,675 jobs overdue at the ×1.5 window ends) but lost no job within the 4-week windows, so it passed; over the held-out year it lost 324K jobs. Without that run e2p6s2 gives +26.0 ± 2.0% at 7.5 h. A 12 h budget would have avoided every lossy pick of both rounds (not adopted as a rule).
+- **A savings-vs-wait frontier:** e2p2s6 (3 h, +19%) → e3p3s4 (5–6 h, +24%) → e2p6s2 (7.5 h, +26%); e3p5s2 saves about as much as e2p6s2 but waits longer (11 h), and e4p4s2, the paper's headline weights, saves less at 12 h.
+- **Why last-stage only:** before the rule, e2p6s2's pick in `de_e2p6s2_s2_test2025` was the 1.0M checkpoint, the end of stage D (logic prices only). It built a backlog in validation (26,675 jobs overdue at the ×1.5 window ends; 0 for every stage-E checkpoint) but lost no job within the 4-week windows, so it passed; over the held-out year it lost 324K jobs (×1.5). With the rule the pick is 4.0M (0 lost). The only lossy pick left in both rounds is `paper_s3_test2024` @ 6.0M (8K jobs, a dropped curriculum).
 - **Short waits are possible now:** best within a 6 h validation wait, ×1.5: e3p3s4 +23.8%, e2p6s2 +23.5%, e2p2s6 +19.0% (all 9 runs); e3p5s2 4 of 9 runs, e4p4s2 none.
 - **Paper's questions:** e2p2s6 again waits least (3 h vs 0.5–1 h in the paper); e4p4s2 no longer saves most; e3p5s2, inconsistent in the paper, is as stable as the others.
-- **Seed stability holds:** ±1.3–2.1 points over 9 runs (e2p6s2 ±3.1 with the lossy run).
+- **Seed stability holds:** ±1.3–2.0 points over 9 runs.
 - **No in-sample advantage:** each run's last checkpoint also evaluated on its two training years (×1.0, `eval/m8000000_x1.0_in<year>.json`): seen minus held-out savings −0.4 … +0.5 points per combination. 2024 is the best year for all 45 models, trained on it or not, so the spread over 9 runs is mostly the price year; within a year the seeds agree to about ±1 point.
 - **Validation predicts held-out** within about 2 points, same ordering up to near-ties.
 - **Load sweep** (`de_s1_test2023` @ 8M, 2023, ×0.25 … ×2.0): +16 … +24%, no lost jobs at any scale; at ×1.0 about 8 points come from lower energy (tighter packing), the rest from a 16% lower average price paid. The main trace loads the cluster lightly (cores in use 5% at ×1.0, 8% at ×1.5).
 
 ## Open
 
-1. **Selection: last-stage candidates only** (planned after the group meeting). Pick only among checkpoints of the last curriculum stage (`de`: after 1.0M, `paper`: after 4.0M); earlier ones never trained on the target setting. Both stage-D picks of the two rounds lost jobs (`de_e2p6s2_s2_test2025` @ 1.0M, `paper_s2_test2025` @ 4.0M, 213K). With the filter the e2p6s2 run's pick becomes 4.0M (already evaluated: +24.0 / +25.2%, 0 lost); no retraining. Implementation (drafted, reverted before the meeting): `after_step` in `best_per_budget` / `record_result`, `train.py --val-after-step`, forwarded by `train_iter.py`, set per curriculum in `cluster/run_v2.sh` (training and final pick), `last_stage_start(session)` from `curriculum.log` for `analyze_grid.py` / `analyze_validation.py`, a test in `test_validation.py`.
-2. **Validation starts from a favourable state** (known gap): each window starts with all nodes on and an empty queue, and jobs are lost only after 2 weeks or with a full queue, so a policy with a growing backlog can pass. Ideas, not adopted:
+1. **Validation starts from a favourable state** (known gap): each window starts with all nodes on and an empty queue, and jobs are lost only after 2 weeks or with a full queue, so a policy with a growing backlog can pass. Ideas, not adopted:
    - overdue limit at the window ends, relative to the baseline (needs the baseline's overdue count recorded); an absolute limit would rule out overloaded scenarios;
    - warm-up: 1–2 unscored episodes per window (validation +50–100%).
    Until then: check held-out lost jobs (`analyze_grid.py` lists them) before trusting a pick.
-3. **Training length:** validation plateaus from ~2.5M for e4p4s2, but higher job-age weights keep improving to 8M (e2p2s6 +11.6% at 2M → +17.5% at 8M), and the spread between runs shrinks with training. Confound: with `--decay-steps 8000000` learning rate and entropy are still high at 2M. Keep 8M for the paper; for exploratory rounds test 4M with `--decay-steps 4000000` once.
-4. **Blind 4th price year** (2026 via the Energy-Charts API, or 2022 as a stress test), evaluated only after freezing all choices: the 2023–2025 held-out years informed choices and are not blind for the final claim. The workload is not held out either (one trace).
-5. **Rule-based baselines** (reviewers): `analyzer.py` (the colleague's heuristics, outside the repo) needs the same episode count and dispatcher, and adapting to the v2 action.
-6. **Masking probe on the v2 models** (`analyze_obs_probe.py`): queue summaries, time features, prices flattened / shifted by 12 h.
-7. **Price-heavy runs are slower** (e2p6s2 ~58, e3p5s2 ~66 steps/s vs ~100 for the others; queues are not larger); cause not checked.
+2. **Training length:** validation plateaus from ~2.5M for e4p4s2, but higher job-age weights keep improving to 8M (e2p2s6 +11.6% at 2M → +17.5% at 8M), and the spread between runs shrinks with training. Confound: with `--decay-steps 8000000` learning rate and entropy are still high at 2M. Keep 8M for the paper; for exploratory rounds test 4M with `--decay-steps 4000000` once.
+3. **Blind 4th price year** (2026 via the Energy-Charts API, or 2022 as a stress test), evaluated only after freezing all choices: the 2023–2025 held-out years informed choices and are not blind for the final claim. The workload is not held out either (one trace).
+4. **Rule-based baselines** (reviewers): `analyzer.py` (heuristics, outside the repo) needs the same episode count and dispatcher, and adapting to the v2 action.
+5. **Masking probe on the v2 models** (`analyze_obs_probe.py`): queue summaries, time features, prices flattened / shifted by 12 h.
+6. **Price-heavy runs are slower** (e2p6s2 ~58, e3p5s2 ~66 steps/s vs ~100 for the others; queues are not larger); cause not checked.
 
 ## Open decisions
 
 - Priority (user): a good result matters more than the paper deadline; asking for a deadline extension is an option.
-- Which weights to present as the main result (frontier: e3p3s4 for short waits, e2p6s2 / e3p5s2 for most savings).
+- Decided 2026-11-13: the paper presents v2 only; main weights e2p2s6, e3p3s4, e2p6s2 (for now); the Poisson sweep and oracle capture stay; selection = best validated checkpoint of the last stage.
 - Whether to replace the 335-value node vector by a summary (deferred).
 - Drop penalty vs loss barrier (deferred; barrier kept).
 
