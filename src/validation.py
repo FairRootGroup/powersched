@@ -13,7 +13,7 @@ nodes), in percent, averaged over the scales.
 Known gap: every window starts from a hard reset with all nodes on and an empty queue, and jobs are
 only lost after 2 weeks of waiting or with a full queue (52,500). A policy whose backlog grows can
 therefore lose no jobs within a 4-week window and still lose many over a continuous year. The
-window-end queue and overdue counts are kept in the history to spot this (see v2_plan.md).
+window-end queue and overdue counts are kept in the history to spot this (see v2_plan.md in the paper repository).
 
 How long jobs may wait depends on the jobs, so there is no single best checkpoint: for each wait
 budget (average wait in hours at the worst scale; WAIT_BUDGETS) the feasible checkpoint with the
