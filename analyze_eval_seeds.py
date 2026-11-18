@@ -30,6 +30,8 @@ METRICS = [
     "avg_monthly_savings_pct_off", "completion_pct", "baseline_completion_pct",
     "jobs_lost", "baseline_jobs_lost", "avg_wait_h", "baseline_avg_wait_h",
     "agent_mean_price", "baseline_off_mean_price", "capture_contiguous_pct", "capture_liquid_pct",
+    "jobs_rejected_queue_full", "jobs_expired", "baseline_jobs_rejected_queue_full", "baseline_jobs_expired",
+    "max_queue", "baseline_max_queue",
 ]
 SUMMARY_LINE = "Summary written to "
 

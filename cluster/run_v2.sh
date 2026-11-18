@@ -140,7 +140,7 @@ for step in $( (printf '%s\n' $BEST_STEPS | cut -d: -f2; echo "$LAST_STEP") | gr
         out="$SESSION_DIR/eval/m${step}_x${scale}_test${TEST_YEAR}.json"
         [[ -f "$out" ]] && continue
         echo "[$(date '+%F %T')] evaluate step $step at x$scale on $TEST_YEAR" >> "$SESSION_DIR/curriculum.log"
-        "$PY" analyze_eval_seeds.py --seeds 100,200,301 --parallel 3 --tag "test${TEST_YEAR}_x${scale}" \
+        "$PY" analyze_eval_seeds.py --seeds 100,200,301 --parallel 3 --tag "m${step}_test${TEST_YEAR}_x${scale}" \
             --out "$out" --log-dir "$SESSION_DIR/eval/logs" -- \
             --session "$SESSION" --output-dir "$OUTPUT_DIR" "${WEIGHTS[@]}" --model "$step" \
             --prices "$TEST_PRICES" --hourly-jobs "$TRACE_FILE" --job-arrival-scale "$scale" \

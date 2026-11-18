@@ -628,6 +628,14 @@ def main():
                     "baseline_jobs_completed": total_baseline_completed,
                     "completion_pct": total_agent_completion_rate, "baseline_completion_pct": total_baseline_completion_rate,
                     "jobs_lost": total_jobs_dropped, "baseline_jobs_lost": total_baseline_jobs_dropped,
+                    # Lost jobs by cause: queue-full rejections (arrivals when the queue holds MAX_QUEUE_SIZE
+                    # jobs) and age expiry (the rest); peak queue length over the evaluation.
+                    "jobs_rejected_queue_full": env.metrics.jobs_rejected_queue_full,
+                    "jobs_expired": total_jobs_dropped - env.metrics.jobs_rejected_queue_full,
+                    "baseline_jobs_rejected_queue_full": env.metrics.baseline_jobs_rejected_queue_full,
+                    "baseline_jobs_expired": total_baseline_jobs_dropped - env.metrics.baseline_jobs_rejected_queue_full,
+                    "max_queue": env.metrics.max_queue_size_reached,
+                    "baseline_max_queue": env.metrics.baseline_max_queue_size_reached,
                     "avg_wait_h": avg_wait_time, "baseline_avg_wait_h": avg_baseline_wait_time,
                     "agent_mean_price": total_agent_prop_mean_price, "baseline_off_mean_price": total_baseline_off_prop_mean_price,
                 }
