@@ -55,25 +55,37 @@ For a more formal write-up, see [curriculum_argument.md](curriculum_argument.md)
 Use the CSV meta-analysis plotter to aggregate existing evaluation runs:
 
 ```bash
-python meta-eval/plot_eval_oracle.py --multi-run
+python meta-eval/plot_eval_oracle.py --multi-run --jobs 23
 ```
 
 By default this reads `analysis/v2_e2p2s6`, `analysis/v2_e3p5s2`, and
-`analysis/v2_e4p4s2`, and writes figures and tables under
-`analysis/multi_run_meta_analysis/`. To select other model directories or an
+`analysis/v2_e4p4s2`. With `--jobs 23`, figures and tables are written under
+`analysis/multi_run_meta_analysis_jobs23/`. To select other model directories or an
 output directory:
 
 ```bash
-python meta-eval/plot_eval_oracle.py --multi-run \
+python meta-eval/plot_eval_oracle.py --multi-run --jobs 23 \
   --input-dirs analysis/v2_e2p2s6 analysis/v2_e3p5s2 analysis/v2_e4p4s2 \
-  --output-dir analysis/multi_run_meta_analysis
+  --output-dir analysis/multi_run_meta_analysis_jobs23
 ```
+
+The `--jobs` selector accepts `23` or `jobs23` (likewise `26` or `jobs26`). It
+selects the workload-distribution suffix before duplicate checks, CSV loading,
+and grid validation. Unselected runs are left untouched and are not combined
+with the selected workload. Without `--jobs`, a single discovered workload is
+selected automatically; mixed workloads require an explicit choice.
+
+Explicit selection adds `_jobs<id>` to the default output directory and figure
+suffix, keeping the results separate. `--output-dir` and `--name-suffix` can
+override these names. Without a selector, the original output directory
+`analysis/multi_run_meta_analysis/` and suffix `multi_run` are retained.
 
 Each model directory must contain `s<train>_pr<year>_seed<eval>_jobs<workload>/eval_main.csv`
 files covering 2023, 2024, and 2025, with three training seeds and three
 evaluation seeds per trained model. Seed identifiers are parsed from directory
-names. The workload suffix does not distinguish runs: duplicate
-model/year/training-seed/evaluation-seed combinations are rejected. Rows align
+names. Each selected workload must supply the full 27-run grid per model/scale;
+duplicate model/year/training-seed/evaluation-seed combinations within that
+workload are rejected. Rows align
 by model and workload `scale`; stochastic `arrivals` values are averaged.
 
 Aggregation first averages evaluation seeds, then training seeds, then years.
@@ -83,8 +95,16 @@ original measurements.
 The error bars describe observed spread, not a standard error or confidence
 interval. Ratios and percentages are averaged from their per-run values.
 
+In multi-run figures, policies use error bars, while baseline and oracle
+reference curves use faint bands for mean ±1 total observed SD. Bands have gaps
+where values or SDs are missing. Dropped-job lower whiskers are visually
+truncated at zero, and the count axis retains its symmetric-log scaling with
+a nonnegative range so zero counts remain visible. Energy reference bands also
+stop at zero; monetary costs and electricity prices may be negative. These
+display bounds do not change any reported means, SDs, or table values.
+
 The existing six figure layouts are saved as PNG and PDF with the suffix
-`multi_run` (overridable with `--name-suffix`). Full-precision CSV intermediate
+`multi_run_jobs23` for `--jobs 23`, for example (overridable with `--name-suffix`). Full-precision CSV intermediate
 tables and separate, narrow LaTeX tables for each metric are written to
 `multi_run_tables/` inside the output directory. Source evaluation CSVs are
 never overwritten.
@@ -119,3 +139,12 @@ Omit `--multi-run` to retain the existing single-CSV behavior:
 ```bash
 python meta-eval/plot_eval_oracle.py path/to/eval_main.csv
 ```
+
+To calibrate the vertical reference line for a dataset, uncomment
+`DEFINED_VALUE = 0.6` near the top of `meta-eval/plot_eval_oracle.py` and set the
+actual workload scale to use. The line and its label still represent
+`scale = 1`, but its position corresponds to the chosen actual scale in every
+figure, in both single-run and multi-run modes. Positions between sampled
+scales are linearly interpolated; outside the sampled range, the nearest two
+points provide a linear extrapolation. Comment out the assignment to restore
+actual scale 1. This setting changes only the reference marker.

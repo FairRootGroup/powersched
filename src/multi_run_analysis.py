@@ -41,7 +41,7 @@ class MultiRunAggregation:
 
 
 def parse_run_directory(path: Path | str) -> tuple[int, int, int]:
-    """Return (evaluation year, training seed, evaluation seed), ignoring jobs."""
+    """Return (evaluation year, training seed, evaluation seed)."""
     name = Path(path).name
     match = RUN_DIRECTORY.fullmatch(name)
     if match is None:
@@ -53,6 +53,20 @@ def parse_run_directory(path: Path | str) -> tuple[int, int, int]:
     if len(match["year"]) == 2:
         year += 2000
     return year, int(match["training_seed"]), int(match["eval_seed"])
+
+
+def normalize_jobs(value: str | int) -> str:
+    """Normalize a workload selector such as 23 or jobs23 to its numeric ID."""
+    match = re.fullmatch(r"(?:jobs)?(\d+)", str(value).strip().lower())
+    if match is None:
+        raise ValueError("--jobs must be a workload identifier such as 23 or jobs23")
+    return str(int(match[1]))
+
+
+def parse_run_workload(path: Path | str) -> str:
+    """Read the jobs identifier separately from training/evaluation identifiers."""
+    parse_run_directory(path)  # Keep directory-format diagnostics consistent.
+    return normalize_jobs(RUN_DIRECTORY.fullmatch(Path(path).name)["jobs"])
 
 
 def _run_directories(path: Path) -> list[Path]:
@@ -87,22 +101,48 @@ def _model_directories(input_dirs: list[Path]) -> list[Path]:
     return sorted(models)
 
 
-def load_multi_run(input_dirs: list[Path]) -> pd.DataFrame:
-    """Discover and validate original eval_main.csv files without modifying them."""
+def load_multi_run(input_dirs: list[Path], *, jobs: str | int | None = None) -> pd.DataFrame:
+    """Select one workload, then discover and validate its original CSV files."""
+    runs_by_model = {
+        model_dir: _run_directories(model_dir)
+        for model_dir in _model_directories(input_dirs)
+    }
+    workloads = {
+        run: parse_run_workload(run)
+        for runs in runs_by_model.values() for run in runs
+    }
+    available = sorted(set(workloads.values()), key=int)
+    if jobs is None:
+        if len(available) != 1:
+            raise ValueError(
+                f"Multiple workload distributions found: {', '.join('jobs' + item for item in available)}. "
+                "Select one with --jobs (for example --jobs 23); workloads cannot be combined."
+            )
+        selected_jobs = available[0]
+    else:
+        selected_jobs = normalize_jobs(jobs)
+
     frames = []
     schema = None
     schema_source = None
     seen_runs = {}
-    for model_dir in _model_directories(input_dirs):
+    for model_dir, runs in runs_by_model.items():
+        selected_runs = [run for run in runs if workloads[run] == selected_jobs]
+        if not selected_runs:
+            model_workloads = sorted({workloads[run] for run in runs}, key=int)
+            raise ValueError(
+                f"No runs for jobs{selected_jobs} under {model_dir}; "
+                f"available workloads: {', '.join('jobs' + item for item in model_workloads)}"
+            )
         # v2_ is an experiment-version prefix, not part of CSV model identifiers.
         expected_model = re.sub(r"^v\d+_", "", model_dir.name)
-        for run_dir in _run_directories(model_dir):
+        for run_dir in selected_runs:
             year, training_seed, eval_seed = parse_run_directory(run_dir)
             run_key = (expected_model, year, training_seed, eval_seed)
             if run_key in seen_runs:
                 raise ValueError(
                     f"Duplicate model/year/training-seed/evaluation-seed {run_key}: "
-                    f"{seen_runs[run_key]} and {run_dir} (jobs suffix is ignored)"
+                    f"{seen_runs[run_key]} and {run_dir} within jobs{selected_jobs}"
                 )
             seen_runs[run_key] = run_dir
             source = run_dir / "eval_main.csv"
@@ -152,8 +192,13 @@ def load_multi_run(input_dirs: list[Path]) -> pd.DataFrame:
             except (OSError, ValueError) as exc:
                 raise ValueError(f"{source}: {exc}") from exc
     raw = pd.concat(frames, ignore_index=True)
-    validate_multi_run(raw)
-    return raw.sort_values(GROUP_KEYS + RUN_KEYS).reset_index(drop=True)
+    try:
+        validate_multi_run(raw)
+    except ValueError as exc:
+        raise ValueError(f"jobs{selected_jobs}: {exc}") from exc
+    raw = raw.sort_values(GROUP_KEYS + RUN_KEYS).reset_index(drop=True)
+    raw.attrs["jobs"] = selected_jobs
+    return raw
 
 
 def _describe_rows(rows: pd.DataFrame, limit: int = 6) -> str:

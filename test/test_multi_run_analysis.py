@@ -13,7 +13,9 @@ from src.multi_run_analysis import (
     aggregate_multi_run,
     export_multi_run,
     load_multi_run,
+    normalize_jobs,
     parse_run_directory,
+    parse_run_workload,
 )
 
 
@@ -237,6 +239,14 @@ class MultiRunLoadingTests(unittest.TestCase):
         frame = pd.read_csv(self.path)
         edit(frame).to_csv(self.path, index=False)
 
+    def add_jobs26_grid(self):
+        for source in list(self.inputs[0].glob("*_jobs23/eval_main.csv")):
+            destination = source.parent.with_name(source.parent.name.replace("jobs23", "jobs26"))
+            destination.mkdir()
+            frame = pd.read_csv(source)
+            frame["cost_agent"] += 1000
+            frame.to_csv(destination / "eval_main.csv", index=False)
+
     def test_parse_uses_arbitrary_seed_identifiers(self):
         self.assertEqual(parse_run_directory(Path("v2_e2p2s6/s29_pr24_seed701_jobs23")), (2024, 29, 701))
         self.assertEqual(parse_run_directory(Path("e4p4s2/s11_pr25_seed55_jobs26")), (2025, 11, 55))
@@ -244,6 +254,18 @@ class MultiRunLoadingTests(unittest.TestCase):
     def test_parse_rejects_a_malformed_run_directory(self):
         with self.assertRaises(ValueError):
             parse_run_directory(Path("e4p4s2/s11_pr25_jobs26"))
+
+    def test_workload_parser_and_selector_accept_arbitrary_numeric_identifiers(self):
+        for supplied, expected in ((23, "23"), ("23", "23"), ("jobs23", "23"),
+                                   (104, "104"), ("jobs104", "104")):
+            with self.subTest(supplied=supplied):
+                self.assertEqual(normalize_jobs(supplied), expected)
+        self.assertEqual(parse_run_workload(Path("v2_e2p2s6/s29_pr24_seed701_jobs23")), "23")
+        self.assertEqual(parse_run_workload(Path("v2_e2p2s6/s29_pr24_seed701_jobs26")), "26")
+        self.assertEqual(parse_run_workload(Path("v2_e2p2s6/s29_pr24_seed701_jobs104")), "104")
+        for supplied in ("jobs", "jobsabc", "../23", "23.5", -1):
+            with self.subTest(supplied=supplied), self.assertRaises(ValueError):
+                normalize_jobs(supplied)
 
     def test_loading_aligns_by_scale_and_keeps_models_separate(self):
         second = write_grid(self.root, models=("e4p4s2",))
@@ -273,11 +295,70 @@ class MultiRunLoadingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "(?i)missing|training|grid"):
             load_multi_run(self.inputs)
 
-    def test_duplicate_job_suffix_is_not_an_additional_measurement(self):
+    def test_mixed_workloads_require_explicit_selection(self):
         duplicate = self.path.parent.with_name(self.path.parent.name.replace("jobs23", "jobs26"))
         shutil.copytree(self.path.parent, duplicate)
-        with self.assertRaisesRegex(ValueError, "(?i)duplicate"):
+        with self.assertRaisesRegex(ValueError, "--jobs"):
             load_multi_run(self.inputs)
+
+    def test_selected_workloads_have_separate_measurements(self):
+        original = load_multi_run(self.inputs)
+        self.add_jobs26_grid()
+        selected23 = load_multi_run(self.inputs, jobs=23)
+        selected26 = load_multi_run(self.inputs, jobs="jobs26")
+        self.assertEqual(len(selected23), 54)
+        self.assertEqual(len(selected26), 54)
+        pd.testing.assert_frame_equal(original, selected23)
+        result23 = aggregate_multi_run(selected23).grand_total
+        result26 = aggregate_multi_run(selected26).grand_total
+        np.testing.assert_allclose(result26.cost_agent_mean - result23.cost_agent_mean, 1000)
+        np.testing.assert_allclose(result26.cost_agent_std_total, result23.cost_agent_std_total)
+        self.assertEqual(result23.cost_agent_n_valid.tolist(), [27, 27])
+        self.assertEqual(result26.cost_agent_n_valid.tolist(), [27, 27])
+
+    def test_nonselected_workload_files_are_not_validated(self):
+        excluded = self.path.parent.with_name(self.path.parent.name.replace("jobs23", "jobs26"))
+        excluded.mkdir()
+        (excluded / "eval_main.csv").write_text("malformed_schema\nnot_a_metric\n")
+        alias = excluded.with_name("s0" + excluded.name[1:])
+        shutil.copytree(excluded, alias)
+        (self.inputs[0] / "s999_pr25_seed999_jobs26").mkdir()
+        selected = load_multi_run(self.inputs, jobs="23")
+        self.assertEqual(len(selected), 54)
+        self.assertEqual(len(aggregate_multi_run(selected).grand_total), 2)
+
+    def test_disjoint_seed_workloads_cannot_be_combined_to_complete_a_grid(self):
+        for path in self.inputs[0].glob("*_seed701_jobs23"):
+            path.rename(path.with_name(path.name.replace("jobs23", "jobs26")))
+        with self.assertRaisesRegex(ValueError, "--jobs"):
+            load_multi_run(self.inputs)
+        with self.assertRaisesRegex(ValueError, "(?i)missing|incomplete|seed|grid"):
+            load_multi_run(self.inputs, jobs="23")
+
+    def test_same_workload_seed_aliases_are_still_duplicates(self):
+        alias = self.path.parent.with_name("s0" + self.path.parent.name[1:])
+        shutil.copytree(self.path.parent, alias)
+        with self.assertRaisesRegex(ValueError, "(?i)duplicate"):
+            load_multi_run(self.inputs, jobs="23")
+
+    def test_requested_workload_must_exist_in_every_selected_model(self):
+        second = write_grid(self.root, models=("e4p4s2",))
+        self.add_jobs26_grid()
+        with self.assertRaises(ValueError) as failure:
+            load_multi_run(self.inputs + second, jobs="26")
+        diagnostic = str(failure.exception)
+        self.assertIn(str(second[0]), diagnostic)
+        self.assertIn("26", diagnostic)
+        self.assertIn("23", diagnostic)
+
+    def test_unknown_workload_lists_available_workload_ids(self):
+        self.add_jobs26_grid()
+        with self.assertRaises(ValueError) as failure:
+            load_multi_run(self.inputs, jobs="104")
+        diagnostic = str(failure.exception)
+        self.assertIn(str(self.inputs[0]), diagnostic)
+        for workload in ("104", "23", "26"):
+            self.assertIn(workload, diagnostic)
 
     def test_duplicate_scale_in_one_file(self):
         self.edit_first(lambda frame: pd.concat([frame, frame.iloc[:1]], ignore_index=True))

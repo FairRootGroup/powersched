@@ -34,7 +34,8 @@ from pathlib import Path
 SESSION_SEEDS = (1, 2, 3)
 TEST_YEARS = (2023, 2024, 2025)
 EVAL_SEEDS = (101, 201, 301)
-DEFAULT_SCALES = "0.25,0.5,0.75,1,1.5,2,2.5,3,4,5"
+#DEFAULT_SCALES = "0.25,0.5,0.75,1,1.5,2,2.5,3,4,5" # for 23 jobs
+DEFAULT_SCALES = "0.15,0.3,0.45,0.6,1,1.25,1.5,1.8,2.4,3" # for 26 jobs
 
 
 @dataclass(frozen=True)
@@ -112,7 +113,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--price-weight", required=True, type=nonnegative_weight)
     parser.add_argument("--job-age-weight", required=True, type=nonnegative_weight)
     parser.add_argument("--model", type=int, default=8_000_000)
-    parser.add_argument("--hourly-jobs", type=Path, default=Path("data-internal/allusers-main-30.log"))
+    parser.add_argument("--hourly-jobs", type=Path, default=Path("data-internal/allusers-main-30-2026-11.log"))
     parser.add_argument("--prices-dir", type=Path, default=Path("data-external"))
     parser.add_argument("--out-root", type=Path, default=Path("analysis"))
     parser.add_argument("--scales", default=DEFAULT_SCALES)
@@ -141,7 +142,7 @@ def build_runs(args: argparse.Namespace, project_root: Path) -> list[Run]:
             prices = prices_dir / f"prices_{test_year}.csv"
             checkpoint = session / "models" / model_weights / f"{args.model}.zip"
             for eval_seed in EVAL_SEEDS:
-                out_dir = group_dir / f"s{session_seed}_pr{test_year % 100:02d}_seed{eval_seed}_jobs23"
+                out_dir = group_dir / f"s{session_seed}_pr{test_year % 100:02d}_seed{eval_seed}_jobs26"
                 runs.append(Run(
                     session_seed=session_seed,
                     test_year=test_year,
