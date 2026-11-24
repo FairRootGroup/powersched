@@ -638,6 +638,13 @@ def main():
                     "baseline_max_queue": env.metrics.baseline_max_queue_size_reached,
                     "avg_wait_h": avg_wait_time, "baseline_avg_wait_h": avg_baseline_wait_time,
                     "agent_mean_price": total_agent_prop_mean_price, "baseline_off_mean_price": total_baseline_off_prop_mean_price,
+                    "agent_energy_mwh": total_agent_power_mwh, "baseline_off_energy_mwh": total_baseline_off_power_mwh,
+                    # Exposure to negative prices: hours with a price below zero, and energy and cost in them.
+                    "negative_price_hours": env.metrics.negative_price_hours,
+                    "agent_neg_price_energy_mwh": env.metrics.agent_neg_price_energy_mwh,
+                    "agent_neg_price_cost": env.metrics.agent_neg_price_cost,
+                    "baseline_off_neg_price_energy_mwh": env.metrics.baseline_off_neg_price_energy_mwh,
+                    "baseline_off_neg_price_cost": env.metrics.baseline_off_neg_price_cost,
                 }
                 if args.oracle:
                     summary["oracle_liquid_cost"] = env.metrics.oracle_cost

@@ -671,6 +671,12 @@ class ComputeClusterEnv(gym.Env):
         self.metrics.episode_total_cost += step_cost
         self.metrics.total_power_consumption_mwh += step_power_mwh
         self.metrics.episode_total_power_consumption_mwh += step_power_mwh
+        if current_price < 0.0:
+            self.metrics.negative_price_hours += 1
+            self.metrics.agent_neg_price_energy_mwh += step_power_mwh
+            self.metrics.agent_neg_price_cost += step_cost
+            self.metrics.baseline_off_neg_price_energy_mwh += baseline_power_off_mwh
+            self.metrics.baseline_off_neg_price_cost += baseline_cost_off
 
         # Store normalized reward components for plotting
         self.metrics.eff_rewards.append(eff_reward_norm * 100)

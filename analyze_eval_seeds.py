@@ -32,6 +32,8 @@ METRICS = [
     "agent_mean_price", "baseline_off_mean_price", "capture_contiguous_pct", "capture_liquid_pct",
     "jobs_rejected_queue_full", "jobs_expired", "baseline_jobs_rejected_queue_full", "baseline_jobs_expired",
     "max_queue", "baseline_max_queue",
+    "agent_energy_mwh", "baseline_off_energy_mwh", "negative_price_hours",
+    "agent_neg_price_energy_mwh", "agent_neg_price_cost", "baseline_off_neg_price_energy_mwh", "baseline_off_neg_price_cost",
 ]
 SUMMARY_LINE = "Summary written to "
 

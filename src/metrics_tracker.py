@@ -45,6 +45,12 @@ class MetricsTracker:
         self.total_power_consumption_mwh: float = 0.0
         self.baseline_power_consumption_mwh: float = 0.0
         self.baseline_power_consumption_off_mwh: float = 0.0
+        # Hours with a negative price, and the agent's and the idle-free baseline's energy and cost in them
+        self.negative_price_hours: int = 0
+        self.agent_neg_price_energy_mwh: float = 0.0
+        self.agent_neg_price_cost: float = 0.0
+        self.baseline_off_neg_price_energy_mwh: float = 0.0
+        self.baseline_off_neg_price_cost: float = 0.0
 
         # Agent job metrics (cumulative across episodes)
         self.jobs_submitted: int = 0
