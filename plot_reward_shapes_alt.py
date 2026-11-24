@@ -152,7 +152,7 @@ def _plot_job_age(ax: plt.Axes, calc: RewardCalculator) -> None:
     ax.axvline(q_high, color='gray', ls='--', lw=1, label=f'q{int(calc.PRICE_QUANTILE_HIGH * 100)} = {q_high:.0f}')
     ax.set_xlabel('Current price (€/MWh)')
     ax.set_ylabel('Penalty')
-    ax.set_title('Job-age slot: cheap-hour service pressure')
+    ax.set_title('Service pressure (cheap hours)')
     ax.set_xlim(calc.prices.MIN_PRICE, calc.prices.MAX_PRICE)
     ax.set_ylim(-1.1, 0.1)
     ax.legend(fontsize=8)
@@ -161,7 +161,7 @@ def _plot_job_age(ax: plt.Axes, calc: RewardCalculator) -> None:
 
 def _plot_blackout(ax: plt.Axes, calc: RewardCalculator) -> None:
     """Blackout term vs unprocessed job count (all nodes off)."""
-    job_counts = np.arange(0, 600)
+    job_counts = np.arange(0, 6)
     penalties = [calc._blackout_term(0, 0, int(n)) for n in job_counts]
 
     ax.plot(job_counts, penalties, lw=2)
@@ -169,7 +169,7 @@ def _plot_blackout(ax: plt.Axes, calc: RewardCalculator) -> None:
     ax.set_xlabel('Unprocessed jobs (all nodes off)')
     ax.set_ylabel('Reward')
     ax.set_title('Blackout term')
-    ax.set_xlim(0, 600)
+    ax.set_xlim(0, 5)
     ax.grid(True, alpha=0.3)
 
 
