@@ -21,6 +21,7 @@ from src.workloadgen import WorkloadGenerator
 from src.workloadgen_cli import add_workloadgen_args, build_workloadgen_config
 from src.config import MAX_NODES, CORES_PER_NODE, EPISODE_HOURS
 from src.job_management import DISPATCHERS
+from src.heuristics import HeuristicPolicy
 from src.session_log import log_invocation
 from src.validation import ValidationConfig, run_validation, record_result, format_result, format_best
 import time
@@ -98,6 +99,7 @@ def main():
     parser.add_argument("--dashboard-hours", type=int, default=24*14, help="Hours to show in dashboard time-series panels (default: 336).")
     parser.add_argument("--dashboard-interval", type=int, default=10000, help="Hours between dashboard plots (default: 10000).")
     parser.add_argument("--model", type=int, default=None, help="Load a specific model by timestep number (e.g. 5000000 loads 5000000.zip).")
+    parser.add_argument("--heuristic", type=str, default="", help="With --evaluate-savings: evaluate a rule-based controller instead of a model, e.g. 'demand:headroom=8' or 'price:quantile=0.5,max_wait=12' (see src/heuristics.py).")
     parser.add_argument("--net-arch", type=str, default="64,64", help="Hidden layer sizes for policy and value networks (comma-separated, e.g., '256,128' or '512,256,128')")
     parser.add_argument("--n-steps", type=int, default=64, help="Number of environment steps collected per PPO rollout (default: 64). Increase for larger networks (e.g. 512 for 256x256).")
     parser.add_argument("--batch-size", type=int, default=64, help="Mini-batch size for PPO gradient updates (default: 64). Should be <= --n-steps. Increase for larger networks (e.g. 256 for 256x256).")
@@ -318,7 +320,15 @@ def main():
     model_files = glob.glob(models_dir + "*.zip")
     latest_model_file = None
     evaluation_plots_dir = None
-    if model_files:
+    if args.heuristic:
+        if not args.evaluate_savings:
+            parser.error("--heuristic requires --evaluate-savings")
+        model = HeuristicPolicy(env, args.heuristic)
+        selected_model_id = model.label
+        tag_suffix = f"_{args.eval_tag}" if args.eval_tag else ""
+        evaluation_plots_dir = os.path.join(session_root, "plots-eval", f"heuristic_{model.label}{tag_suffix}")
+        print(f"Evaluating heuristic {model.label} ({model.params})")
+    elif model_files:
         # Sort the files by extracting the timestep number from the filename and converting it to an integer
         model_files.sort(key=lambda filename: int(re.match(r"(\d+)", os.path.basename(filename)).group()))
         if args.model is not None:
@@ -375,7 +385,8 @@ def main():
         print(f"Network architecture: {net_arch_layers}")
         model = PPO('MultiInputPolicy', train_env, policy_kwargs=policy_kwargs, tensorboard_log=log_dir, ent_coef=args.ent_coef, n_steps=args.n_steps, batch_size=args.batch_size, learning_rate=args.learning_rate, clip_range=args.clip_range, n_epochs=args.n_epochs, target_kl=args.target_kl, device=args.device, verbose=1)
 
-    print(f"Device: {model.device}")
+    if not args.heuristic:
+        print(f"Device: {model.device}")
     if args.print_policy:
         print(model.policy)
         summary(model.policy, depth=4)
@@ -396,7 +407,7 @@ def main():
         train_env.env_method("set_progress", iters)
 
     if args.evaluate_savings:
-        if not latest_model_file:
+        if not latest_model_file and not args.heuristic:
             print("Error: No trained model found for evaluation!")
             print(f"Expected model files in: {models_dir}")
             print("Train a model first, then run evaluation mode.")
@@ -612,7 +623,7 @@ def main():
 
                 # Machine-readable totals (analyze_eval_seeds.py averages them over evaluation seeds).
                 summary = {
-                    "model_step": selected_model_id, "prices": args.prices, "eval_months": args.eval_months,
+                    "model_step": selected_model_id, "heuristic": args.heuristic or None, "prices": args.prices, "eval_months": args.eval_months,
                     "episodes": len(env.metrics.episode_costs), "seed": args.seed,
                     "job_arrival_scale": args.job_arrival_scale, "dispatcher": args.dispatcher,
                     "reservation_depth": args.reservation_depth,
