@@ -10,6 +10,7 @@
 #   PRICES=<csv>  other prices for that year (e.g. rescaled), with TAG=<name> to keep their results apart
 #   SCALES="1.5 1.0"  arrival scales
 #   STEPS=both  checkpoints: best (the pick), last (8M) or both
+#   TRACE=<log>  workload trace (default: the training trace, data-internal/allusers-main-30.log)
 #
 # Results: <session>/eval/m<step>_x<scale>_<TAG>.json (TAG default new<year>). Existing results are skipped, so rerun after an interruption.
 set -euo pipefail
@@ -23,6 +24,8 @@ if [[ -n "${APPTAINER_CONTAINER:-}" ]]; then PY=python; else PY="$REPO/venv/bin/
 export MPLBACKEND=Agg OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 SCALES="${SCALES:-1.5 1.0}"
 STEPS="${STEPS:-both}"
+TRACE="${TRACE:-data-internal/allusers-main-30.log}"
+[[ -f "$TRACE" ]] || { echo "no $TRACE" >&2; exit 1; }
 if [[ "$YEAR" == heldout ]]; then
     [[ -n "${TAG:-}" && -z "${PRICES:-}" ]] || { echo "heldout needs TAG and no PRICES" >&2; exit 1; }
 else
@@ -68,7 +71,7 @@ print(e['step'] if e else '')")"
         done
     done
 done
-echo "$(wc -l < "$jobs_file") evaluations on $YEAR (${PRICES:-the held-out prices of each run}), $PARALLEL at a time"
+echo "$(wc -l < "$jobs_file") evaluations on $YEAR (${PRICES:-the held-out prices of each run}; $TRACE), $PARALLEL at a time"
 
 run_one() {
     local session="$1" step="$2" scale="$3" w_eff="$4" w_price="$5" w_age="$6" out="$7" prices="$8"
@@ -77,11 +80,11 @@ run_one() {
         --out "$out" --log-dir "$OUTPUT_DIR/$session/eval/logs" -- \
         --session "$session" --output-dir "$OUTPUT_DIR" \
         --efficiency-weight "$w_eff" --price-weight "$w_price" --idle-weight 0.0 --job-age-weight "$w_age" --drop-weight 0.0 \
-        --model "$step" --prices "$prices" --hourly-jobs data-internal/allusers-main-30.log \
+        --model "$step" --prices "$prices" --hourly-jobs "$TRACE" \
         --job-arrival-scale "$scale" --eval-months 13 --oracle > "$OUTPUT_DIR/$session/eval/${TAG}_m${step}_x${scale}.log" 2>&1 \
         && echo "[$(date '+%F %T')] done  $session m$step x$scale" \
         || echo "[$(date '+%F %T')] FAILED $session m$step x$scale (see its log)"
 }
 export -f run_one
-export PY OUTPUT_DIR YEAR TAG
+export PY OUTPUT_DIR YEAR TAG TRACE
 xargs -P "$PARALLEL" -L 1 bash -c 'run_one "$@"' _ < "$jobs_file"
