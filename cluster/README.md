@@ -23,4 +23,6 @@ These run locally, in the venv, with several evaluations in parallel (`PARALLEL`
 - **`eval_probe.sh [sessions dir]`**: the observation ablation. It runs each run's selected checkpoint on its held-out year with one part of the observation altered (`analyze_obs_probe.py`). Results go to `<session>/eval/probe/`; summarise them with `analyze_probe.py`.
 - **`eval_heuristics.sh "<specs>" [output dir]`**: evaluates the rule-based controllers (`src/heuristics.py`, e.g. `price:quantile=0.25,max_wait=12`) on the price years like the policies. Results go to `sessions/heuristics/test<year>/eval/`; summarise them with `analyze_heuristics.py`.
 
+- **`eval_final.sh <main|trace|probe|heuristics|all> [sessions dir]`**: every evaluation behind the paper's results, on the final checkpoints (8M steps) with evaluation seeds 101/201/301, by calling the three scripts above. Results carry the tag prefix `f101_`. The parts write separate files, so they can run on different machines that share the sessions directory.
+
 Summaries of the training runs themselves: `analyze_grid.py` and `analyze_validation.py` in the repository root.

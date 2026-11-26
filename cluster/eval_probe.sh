@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Observation ablation of finished de runs (cluster/run_v2.sh): the best validated checkpoint of the
-# last stage (no wait limit) of every run, on its held-out price year, with one part of the
+# last stage (no wait limit) or the last checkpoint (STEP) of every run, on its held-out price year, with one part of the
 # observation altered (analyze_obs_probe.py, closed loop), over the evaluation seeds.
 #
 #   cluster/eval_probe.sh [sessions dir, default sessions/v2]
 #   VARIANTS="full prices_roll12 prices_const time_const aggregates_zero queue_summary_zero"
 #   SCALES="1.0"  arrival scales
 #   SEEDS="100 200 301"  evaluation seeds
+#   STEP=best  checkpoint: best (the selected one) or last (8M)
 #   PARALLEL=16  evaluations at once (one process each, about 2 min per evaluation)
 #
 # Results: <session>/eval/probe/m<step>_x<scale>_<variant>_s<seed>.json; summarise with
@@ -22,6 +23,8 @@ VARIANTS="${VARIANTS:-full prices_roll12 prices_const time_const aggregates_zero
 SCALES="${SCALES:-1.0}"
 SEEDS="${SEEDS:-100 200 301}"
 PARALLEL="${PARALLEL:-16}"
+STEP="${STEP:-best}"
+[[ "$STEP" == best || "$STEP" == last ]] || { echo "STEP must be best or last" >&2; exit 1; }
 
 jobs_file="$(mktemp)"
 trap 'rm -f "$jobs_file"' EXIT
@@ -36,7 +39,7 @@ for session_dir in "$OUTPUT_DIR"/de_*; do
         weights="0.4,0.4,0.0,0.2,0.0"
         models_dir="$session_dir/models/e0.4_p0.4_i0.0_a0.2_d0.0"
     fi
-    step="$("$PY" -c "
+    [[ "$STEP" == last ]] && step=8000000 || step="$("$PY" -c "
 from src.validation import load_history, best_per_budget, last_stage_start
 e = best_per_budget(load_history('$models_dir'), after_step=last_stage_start('$session_dir'))['any']
 print(e['step'] if e else 8000000)")"
