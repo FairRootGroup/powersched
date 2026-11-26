@@ -114,6 +114,9 @@ def main():
         "completion_pct": 100 * completed / max(submitted, 1),
         "avg_wait_h": wait,
         "jobs_lost": sum(int(x.get("jobs_lost_total", x.get("jobs_dropped", 0))) for x in eps),
+        "agent_cost": agent, "baseline_off_cost": base_off,
+        "agent_energy_mwh": sum(float(x.get("agent_power_consumption_mwh", 0.0)) for x in eps),
+        "baseline_off_energy_mwh": sum(float(x.get("baseline_power_consumption_off_mwh", 0.0)) for x in eps),
     }
     if a.mode == "agreement":
         result["agreement_pct"] = {v: {k: 100 * n / steps for k, n in c.items()} for v, c in agree.items()}

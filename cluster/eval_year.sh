@@ -87,4 +87,4 @@ run_one() {
 }
 export -f run_one
 export PY OUTPUT_DIR YEAR TAG TRACE
-xargs -P "$PARALLEL" -L 1 bash -c 'run_one "$@"' _ < "$jobs_file"
+xargs -r -P "$PARALLEL" -L 1 bash -c 'run_one "$@"' _ < "$jobs_file"

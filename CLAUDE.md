@@ -49,7 +49,7 @@ powersched/
 │   └── tests.yml           # GitHub Actions test workflow
 ├── train.py                # Main training script
 ├── train_iter.py           # Sequential training
-├── cluster/                # Apptainer image (powersched-cpu.def), v2 run script (run_v2.sh), Slurm arrays (v2_grid.slurm, v2_weights.slurm)
+├── cluster/                # Apptainer image (powersched-cpu.def), v2 run script (run_v2.sh), Slurm arrays (v2_grid.slurm, v2_weights.slurm), evaluation drivers (eval_year.sh, eval_heuristics.sh, eval_probe.sh)
 ├── analyze_arrivalscale_occupancy.py  # Analysis: arrival scale effects on occupancy
 ├── analyze_lambda_occupancy.py        # Analysis: lambda parameter effects on occupancy
 ├── analyze_seed_occupancy.py          # Analysis: seed-based training run comparison
@@ -57,6 +57,8 @@ powersched/
 ├── analyze_eval_seeds.py              # Analysis: evaluate one model over several evaluation seeds (mean ± std)
 ├── analyze_validation.py              # Analysis: best validated checkpoint per wait budget across a grid of runs
 ├── analyze_grid.py                    # Analysis: held-out-year results of a grid per config, wait budget and scale
+├── analyze_probe.py                   # Analysis: observation ablation of the selected checkpoints (cluster/eval_probe.sh)
+├── analyze_heuristics.py              # Analysis: rule-based controller results per setting and scale (cluster/eval_heuristics.sh)
 ├── data/                   # Sample data
 │   └── workload_statistics/ # Workload log analysis scripts and aggregate stats
 ├── data-internal/          # Full Slurm logs
@@ -190,7 +192,7 @@ cluster/run_v2.sh paper 1 2024                                 # one run locally
 sbatch --partition=<partition> cluster/v2_weights.slurm        # weights round: de x 4 weight combinations x seeds 1-3 x held-out year (36 runs)
 cluster/run_v2.sh de 1 2024 e2p2s6                             # one run with other weights (e<eff>p<price>s<age> in tenths; default e4p4s2)
 ```
-`cluster/run_v2.sh` trains the curriculum (stages are cumulative `--iter-limit`s, 8M steps), validates every 500K steps on the two training years, then evaluates the best validated checkpoint per wait budget (6/12/24 h/any) and the last one on the held-out year (`analyze_eval_seeds.py`, seeds 100/200/301, x1.5 and x1.0) into `<session>/eval/`. Rerunning resumes. Summarise a finished grid with `python analyze_grid.py --sessions sessions/v2` (held-out savings, wait, completion and lost jobs per config, wait budget and arrival scale; `grid_eval.csv`).
+`cluster/run_v2.sh` trains the curriculum (stages are cumulative `--iter-limit`s, 8M steps), validates every 500K steps on the two training years, then evaluates the best validated checkpoint per wait budget (6/12/24 h/any) and the last one on the held-out year (`analyze_eval_seeds.py`, seeds 100/200/301, x1.5 and x1.0) into `<session>/eval/`. Rerunning resumes. Observation ablation of the selected checkpoints: `cluster/eval_probe.sh sessions/v2` (`VARIANTS`, `SCALES`, `SEEDS`, `PARALLEL`), summary `python analyze_probe.py --sessions sessions/v2`. Rule-based controllers (`src/heuristics.py`, `train.py --evaluate-savings --heuristic SPEC`): `cluster/eval_heuristics.sh "<specs>"`, summary `python analyze_heuristics.py`. Summarise a finished grid with `python analyze_grid.py --sessions sessions/v2` (held-out savings, wait, completion and lost jobs per config, wait budget and arrival scale; `grid_eval.csv`).
 
 **GitHub Actions:**
 Tests run automatically on push/PR to master/main via `.github/workflows/tests.yml`.
