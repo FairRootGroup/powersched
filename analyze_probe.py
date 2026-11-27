@@ -4,7 +4,7 @@ Summarise the observation ablation (cluster/eval_probe.sh): per run (mean over e
 per weight combination (mean over its runs) and, as in the paper's appendix table, the range over
 the weight combinations per variant.
 
-  python analyze_probe.py --sessions sessions/v2 [--scale 1.0] [--out probe_runs.csv]
+  python analyze_probe.py --sessions sessions/v2 [--scale 1.0] [--step 8000000] [--seeds 101,201,301] [--out probe_runs.csv]
 
 Savings, energy and effective price are relative to the idle-free baseline; "lossy runs" counts
 runs whose mean over seeds loses jobs.
@@ -24,13 +24,13 @@ VARIANTS = ["full", "prices_roll12", "prices_const", "time_const", "aggregates_z
 ORDER = ["e2p2s6", "e3p3s4", "e4p4s2", "e3p5s2", "e2p6s2"]
 
 
-def load(sessions: str, scale: str) -> pd.DataFrame:
+def load(sessions: str, scale: str, step: int | None = None, seeds: set[int] | None = None) -> pd.DataFrame:
     rows = []
     for f in glob.glob(os.path.join(sessions, "de*", "eval", "probe", f"m*_x{scale}_*_s*.json")):
         session = f.split(os.sep)[-4]
         m = re.match(r"de(?:_(e\dp\ds\d))?_s(\d+)_test(\d{4})$", session)
         v = re.match(rf"m(\d+)_x{re.escape(scale)}_(.+)_s(\d+)\.json$", os.path.basename(f))
-        if not m or not v:
+        if not m or not v or (step and int(v[1]) != step) or (seeds and int(v[3]) not in seeds):
             continue
         r = json.load(open(f))
         rows.append(dict(
@@ -46,10 +46,13 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--sessions", default="sessions/v2")
     p.add_argument("--scale", default="1.0")
+    p.add_argument("--step", type=int, default=0, help="Only this checkpoint step, e.g. 8000000 (default: all).")
+    p.add_argument("--seeds", default="", help="Only these evaluation seeds, e.g. 101,201,301 (default: all).")
     p.add_argument("--out", default="", help="Write the per-run table to this CSV.")
     a = p.parse_args()
 
-    d = load(a.sessions, a.scale)
+    seeds = {int(x) for x in a.seeds.split(",") if x.strip()} or None
+    d = load(a.sessions, a.scale, a.step or None, seeds)
     if d.empty:
         raise SystemExit(f"no probe results at x{a.scale} under {a.sessions}")
     runs = d.groupby(["weights", "run", "step", "variant"]).mean(numeric_only=True).reset_index().drop(columns="seed")
