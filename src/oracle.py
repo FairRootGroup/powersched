@@ -1,4 +1,9 @@
-"""Liquid oracle: theoretical lower bound on electricity cost for a given workload.
+"""Perfect-foresight references for the electricity cost of a given workload.
+
+LiquidOracle (below) is a lower bound for the same work run within the episode;
+ContiguousOracle is a relaxed reference computed by a greedy heuristic, not a bound.
+
+Liquid oracle: theoretical lower bound on electricity cost for a given workload.
 
 The liquid oracle answers: given perfect knowledge of all arriving jobs and prices
 for an episode, and the freedom to run any job at any hour (no arrival-time or
@@ -112,8 +117,10 @@ class LiquidOracle:
 
 class ContiguousOracle:
     """
-    Theoretical lower bound on electricity cost that respects all real job
-    constraints except perfect foresight:
+    Relaxed perfect-foresight reference for the electricity cost (not a bound).
+    It keeps the job structure; its relaxations are perfect foresight of the
+    episode's arrivals and prices, aggregate core capacity instead of per-node
+    placement, and full-load energy per used core-hour without idle overhead:
 
       - Jobs cannot start before they arrive.
       - Each job runs continuously for its full duration (no splitting/preemption).
@@ -181,11 +188,12 @@ class ContiguousOracle:
 
     def solve(self) -> float:
         """
-        Compute the minimum cost schedule that honors job continuity, arrival
-        times, deadlines, and capacity constraints.
+        Compute a low-cost schedule (greedy, not necessarily optimal) that honors
+        job continuity, arrival times, deadlines, and aggregate capacity.
 
         Returns:
-            Minimum achievable cost (euros).  0.0 if no jobs recorded.
+            Cost of that schedule (euros), excluding jobs that could not be placed.
+            0.0 if no jobs recorded.
             Jobs that cannot be placed (expired window or fully capacity-blocked)
             are skipped; check unscheduled_count after calling solve().
         """

@@ -91,7 +91,7 @@ def main():
         help="Base directory for all output (models, logs, plots). Defaults to 'sessions'.",
     )
     parser.add_argument("--evaluate-savings", action='store_true', help="Load latest model and evaluate long-term savings (no training)")
-    parser.add_argument("--oracle", action='store_true', help="Enable both liquid and contiguous oracles alongside simulation to compute theoretical minimum cost lower bounds.")
+    parser.add_argument("--oracle", action='store_true', help="Enable both liquid and contiguous oracles alongside simulation: perfect-foresight cost references (the liquid one a lower bound, the contiguous one a greedy relaxed reference).")
     parser.add_argument("--eval-months", type=int, default=13, help="4-week months (2 episodes each) to evaluate for savings analysis (default: 13 = 364 days, a full price year; only used with --evaluate-savings)")
     parser.add_argument("--eval-tag", type=str, default="", help="Appended to the evaluation directory name (e.g. 'prices2024_seed3'), so evaluations on other test prices or seeds do not overwrite each other.")
     add_workloadgen_args(parser)
@@ -582,7 +582,7 @@ def main():
                 if args.oracle:
                     total_oracle_liquid_cost = env.metrics.oracle_cost
                     total_oracle_contiguous_cost = env.metrics.oracle_contiguous_cost
-                    print("\n=== ORACLE BENCHMARKS (THEORETICAL LOWER BOUNDS) ===")
+                    print("\n=== ORACLE BENCHMARKS (PERFECT-FORESIGHT REFERENCES) ===")
                     if total_oracle_liquid_cost != 0.0:
                         print("\n  Liquid Oracle (optimistic — allows job splitting):")
                         print(f"    Total Cost:                        €{total_oracle_liquid_cost:,.0f}")
@@ -592,7 +592,7 @@ def main():
                         print(f"    Agent Capture Rate:                {fmt_optional(liq_capture, 1)}%")
                     if total_oracle_contiguous_cost != 0.0:
                         total_oracle_contiguous_unscheduled = env.metrics.oracle_contiguous_unscheduled
-                        print("\n  Contiguous Oracle (realistic — honors job continuity):")
+                        print("\n  Contiguous Oracle (relaxed reference, greedy — honors job continuity):")
                         print(f"    Total Cost:                        €{total_oracle_contiguous_cost:,.0f}")
                         con_window = total_baseline_off_cost - total_oracle_contiguous_cost
                         con_capture = safe_ratio((total_baseline_off_cost - total_agent_cost) * 100.0, con_window)
